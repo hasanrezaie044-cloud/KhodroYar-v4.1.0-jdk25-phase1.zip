@@ -78,6 +78,7 @@ fun ReportsScreen(repository: AppRepository) {
     val rangeLabel = "$from تا $to"
     val baseName = "vehicle-report-${from.replace("/", "-")}_${to.replace("/", "-")}"
     val excelFileName = "$baseName.xlsx"
+    val totalLabel = tr("جمع کل", "Total")
 
     /* --------------------------------------------------------------- workbook */
 
@@ -98,7 +99,7 @@ fun ReportsScreen(repository: AppRepository) {
                     )
                 } + listOf(
                     listOf(
-                        XlsxWriter.Cell.Text(tr("جمع کل", "Total")),
+                        XlsxWriter.Cell.Text(totalLabel),
                         XlsxWriter.Cell.Number(summary.totals.count.toDouble()),
                         XlsxWriter.Cell.Money(summary.totals.totalKm),
                         XlsxWriter.Cell.Number(round2(summary.totals.totalHours)),

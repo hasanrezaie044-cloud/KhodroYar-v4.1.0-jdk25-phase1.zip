@@ -150,6 +150,7 @@ class SettingsStore private constructor(context: Context) {
         themeMode: String?, language: String?, oilCurrentKm: Double?, oilNextKm: Double?, privacyMode: Boolean?,
         remindDailySummary: Boolean?, remindWeeklySummary: Boolean?, remindMonthlySummary: Boolean?,
         remindInstallments: Boolean?, remindOilChange: Boolean?, remindBodyInsurance: Boolean?,
+        monthlyIncomeGoal: Double?,
         remindVehicleInsurance: Boolean?, remindInspection: Boolean?, remindBackup: Boolean?,
         bodyInsuranceDate: String?, vehicleInsuranceDate: String?, inspectionDate: String?,
         backupIntervalDays: Int?,

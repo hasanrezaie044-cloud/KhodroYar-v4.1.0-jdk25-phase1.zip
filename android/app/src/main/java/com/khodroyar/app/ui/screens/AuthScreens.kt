@@ -26,6 +26,7 @@ import com.khodroyar.app.security.BiometricGate
 import com.khodroyar.app.security.PinStore
 import com.khodroyar.app.ui.components.FieldShape
 import com.khodroyar.app.ui.components.toLatinDigits
+import com.khodroyar.app.ui.components.tr
 
 /**
  * Auth gate. Unchanged behaviour (PBKDF2 PIN + BiometricPrompt, lock can be off);
