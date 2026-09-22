@@ -1,0 +1,28 @@
+{
+  "expo": {
+    "name": "مدیریت خودرو",
+    "slug": "car-management-native-android",
+    "owner": "hasanrezaie",
+    "version": "4.1.0",
+    "android": {
+      "package": "com.khodroyar.app",
+      "versionCode": 23,
+      "icon": "./assets/icon.png",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#05090B"
+      }
+    },
+    "extra": {
+      "eas": {
+        "projectId": "df6af911-cdc0-46f3-9c91-f996f3710d1a"
+      }
+    },
+    "icon": "./assets/icon.png",
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "cover",
+      "backgroundColor": "#05090B"
+    }
+  }
+}

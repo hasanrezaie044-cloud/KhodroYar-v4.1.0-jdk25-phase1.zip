@@ -1,0 +1,261 @@
+name: KhodroYar Android APK Release
+
+# RELEASE SIGNING SAFETY
+# - GitHub Repository Secrets MUST keep these exact names:
+#     KEYSTORE_BASE64
+#     KEYSTORE_PASSWORD
+#     KEY_ALIAS
+#     KEY_PASSWORD
+# - Do NOT rename them to ANDROID_* names. The ANDROID_* names below are runner
+#   environment variables only; they are populated from the four secrets above.
+# - The existing release keystore must NEVER be regenerated or replaced. Bazaar
+#   updates require the same signing identity as the already-published app.
+# - applicationId MUST remain com.khodroyar.app. Changing it creates a different
+#   Android application identity and breaks normal update continuity.
+# - This workflow intentionally produces APK only. AAB is not built or uploaded.
+# - An unsigned/fallback/debug key is never accepted for release output.
+#
+# BUILD STACK (JDK 25)
+# - JDK 25 (Temurin) runs the Gradle daemon AND is the compile toolchain.
+# - Gradle comes from the repo wrapper (9.4.1) so the CI and local builds can never
+#   drift apart. Do not pin gradle-version here as well.
+# - Never set java-version back to 17.
+#
+# REUSABLE
+# - Other workflows can call this one:
+#     jobs:
+#       release:
+#         uses: ./.github/workflows/android-release.yml
+#         with: { ref: my-branch }
+#         secrets: inherit
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'Git ref to build (defaults to the triggering ref)'
+        required: false
+        type: string
+  workflow_call:
+    inputs:
+      ref:
+        description: 'Git ref to build (defaults to the caller ref)'
+        required: false
+        type: string
+      artifact-name:
+        description: 'Name of the uploaded artifact'
+        required: false
+        default: KhodroYar-release-signed
+        type: string
+      run-tests:
+        description: 'Run unit tests before assembling'
+        required: false
+        default: true
+        type: boolean
+    secrets:
+      KEYSTORE_BASE64:
+        required: true
+      KEYSTORE_PASSWORD:
+        required: true
+      KEY_ALIAS:
+        required: true
+      KEY_PASSWORD:
+        required: true
+    outputs:
+      version-name:
+        description: 'versionName of the APK that was built'
+        value: ${{ jobs.release.outputs.version-name }}
+
+concurrency:
+  group: khodroyar-release-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  JAVA_VERSION: '25'
+  ANDROID_COMPILE_SDK: '36'
+  ANDROID_BUILD_TOOLS: '36.0.0'
+  GRADLE_OPTS: -Dorg.gradle.daemon=false -Dorg.gradle.workers.max=2
+
+jobs:
+  release:
+    name: Signed APK release (JDK 25)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      version-name: ${{ steps.version.outputs.version_name }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+
+      - name: Set up JDK 25
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: 'platforms;android-${{ env.ANDROID_COMPILE_SDK }} build-tools;${{ env.ANDROID_BUILD_TOOLS }} platform-tools'
+
+      - name: Set up Gradle
+        # No gradle-version input: the repo wrapper (gradle-wrapper.properties) is the
+        # single source of truth, and it is the version that supports JDK 25 + Kotlin 2.3.
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          cache-read-only: ${{ github.ref != 'refs/heads/main' }}
+
+      - name: Report toolchain versions
+        working-directory: android
+        run: |
+          set -euo pipefail
+          java -version
+          chmod +x ./gradlew
+          ./gradlew --version
+          # Hard gate: a JDK 17 regression must fail loudly, not silently build.
+          java -version 2>&1 | grep -Eq '(openjdk|java) version "25' \
+            || { echo "::error::Expected JDK 25 on the runner."; exit 1; }
+
+      # IMPORTANT: these are the ONLY GitHub Secret names accepted by this workflow.
+      # Their values are never printed.
+      - name: Validate required signing secrets
+        env:
+          KS: ${{ secrets.KEYSTORE_BASE64 }}
+          KP: ${{ secrets.KEYSTORE_PASSWORD }}
+          KA: ${{ secrets.KEY_ALIAS }}
+          KPW: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          [[ -n "$KS" ]] || { echo "::error::ERROR: Required signing secret KEYSTORE_BASE64 is missing."; exit 1; }
+          [[ -n "$KP" ]] || { echo "::error::ERROR: Required signing secret KEYSTORE_PASSWORD is missing."; exit 1; }
+          [[ -n "$KA" ]] || { echo "::error::ERROR: Required signing secret KEY_ALIAS is missing."; exit 1; }
+          [[ -n "$KPW" ]] || { echo "::error::ERROR: Required signing secret KEY_PASSWORD is missing."; exit 1; }
+          echo "All four required signing secrets are present."
+
+      - name: Decode existing release keystore
+        id: keystore
+        env:
+          KS: ${{ secrets.KEYSTORE_BASE64 }}
+        run: |
+          set -euo pipefail
+          KEYSTORE_DIR="$RUNNER_TEMP/khodroyar-signing"
+          mkdir -p "$KEYSTORE_DIR"
+          printf '%s' "$KS" | base64 --decode > "$KEYSTORE_DIR/release.jks"
+          test -s "$KEYSTORE_DIR/release.jks"
+          echo "path=$KEYSTORE_DIR/release.jks" >> "$GITHUB_OUTPUT"
+
+      - name: Validate package, JDK level and Gradle signing configuration
+        working-directory: android
+        run: |
+          set -euo pipefail
+          grep -Eq "applicationId ['\"]com\.khodroyar\.app['\"]" app/build.gradle
+          grep -q "ANDROID_KEYSTORE_PATH" app/build.gradle
+          grep -q "ANDROID_KEYSTORE_PASSWORD" app/build.gradle
+          grep -q "ANDROID_KEY_ALIAS" app/build.gradle
+          grep -q "ANDROID_KEY_PASSWORD" app/build.gradle
+          # JDK 25 must not be quietly reverted to 17 in a later commit.
+          grep -q "JavaVersion.VERSION_25" app/build.gradle
+          grep -q "JavaLanguageVersion.of(25)" app/build.gradle
+          ! grep -q "JavaVersion.VERSION_17" app/build.gradle
+
+      - name: Gradle configuration check
+        # Cheap fail-fast pair recommended for AGP 9 migrations: proves the build script
+        # configures and the task graph resolves before anything expensive runs.
+        working-directory: android
+        run: |
+          set -euo pipefail
+          ./gradlew help --stacktrace
+          ./gradlew build --dry-run --stacktrace
+
+      - name: Run unit tests
+        if: ${{ inputs.run-tests != false }}
+        working-directory: android
+        run: ./gradlew testDebugUnitTest --stacktrace
+
+      - name: Compile debug variant
+        working-directory: android
+        run: ./gradlew assembleDebug --stacktrace
+
+      # No AAB build step exists by design. Bazaar release output is APK only.
+      - name: Build signed release APK
+        working-directory: android
+        env:
+          ANDROID_KEYSTORE_PATH: ${{ steps.keystore.outputs.path }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          ./gradlew clean assembleRelease --stacktrace
+          APK="app/build/outputs/apk/release/app-release.apk"
+          test -f "$APK"
+          test -s "$APK"
+
+      - name: Read versionName
+        id: version
+        run: |
+          set -euo pipefail
+          VERSION_NAME="$(grep -E "versionName ['\"][^'\"]+['\"]" android/app/build.gradle | head -1 | sed -E "s/.*versionName ['\"]([^'\"]+)['\"].*/\1/")"
+          test -n "$VERSION_NAME"
+          echo "version_name=$VERSION_NAME" >> "$GITHUB_OUTPUT"
+
+      - name: Verify release APK, package identity, and signature
+        run: |
+          set -euo pipefail
+          RELEASE_DIR="android/app/build/outputs/apk/release"
+          APK="$RELEASE_DIR/app-release.apk"
+          test -f "$APK"
+          APK_COUNT="$(find "$RELEASE_DIR" -maxdepth 1 -type f -name '*.apk' | wc -l)"
+          test "$APK_COUNT" -eq 1
+          APKSIGNER="$ANDROID_HOME/build-tools/${ANDROID_BUILD_TOOLS}/apksigner"
+          AAPT="$ANDROID_HOME/build-tools/${ANDROID_BUILD_TOOLS}/aapt2"
+          test -x "$APKSIGNER"
+
+          echo "== APK certificate information =="
+          "$APKSIGNER" verify --verbose --print-certs "$APK"
+
+          echo "== APK package identity =="
+          "$AAPT" dump badging "$APK" | grep -Eq "^package: name='com\.khodroyar\.app'"
+
+          echo "== Release APK safety checks =="
+          if "$APKSIGNER" verify "$APK" 2>&1 | grep -qi "DOES NOT VERIFY"; then
+            echo "::error::Release APK signature verification failed."
+            exit 1
+          fi
+          # A debug-keystore signature must never ship as a release.
+          if "$APKSIGNER" verify --print-certs "$APK" | grep -qi "CN=Android Debug"; then
+            echo "::error::Release APK is signed with the Android debug key."
+            exit 1
+          fi
+          # Proves R8 actually ran on this artifact.
+          test -s "android/app/build/outputs/mapping/release/mapping.txt"
+
+          mkdir -p "$RUNNER_TEMP/final"
+          FINAL="$RUNNER_TEMP/final/KhodroYar-${{ steps.version.outputs.version_name }}-release-signed.apk"
+          cp "$APK" "$FINAL"
+          test -s "$FINAL"
+          "$APKSIGNER" verify --verbose --print-certs "$FINAL"
+          "$AAPT" dump badging "$FINAL" | grep -Eq "^package: name='com\.khodroyar\.app'"
+          echo "final_apk=$FINAL" >> "$GITHUB_ENV"
+
+      - name: Upload ONLY final signed APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.artifact-name || 'KhodroYar-release-signed' }}
+          path: ${{ env.final_apk }}
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload R8 mapping
+        uses: actions/upload-artifact@v4
+        with:
+          name: KhodroYar-r8-mapping
+          path: android/app/build/outputs/mapping/release/mapping.txt
+          if-no-files-found: warn
+          retention-days: 30

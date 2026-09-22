@@ -1,0 +1,149 @@
+plugins {
+    id 'com.android.application'
+    // NOTE: 'org.jetbrains.kotlin.android' is intentionally absent.
+    // AGP 9 has built-in Kotlin (android.builtInKotlin=true by default) and applying
+    // kotlin-android alongside it fails under the new DSL. Kotlin sources in
+    // src/main/java + src/test/java are compiled by AGP itself now.
+    id 'org.jetbrains.kotlin.plugin.compose'
+    id 'com.google.devtools.ksp'
+}
+
+def easBuildGradle = file("eas-build.gradle")
+if (easBuildGradle.exists()) {
+    apply from: "./eas-build.gradle"
+}
+
+android {
+    namespace 'com.khodroyar.app'
+    // compileSdk 36 is the floor for AGP 9.x. targetSdk stays at 35 on purpose: raising
+    // it changes runtime behaviour (edge-to-edge enforcement, etc.) and that is a
+    // separate, testable change — not something to smuggle into a build migration.
+    compileSdk 36
+    buildToolsVersion '36.0.0'
+
+    defaultConfig {
+        applicationId 'com.khodroyar.app'   // MUST NOT CHANGE — Bazaar update identity.
+        minSdk 24
+        targetSdk 35
+        versionCode 23
+        versionName '4.1.0'
+        vectorDrawables.useSupportLibrary = true
+    }
+
+    // AGP 9 removed defaultConfig.resourceConfigurations in favour of this block.
+    // Same effect: only Persian and English resources are packaged.
+    androidResources {
+        localeFilters += ['fa', 'en']
+    }
+
+    signingConfigs {
+        release {
+            // Release signing is intentionally strict: GitHub Actions must supply the
+            // existing Bazaar-compatible keystore. Never generate a new/fallback key.
+            def storePath = System.getenv("ANDROID_KEYSTORE_PATH")
+            def storePassword = System.getenv("ANDROID_KEYSTORE_PASSWORD")
+            def keyAlias = System.getenv("ANDROID_KEY_ALIAS")
+            def keyPassword = System.getenv("ANDROID_KEY_PASSWORD")
+
+            if ([storePath, storePassword, keyAlias, keyPassword].any { it == null || it.trim().isEmpty() }) {
+                throw new GradleException("Release signing configuration is missing. Set ANDROID_KEYSTORE_PATH, ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS and ANDROID_KEY_PASSWORD.")
+            }
+
+            storeFile file(storePath)
+            storePassword storePassword
+            keyAlias keyAlias
+            keyPassword keyPassword
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled true
+            shrinkResources true
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+            signingConfig signingConfigs.release
+        }
+        debug {
+            minifyEnabled false
+        }
+    }
+
+    compileOptions {
+        // JDK 25. Do not lower these back to 17.
+        sourceCompatibility JavaVersion.VERSION_25
+        targetCompatibility JavaVersion.VERSION_25
+        coreLibraryDesugaringEnabled true
+    }
+
+    buildFeatures {
+        compose true
+        buildConfig true
+    }
+
+    packaging {
+        resources {
+            excludes += ['/META-INF/{AL2.0,LGPL2.1}']
+        }
+    }
+
+    testOptions {
+        unitTests.returnDefaultValues = true
+    }
+}
+
+// The removed android.kotlinOptions { jvmTarget = '17' } block has no replacement here
+// on purpose. Under AGP 9 built-in Kotlin, kotlin.compilerOptions.jvmTarget defaults to
+// android.compileOptions.targetCompatibility (25 above), so Java and Kotlin can never
+// drift out of sync and there is nothing left to hand-maintain. No free compiler args
+// are added: the project compiled clean without any on 17 and none are needed on 25.
+
+// Pins the compile/test JDK to 25 regardless of which JDK launched the daemon, so a
+// developer machine on a different JDK still produces identical bytecode to CI.
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(25)
+    }
+}
+
+dependencies {
+    def composeBom = platform('androidx.compose:compose-bom:2026.02.00')
+    implementation composeBom
+    androidTestImplementation composeBom
+
+    implementation 'androidx.core:core-ktx:1.17.0'
+    implementation 'androidx.activity:activity-compose:1.11.0'
+    implementation 'androidx.lifecycle:lifecycle-runtime-compose:2.9.4'
+    implementation 'androidx.lifecycle:lifecycle-viewmodel-compose:2.9.4'
+
+    implementation 'androidx.compose.ui:ui'
+    implementation 'androidx.compose.ui:ui-graphics'
+    implementation 'androidx.compose.material3:material3'
+    implementation 'androidx.compose.material:material-icons-extended'
+    implementation 'androidx.navigation:navigation-compose:2.9.5'
+
+    // Native storage
+    implementation 'androidx.room:room-runtime:2.8.4'
+    implementation 'androidx.room:room-ktx:2.8.4'
+    ksp 'androidx.room:room-compiler:2.8.4'
+    implementation 'androidx.datastore:datastore-preferences:1.1.7'
+    implementation 'androidx.security:security-crypto:1.1.0-alpha07'
+
+    // Native biometric prompt
+    implementation 'androidx.biometric:biometric:1.1.0'
+    implementation 'androidx.fragment:fragment-ktx:1.8.9'
+    // Native background work
+    implementation 'androidx.work:work-runtime-ktx:2.10.5'
+
+    coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs:2.1.5'
+
+    // JSON serialization
+    implementation 'org.jetbrains.kotlinx:kotlinx-serialization-json:1.9.0'
+
+    // Present because R8 reported missing annotation classes on release builds.
+    // Do not remove without re-running a full minified release build.
+    implementation 'com.google.code.findbugs:jsr305:3.0.2'
+    implementation 'com.google.errorprone:error_prone_annotations:2.36.0'
+
+    testImplementation 'junit:junit:4.13.2'
+    testImplementation 'org.jetbrains.kotlinx:kotlinx-serialization-json:1.9.0'
+}
