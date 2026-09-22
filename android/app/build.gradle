@@ -36,37 +36,59 @@ android {
         localeFilters += ['fa', 'en']
     }
 
-    signingConfigs {
-        release {
-            // Release signing is intentionally strict: GitHub Actions must supply the
-            // existing Bazaar-compatible keystore. Never generate a new/fallback key.
-            def storePath = System.getenv("ANDROID_KEYSTORE_PATH")
-            def storePassword = System.getenv("ANDROID_KEYSTORE_PASSWORD")
-            def keyAlias = System.getenv("ANDROID_KEY_ALIAS")
-            def keyPassword = System.getenv("ANDROID_KEY_PASSWORD")
+      // Release signing is intentionally lazy.
+      // Configuration/help/debug/test tasks must NOT require signing secrets.
+      // GitHub Actions injects the existing Bazaar-compatible keystore only
+      // for the real Release APK build. Never generate a new/fallback key.
 
-            if ([storePath, storePassword, keyAlias, keyPassword].any { it == null || it.trim().isEmpty() }) {
-                throw new GradleException("Release signing configuration is missing. Set ANDROID_KEYSTORE_PATH, ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS and ANDROID_KEY_PASSWORD.")
-            }
+      def releaseStorePath = System.getenv("ANDROID_KEYSTORE_PATH")
+      def releaseStorePassword = System.getenv("ANDROID_KEYSTORE_PASSWORD")
+      def releaseKeyAlias = System.getenv("ANDROID_KEY_ALIAS")
+      def releaseKeyPassword = System.getenv("ANDROID_KEY_PASSWORD")
 
-            storeFile file(storePath)
-            storePassword storePassword
-            keyAlias keyAlias
-            keyPassword keyPassword
-        }
-    }
+      def releaseSigningAvailable = [
+          releaseStorePath,
+          releaseStorePassword,
+          releaseKeyAlias,
+          releaseKeyPassword
+      ].every { it != null && !it.trim().isEmpty() }
 
-    buildTypes {
-        release {
-            minifyEnabled true
-            shrinkResources true
-            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
-            signingConfig signingConfigs.release
-        }
-        debug {
-            minifyEnabled false
-        }
-    }
+      def releaseTaskRequested = gradle.startParameter.taskNames.any { taskName ->
+          taskName.toLowerCase().contains("release")
+      }
+
+      signingConfigs {
+          if (releaseSigningAvailable) {
+              release {
+                  storeFile file(releaseStorePath)
+                  storePassword releaseStorePassword
+                  keyAlias releaseKeyAlias
+                  keyPassword releaseKeyPassword
+              }
+          }
+      }
+
+      buildTypes {
+          release {
+              minifyEnabled true
+              shrinkResources true
+              proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+
+              if (releaseSigningAvailable) {
+                  signingConfig signingConfigs.release
+              } else if (releaseTaskRequested) {
+                  throw new GradleException(
+                      "Release signing configuration is missing. GitHub Actions must provide " +
+                      "ANDROID_KEYSTORE_PATH, ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS and " +
+                      "ANDROID_KEY_PASSWORD. No fallback/debug signing is allowed."
+                  )
+              }
+          }
+
+          debug {
+              minifyEnabled false
+          }
+      }
 
     compileOptions {
         // JDK 25. Do not lower these back to 17.
