@@ -98,7 +98,7 @@ fun ReportsScreen(repository: AppRepository) {
                     )
                 } + listOf(
                     listOf(
-                        XlsxWriter.Cell.Text(tr("جمع کل", "Total")),
+                        XlsxWriter.Cell.Text("جمع کل"),
                         XlsxWriter.Cell.Number(summary.totals.count.toDouble()),
                         XlsxWriter.Cell.Money(summary.totals.totalKm),
                         XlsxWriter.Cell.Number(round2(summary.totals.totalHours)),

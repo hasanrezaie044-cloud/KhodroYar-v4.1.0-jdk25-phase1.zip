@@ -305,8 +305,6 @@ fun DashboardScreen(
             }
         }
 
-        }
-
         item { CollapsibleSectionTitle(
             "آخرین سرویس‌ها", icon = Icons.Outlined.History,
             expanded = "recent" in sectionOpen.value, onToggle = { toggleSection("recent") },
