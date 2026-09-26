@@ -1,0 +1,209 @@
+name: KhodroYar Android APK Release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: khodroyar-release-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  JAVA_VERSION: '25'
+  ANDROID_COMPILE_SDK: '36'
+  ANDROID_BUILD_TOOLS: '36.0.0'
+
+jobs:
+  release:
+    name: Signed APK Release (JDK 25)
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 25
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: 'platforms;android-${{ env.ANDROID_COMPILE_SDK }} build-tools;${{ env.ANDROID_BUILD_TOOLS }} platform-tools'
+
+      - name: Validate JDK 25
+        run: |
+          java -version 2>&1
+          java -version 2>&1 | grep -Eq "openjdk.*25|java.*25" || {
+            echo "ERROR: JDK 25 is required."
+            exit 1
+          }
+
+      - name: Validate project identity
+        run: |
+          grep -q "applicationId 'com.khodroyar.app'" android/app/build.gradle || {
+            echo "ERROR: applicationId must remain com.khodroyar.app"
+            exit 1
+          }
+
+          grep -q "versionName '4.3.0'" android/app/build.gradle || {
+            echo "ERROR: versionName 4.3.0 not found"
+            exit 1
+          }
+
+          test -x android/gradlew || {
+            echo "ERROR: android/gradlew is missing or not executable"
+            exit 1
+          }
+
+      - name: Validate signing secrets
+        env:
+          KS: ${{ secrets.KEYSTORE_BASE64 }}
+          KP: ${{ secrets.KEYSTORE_PASSWORD }}
+          KA: ${{ secrets.KEY_ALIAS }}
+          KPW: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          [[ -n "$KS" ]] || {
+            echo "ERROR: KEYSTORE_BASE64 is missing."
+            exit 1
+          }
+
+          [[ -n "$KP" ]] || {
+            echo "ERROR: KEYSTORE_PASSWORD is missing."
+            exit 1
+          }
+
+          [[ -n "$KA" ]] || {
+            echo "ERROR: KEY_ALIAS is missing."
+            exit 1
+          }
+
+          [[ -n "$KPW" ]] || {
+            echo "ERROR: KEY_PASSWORD is missing."
+            exit 1
+          }
+
+      - name: Decode release keystore
+        id: keystore
+        env:
+          KS: ${{ secrets.KEYSTORE_BASE64 }}
+        run: |
+          KEYSTORE_DIR="${RUNNER_TEMP}/khodroyar-signing"
+          mkdir -p "$KEYSTORE_DIR"
+
+          printf '%s' "$KS" | base64 --decode > "$KEYSTORE_DIR/release.keystore"
+
+          test -s "$KEYSTORE_DIR/release.keystore" || {
+            echo "ERROR: Release keystore is empty."
+            exit 1
+          }
+
+          echo "path=$KEYSTORE_DIR/release.keystore" >> "$GITHUB_OUTPUT"
+
+      - name: Gradle configuration check
+        working-directory: android
+        run: |
+          chmod +x ./gradlew
+          ./gradlew help --stacktrace --no-daemon
+
+      - name: Build signed release APK
+        working-directory: android
+        env:
+          ANDROID_KEYSTORE_PATH: ${{ steps.keystore.outputs.path }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          ./gradlew clean assembleRelease --stacktrace --no-daemon
+
+          APK="app/build/outputs/apk/release/app-release.apk"
+
+          test -f "$APK" || {
+            echo "ERROR: Release APK was not created."
+            exit 1
+          }
+
+          test -s "$APK" || {
+            echo "ERROR: Release APK is empty."
+            exit 1
+          }
+
+      - name: Extract version
+        id: version
+        run: |
+          VERSION=$(grep "versionName" android/app/build.gradle | head -1 | sed -E "s/.*versionName '([^']+)'.*/\1/")
+
+          test -n "$VERSION" || {
+            echo "ERROR: Could not extract versionName."
+            exit 1
+          }
+
+          echo "version_name=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Release version: $VERSION"
+
+      - name: Verify APK signature
+        run: |
+          APK="android/app/build/outputs/apk/release/app-release.apk"
+          APKSIGNER="$ANDROID_HOME/build-tools/${ANDROID_BUILD_TOOLS}/apksigner"
+
+          test -x "$APKSIGNER" || {
+            echo "ERROR: apksigner not found."
+            exit 1
+          }
+
+          "$APKSIGNER" verify --verbose --print-certs "$APK"
+
+          if "$APKSIGNER" verify "$APK" 2>&1 | grep -qi "DOES NOT VERIFY"; then
+            echo "ERROR: APK signature verification failed."
+            exit 1
+          fi
+
+          if "$APKSIGNER" verify --print-certs "$APK" | grep -qi "CN=Android Debug"; then
+            echo "ERROR: APK is signed with Android Debug certificate."
+            exit 1
+          fi
+
+      - name: Verify package name
+        run: |
+          APK="android/app/build/outputs/apk/release/app-release.apk"
+          AAPT="$ANDROID_HOME/build-tools/${ANDROID_BUILD_TOOLS}/aapt2"
+
+          test -x "$AAPT" || {
+            echo "ERROR: aapt2 not found."
+            exit 1
+          }
+
+          "$AAPT" dump badging "$APK" | grep -E "^package: name='com\.khodroyar\.app'" || {
+            echo "ERROR: APK package is not com.khodroyar.app"
+            exit 1
+          }
+
+      - name: Show APK information
+        run: |
+          APK="android/app/build/outputs/apk/release/app-release.apk"
+
+          ls -lh "$APK"
+          sha256sum "$APK"
+
+      - name: Upload signed APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: khodroyar-release-signed-${{ steps.version.outputs.version_name }}
+          path: android/app/build/outputs/apk/release/app-release.apk
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload R8 mapping
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: khodroyar-r8-mapping-${{ steps.version.outputs.version_name }}
+          path: android/app/build/outputs/mapping/release/mapping.txt
+          if-no-files-found: ignore
+          retention-days: 30
