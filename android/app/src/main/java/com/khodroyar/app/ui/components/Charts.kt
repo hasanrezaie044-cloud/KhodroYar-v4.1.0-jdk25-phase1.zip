@@ -149,14 +149,19 @@ fun TrendBarChart(
                             .height((barHeight.value * 0.78f * animated).dp.coerceAtLeast(4.dp))
                             .shadow(if (isSel) 6.dp else 0.dp, RoundedCornerShape(topStart = 10.dp, topEnd = 10.dp))
                             .clip(RoundedCornerShape(topStart = 10.dp, topEnd = 10.dp))
-                            .background(
-                                if (raw <= 0.0) mutedBar
-                                else Brush.verticalGradient(
-                                    listOf(
-                                        primary.copy(alpha = if (isSel) 1f else 0.95f),
-                                        primary.copy(alpha = if (isSel) 0.75f else 0.45f),
-                                    ),
-                                ),
+                            .then(
+                                if (raw <= 0.0) {
+                                    Modifier.background(mutedBar)
+                                } else {
+                                    Modifier.background(
+                                        Brush.verticalGradient(
+                                            listOf(
+                                                primary.copy(alpha = if (isSel) 1f else 0.95f),
+                                                primary.copy(alpha = if (isSel) 0.75f else 0.45f),
+                                            )
+                                        )
+                                    )
+                                }
                             ),
                     )
                 }
@@ -519,12 +524,14 @@ fun InteractiveDonutChart(
                     .fillMaxSize()
                     .pointerInput(slices, selectedId, total) {
                         detectTapGestures { tap ->
-                            val cx = size.width / 2f
-                            val cy = size.height / 2f
+                            val inputWidth = this.size.width.toFloat()
+                            val inputHeight = this.size.height.toFloat()
+                            val cx = inputWidth / 2f
+                            val cy = inputHeight / 2f
                             val dx = tap.x - cx
                             val dy = tap.y - cy
                             val dist = sqrt(dx * dx + dy * dy)
-                            val outer = min(size.width, size.height) / 2f
+                            val outer = min(inputWidth, inputHeight) / 2f
                             val stroke = outer * 0.28f
                             val inner = outer - stroke - 6.dp.toPx()
                             if (dist < inner * 0.55f || dist > outer - 2.dp.toPx()) {
@@ -548,10 +555,10 @@ fun InteractiveDonutChart(
                         }
                     },
             ) {
-                val strokeBase = size.minDimension * 0.28f
+                val canvasMinDimension = this.size.minDimension
+                val strokeBase = canvasMinDimension * 0.28f
                 val radiusPad = strokeBase / 2f + 6.dp.toPx()
-                val diam = size.minDimension - radiusPad * 2
-                val topLeft = Offset(radiusPad, radiusPad)
+                val diam = canvasMinDimension - radiusPad * 2
                 val arcSize = Size(diam, diam)
                 var start = -90f
                 val progress = reveal.value
