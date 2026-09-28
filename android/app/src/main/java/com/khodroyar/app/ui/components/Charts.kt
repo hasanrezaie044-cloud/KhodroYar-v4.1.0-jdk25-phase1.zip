@@ -559,6 +559,7 @@ fun InteractiveDonutChart(
                 val strokeBase = canvasMinDimension * 0.28f
                 val radiusPad = strokeBase / 2f + 6.dp.toPx()
                 val diam = canvasMinDimension - radiusPad * 2
+                val topLeft = Offset(radiusPad, radiusPad)
                 val arcSize = Size(diam, diam)
                 var start = -90f
                 val progress = reveal.value
