@@ -1,0 +1,6 @@
+<resources>
+    <color name="splash_bg">#071016</color>
+    <!-- Adaptive-icon background. The supplied artwork sits inside the safe zone as
+         the foreground layer, so nothing important is cropped by the launcher mask. -->
+    <color name="ic_launcher_background">#05090B</color>
+</resources>
