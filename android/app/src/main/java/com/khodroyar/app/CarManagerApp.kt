@@ -2,6 +2,7 @@ package com.khodroyar.app
 
 import android.app.Application
 import androidx.work.Configuration
+import com.khodroyar.app.notifications.AutoBackupScheduler
 import com.khodroyar.app.notifications.AutoServiceScheduler
 import com.khodroyar.app.notifications.Notifications
 import com.khodroyar.app.notifications.ReminderScheduler
@@ -31,5 +32,6 @@ class CarManagerApp : Application(), Configuration.Provider {
         Notifications.ensureChannels(this)
         runCatching { ReminderScheduler.sync(this) }
         runCatching { AutoServiceScheduler.sync(this) }
+        runCatching { AutoBackupScheduler.sync(this) }
     }
 }

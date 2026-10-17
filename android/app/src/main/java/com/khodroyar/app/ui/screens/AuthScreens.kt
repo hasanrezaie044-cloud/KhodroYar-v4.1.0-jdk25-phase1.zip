@@ -10,6 +10,7 @@ import androidx.compose.material.icons.outlined.Fingerprint
 import androidx.compose.material.icons.outlined.Person
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -30,10 +31,12 @@ import com.khodroyar.app.security.BiometricGate
 import com.khodroyar.app.security.PinStore
 import com.khodroyar.app.ui.components.FieldShape
 import com.khodroyar.app.ui.components.toLatinDigits
+import kotlinx.coroutines.delay
 
 /**
- * Auth gate: PIN / biometric first, then a one-time offline profile setup
- * (first + last name) so the app can greet the owner personally.
+ * Gate order: terms of use (once per [TermsOfUse.VERSION]) -> PIN / biometric (the
+ * fingerprint prompt opens by itself) -> one-time offline profile setup (first + last
+ * name) so the app can greet the owner personally.
  * Everything stays on-device — no network.
  */
 @Composable
@@ -41,8 +44,13 @@ fun AuthGate(pinStore: PinStore, settingsStore: SettingsStore, content: @Composa
     var authenticated by remember { mutableStateOf(!pinStore.lockEnabled) }
     val settings by settingsStore.state.collectAsState()
     val needsProfile = authenticated && !settings.hasProfile
+    val context = LocalContext.current
 
     when {
+        settings.acceptedTermsVersion < TermsOfUse.VERSION -> AgreementScreen(
+            onAccept = { settingsStore.update { it.copy(acceptedTermsVersion = TermsOfUse.VERSION) } },
+            onDecline = { context.findActivity()?.finishAffinity() },
+        )
         !authenticated -> LoginScreen(pinStore) { authenticated = true }
         needsProfile -> ProfileSetupScreen(
             initialFirst = settings.userFirstName,
@@ -195,6 +203,22 @@ private fun LoginScreen(pinStore: PinStore, onSuccess: () -> Unit) {
     var firstPin by remember { mutableStateOf<String?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
     val needsSetup = !pinStore.isPinSet
+
+    // Open the fingerprint prompt by itself when the lock screen appears. Only once
+    // (rememberSaveable survives rotation), and never while the PIN is still being
+    // created; the "ورود با اثر انگشت" button below stays as the manual retry. The short
+    // delay lets the window take focus first — a prompt shown on the very first frame
+    // can be cancelled by the system before the user sees it.
+    var autoPrompted by rememberSaveable { mutableStateOf(false) }
+    LaunchedEffect(needsSetup) {
+        if (!needsSetup && !autoPrompted && context is androidx.fragment.app.FragmentActivity &&
+            BiometricGate.isAvailable(context)
+        ) {
+            autoPrompted = true
+            delay(300)
+            BiometricGate.prompt(context, onSuccess = onSuccess)
+        }
+    }
 
     CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) {
         Box(Modifier.fillMaxSize().background(Color(0xFF05090B))) {

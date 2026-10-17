@@ -676,6 +676,7 @@ class AppRepository(context: Context) {
             autoServiceEndTime = str("autoServiceEndTime"),
             autoServiceTollCount = int("autoServiceTollCount"),
             servicePresetsJson = str("servicePresetsJson"),
+            autoBackupEnabled = bool("autoBackupEnabled"),
         )
     }
 

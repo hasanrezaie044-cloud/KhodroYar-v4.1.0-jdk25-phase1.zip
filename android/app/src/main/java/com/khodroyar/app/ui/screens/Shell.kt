@@ -41,6 +41,7 @@ import com.khodroyar.app.data.db.PersonnelEntity
 import com.khodroyar.app.data.db.ServiceEntity
 import com.khodroyar.app.data.prefs.AppSettings
 import com.khodroyar.app.data.repo.AppRepository
+import com.khodroyar.app.notifications.AutoBackupScheduler
 import com.khodroyar.app.notifications.AutoServiceScheduler
 import com.khodroyar.app.notifications.Notifications
 import com.khodroyar.app.notifications.ReminderScheduler
@@ -96,6 +97,8 @@ fun CarManagerRoot(repository: AppRepository, onToggleTheme: () -> Unit = {}) {
     LaunchedEffect(settings.anyReminderEnabled) { ReminderScheduler.sync(context) }
     // "ثبت خودکار" — its own independent daily schedule, unrelated to the reminders.
     LaunchedEffect(settings.autoServiceEnabled) { AutoServiceScheduler.sync(context) }
+    // Nightly automatic backup: its own switch, its own schedule.
+    LaunchedEffect(settings.autoBackupEnabled) { AutoBackupScheduler.sync(context) }
 
     /*
      * ROOT CAUSE OF "no notifications": POST_NOTIFICATIONS was only ever requested from

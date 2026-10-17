@@ -87,11 +87,11 @@ fun MaintenanceScreen(repository: AppRepository) {
     var editingTracked by remember { mutableStateOf<MaintenanceType?>(null) }
 
     if (showForm) {
-        MaintenanceForm(repository, settings, rates) { showForm = false }
+        MaintenanceForm(repository, settings, rates, records) { showForm = false }
         return
     }
     if (editing != null) {
-        MaintenanceForm(repository, settings, rates, existing = editing) { editing = null }
+        MaintenanceForm(repository, settings, rates, records, existing = editing) { editing = null }
         return
     }
     if (editingTracked != null) {
@@ -354,23 +354,49 @@ private fun MaintenanceForm(
     repository: AppRepository,
     settings: AppSettings,
     rates: com.khodroyar.app.core.rates.Rates,
+    records: List<MaintenanceEntity>,
     existing: MaintenanceEntity? = null,
     onClose: () -> Unit,
 ) {
     val scope = rememberCoroutineScope()
     val toast = LocalToast.current
     var date by remember { mutableStateOf(existing?.date ?: Jalali.todayString()) }
-    var type by remember { mutableStateOf(MaintenanceType.fromWire(existing?.type) ) }
+    // New records start on oil change (the old default); fromWire(null) would fall
+    // through to OTHER, which is only right for an existing record of unknown type.
+    var type by remember {
+        mutableStateOf(existing?.let { MaintenanceType.fromWire(it.type) } ?: MaintenanceType.OIL_CHANGE)
+    }
     var typeText by remember { mutableStateOf(existing?.typeText ?: "") }
     var costText by remember { mutableStateOf(if (existing != null && existing.cost > 0) existing.cost.trimNumber().digitsOnly() else "") }
-    var currentKmText by remember { mutableStateOf(
+    // A record only drives the live "remaining km" of its item when it is the newest
+    // record of that type. Saving an older one (an edit to last year's oil change, or a
+    // back-dated entry) must leave today's tracking alone.
+    val isTracked = type in MaintenanceType.TRACKED
+    val newerSameType = records.any { it.type == type.wire && it.id != existing?.id && it.date > date }
+    val affectsTracking = isTracked && (existing == null || existing.type == type.wire) && !newerSameType
+
+    // Keyed on the chosen type, and read from THAT type's own settings: the fields used
+    // to be filled from the oil values whatever type was picked, and saving wrote them
+    // into the picked item's tracking.
+    var currentKmText by remember(type) { mutableStateOf(
         when {
-            existing != null && existing.km > 0 -> existing.km.trimNumber().digitsOnly()
-            settings.oilCurrentKm > 0 -> settings.oilCurrentKm.trimNumber().digitsOnly()
-            else -> ""
+            existing != null && existing.type == type.wire && existing.km > 0 ->
+                existing.km.trimNumber().digitsOnly()
+            existing != null && existing.type == type.wire ->
+                settings.currentKmFor(type.wire).takeIf { it > 0 }?.trimNumber()?.digitsOnly() ?: ""
+            existing != null -> ""
+            // New replacement: the car's odometer now.
+            settings.vehicleCurrentKm > 0 -> settings.vehicleCurrentKm.trimNumber().digitsOnly()
+            else -> settings.currentKmFor(type.wire).takeIf { it > 0 }?.trimNumber()?.digitsOnly() ?: ""
         }
     ) }
-    var nextKmText by remember { mutableStateOf(if (settings.oilNextKm > 0) settings.oilNextKm.trimNumber().digitsOnly() else "") }
+    // Blank for a new replacement (the old target would make it overdue at once); on
+    // save it becomes current + the item's interval.
+    var nextKmText by remember(type) { mutableStateOf(
+        if (existing != null && existing.type == type.wire)
+            settings.nextKmFor(type.wire).takeIf { it > 0 }?.trimNumber()?.digitsOnly() ?: ""
+        else ""
+    ) }
     var description by remember { mutableStateOf(existing?.description ?: "") }
     var attachmentPath by remember { mutableStateOf(existing?.attachmentPath ?: "") }
     val context = LocalContext.current
@@ -388,7 +414,7 @@ private fun MaintenanceForm(
             toast.show("ذخیره پیوست انجام نشد")
         }
     }
-    var carType by remember { mutableStateOf(rates.defaultCarType) }
+    var carType by remember { mutableStateOf(existing?.let { CarType.fromWire(it.carType) } ?: rates.defaultCarType) }
 
     Column(Modifier.fillMaxSize()) {
         Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).clearFocusOnTap().padding(horizontal = AppDimens.screenPadding).padding(top = AppDimens.gutter, bottom = AppDimens.gutter), verticalArrangement = Arrangement.spacedBy(AppDimens.gutter)) {
@@ -396,18 +422,24 @@ private fun MaintenanceForm(
                 OptionSelector(label = "", options = MaintenanceType.entries.toList(), selected = type, optionLabel = { it.label }, onSelect = { type = it }, columns = 2)
                 if (type == MaintenanceType.OTHER) { Spacer(Modifier.height(AppDimens.gap)); TextFieldR("عنوان تعمیر", typeText, { typeText = it }) }
             }
-            if (type in MaintenanceType.TRACKED) {
+            if (affectsTracking) {
                 FormSection("کیلومتر ${type.label}", Icons.Outlined.Speed) {
                     NumberField("کیلومتر فعلی (هنگام تعویض)", currentKmText, { currentKmText = it }, suffix = "کیلومتر")
                     Spacer(Modifier.height(AppDimens.gap))
                     NumberField("کیلومتر بعدی (موعد)", nextKmText, { nextKmText = it }, suffix = "کیلومتر")
                     Spacer(Modifier.height(6.dp))
                     Text(
-                        "با ثبت این تعویض، کیلومتر فعلی/بعدی ذخیره می‌شود. کیلومتر سرویس‌های بعدی از باقی‌مانده کم می‌شود.",
+                        "با ثبت این تعویض، کیلومتر فعلی/بعدی ذخیره می‌شود. کیلومتر بعدی را خالی بگذارید تا خودکار «کیلومتر فعلی + دورهٔ تعویض» محاسبه شود. کیلومتر سرویس‌های بعدی از باقی‌مانده کم می‌شود.",
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         style = MaterialTheme.typography.bodySmall,
                     )
                 }
+            } else if (isTracked) {
+                Text(
+                    "این رکورد از آخرین تعویض ${type.label} قدیمی‌تر است؛ فقط در سابقه ثبت می‌شود و وضعیت فعلی (کیلومتر بعدی) را تغییر نمی‌دهد.",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = MaterialTheme.typography.bodySmall,
+                )
             }
             FormSection("تاریخ، هزینه و توضیحات", Icons.Outlined.Event) {
                 JalaliDateField("تاریخ", date, { date = it })
@@ -434,10 +466,11 @@ private fun MaintenanceForm(
                 OutlinedButton(onClick = onClose, modifier = Modifier.weight(1f).height(AppDimens.buttonHeight), shape = FieldShape) { Text(tr("انصراف", "Cancel")) }
                 Button(onClick = {
                     scope.launch {
-                        val current = currentKmText.asDouble()
-                        val next = nextKmText.asDouble().takeIf { it > 0 } ?: if (type == MaintenanceType.OIL_CHANGE && current > 0) current + rates.oilChangeKmInterval else 0.0
-                        if (type in MaintenanceType.TRACKED) {
-                            val resolvedNext = next.takeIf { it > 0 }
+                        // Only a record that is the newest of its type touches tracking;
+                        // any other keeps its own km (or 0) and the live state is left alone.
+                        val current = if (affectsTracking) currentKmText.asDouble() else (existing?.km ?: 0.0)
+                        if (affectsTracking) {
+                            val resolvedNext = nextKmText.asDouble().takeIf { it > 0 }
                                 ?: if (current > 0) current + Analytics.intervalFor(type.wire, rates) else 0.0
                             repository.updateSettings { it.withTrackedKm(type.wire, current, resolvedNext) }
                         }

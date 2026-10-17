@@ -22,10 +22,12 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.khodroyar.app.core.holidays.IranHolidays
 import com.khodroyar.app.core.jalali.Jalali
+import com.khodroyar.app.data.backup.AutoBackup
 import com.khodroyar.app.data.backup.BackupFiles
 import com.khodroyar.app.data.legacy.LegacyBackup
 import com.khodroyar.app.data.prefs.AppSettings
 import com.khodroyar.app.data.repo.AppRepository
+import com.khodroyar.app.notifications.AutoBackupScheduler
 import com.khodroyar.app.notifications.AutoServiceScheduler
 import com.khodroyar.app.notifications.Notifications
 import com.khodroyar.app.notifications.ReminderScheduler
@@ -453,6 +455,47 @@ fun SettingsScreen(repository: AppRepository, settings: AppSettings, onToggleThe
         item { CollapsibleSectionTitle("پشتیبان‌گیری و بازگردانی", icon = Icons.Outlined.Backup, expanded = "backup" in sectionOpen.value, onToggle = { toggleSection("backup") }, englishTitle = "Backup & Restore") }
         if ("backup" in sectionOpen.value) {
         item {
+            SwitchRow(
+                "پشتیبان‌گیری خودکار روزانه",
+                if (settings.autoBackupEnabled) "فعال — ${AutoBackupScheduler.RUN_TIME_LABEL}، بدون نیاز به دخالت شما"
+                else "غیرفعال — با روشن کردن، هر شب خودش از اطلاعات فایل پشتیبان می‌سازد",
+                settings.autoBackupEnabled,
+            ) { v ->
+                repository.updateSettings { it.copy(autoBackupEnabled = v) }
+                if (v) {
+                    AutoBackupScheduler.sync(context)
+                    AutoBackupScheduler.runNow(context)
+                    toast.show("پشتیبان‌گیری خودکار فعال شد؛ اولین نسخه همین الان ساخته می‌شود")
+                } else {
+                    AutoBackupScheduler.cancel(context)
+                }
+            }
+        }
+        if (settings.autoBackupEnabled) {
+            item {
+                Text(
+                    if (settings.autoBackupLastDate.isNotBlank())
+                        "آخرین پشتیبان خودکار: ${settings.autoBackupLastDate} · ${settings.autoBackupLastPlace}\n" +
+                            "تا ۱۴ نسخهٔ آخر نگه داشته می‌شود. برای بازگردانی، «بازگردانی از فایل» را بزنید و فایل را از همان پوشه انتخاب کنید."
+                    else "هنوز پشتیبان خودکاری ساخته نشده است.",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
+            item {
+                ActionRow(
+                    "پشتیبان خودکار همین حالا",
+                    "ساخت فوری فایل در پوشهٔ Download/KhodroYar",
+                    Icons.Outlined.Backup,
+                ) {
+                    scope.launch {
+                        val ok = AutoBackup.run(context, force = true)
+                        toast.show(if (ok) "پشتیبان خودکار ساخته شد" else "ساخت پشتیبان انجام نشد")
+                    }
+                }
+            }
+        }
+        item {
             ActionRow(
                 "ذخیره پشتیبان روی دستگاه",
                 "انتخاب مسیر و ساخت فایل JSON واقعی",
@@ -534,6 +577,7 @@ fun SettingsScreen(repository: AppRepository, settings: AppSettings, onToggleThe
         item { CollapsibleSectionTitle("درباره برنامه", icon = Icons.Outlined.Info, expanded = "about" in sectionOpen.value, onToggle = { toggleSection("about") }, englishTitle = "About") }
         if ("about" in sectionOpen.value) {
         item { AboutCard() }
+        item { TermsLinkCard() }
     }
 
         }
@@ -585,6 +629,7 @@ fun SettingsScreen(repository: AppRepository, settings: AppSettings, onToggleThe
                                 // so the schedule is rebuilt rather than left stale.
                                 ReminderScheduler.reschedule(context)
                                 AutoServiceScheduler.sync(context)
+                                AutoBackupScheduler.sync(context)
                                 healthToken++
                                 toast.show(
                                     if (result.isSuccess) "بازگردانی با موفقیت انجام شد"

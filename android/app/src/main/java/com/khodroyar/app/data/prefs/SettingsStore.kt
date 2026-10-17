@@ -87,6 +87,15 @@ data class AppSettings(
     val autoServiceLastRunDate: String = "",
     /** Named service presets (JSON list of ServicePreset). Max ~8 kept by UI. */
     val servicePresetsJson: String = "[]",
+    // Version of the terms text the user accepted (0 = never). Per-install, like
+    // lastBackupAt: deliberately NOT in the backup, so restoring on a new phone asks again.
+    val acceptedTermsVersion: Int = 0,
+    // Daily automatic backup at 00:00 into Downloads/KhodroYar. The switch is user
+    // configuration (kept in backups); the last-run fields are this device's worker
+    // history, so — like lastBackupAt — they are deliberately not exported.
+    val autoBackupEnabled: Boolean = true,
+    val autoBackupLastDate: String = "",
+    val autoBackupLastPlace: String = "",
 ) {
     companion object {
         const val THEME_SYSTEM = "system"
@@ -200,6 +209,10 @@ class SettingsStore private constructor(context: Context) {
         autoServiceTollCount = prefs.getInt(K_AUTO_TOLL, 0),
         autoServiceLastRunDate = prefs.getString(K_AUTO_LAST_RUN, "") ?: "",
         servicePresetsJson = prefs.getString(K_PRESETS, "[]") ?: "[]",
+        acceptedTermsVersion = prefs.getInt(K_TERMS, 0),
+        autoBackupEnabled = prefs.getBoolean(K_AUTO_BACKUP, true),
+        autoBackupLastDate = prefs.getString(K_AUTO_BACKUP_DATE, "") ?: "",
+        autoBackupLastPlace = prefs.getString(K_AUTO_BACKUP_PLACE, "") ?: "",
     )
 
     private fun write(s: AppSettings) {
@@ -251,6 +264,10 @@ class SettingsStore private constructor(context: Context) {
             .putInt(K_AUTO_TOLL, s.autoServiceTollCount)
             .putString(K_AUTO_LAST_RUN, s.autoServiceLastRunDate)
             .putString(K_PRESETS, s.servicePresetsJson)
+            .putInt(K_TERMS, s.acceptedTermsVersion)
+            .putBoolean(K_AUTO_BACKUP, s.autoBackupEnabled)
+            .putString(K_AUTO_BACKUP_DATE, s.autoBackupLastDate)
+            .putString(K_AUTO_BACKUP_PLACE, s.autoBackupLastPlace)
             .apply()
         _state.value = s
     }
@@ -307,7 +324,8 @@ class SettingsStore private constructor(context: Context) {
             "\"autoServiceStartTime\":" + q(s.autoServiceStartTime) + "," +
             "\"autoServiceEndTime\":" + q(s.autoServiceEndTime) + "," +
             "\"autoServiceTollCount\":" + s.autoServiceTollCount + "," +
-            "\"servicePresetsJson\":" + q(s.servicePresetsJson) +
+            "\"servicePresetsJson\":" + q(s.servicePresetsJson) + "," +
+            "\"autoBackupEnabled\":" + b(s.autoBackupEnabled) +
             "}"
     }
 
@@ -330,6 +348,7 @@ class SettingsStore private constructor(context: Context) {
         autoServiceStartTime: String? = null, autoServiceEndTime: String? = null,
         autoServiceTollCount: Int? = null,
         servicePresetsJson: String? = null,
+        autoBackupEnabled: Boolean? = null,
     ) = update { c ->
         c.copy(
             themeMode = themeMode ?: c.themeMode,
@@ -367,6 +386,7 @@ class SettingsStore private constructor(context: Context) {
             autoServiceEndTime = autoServiceEndTime ?: c.autoServiceEndTime,
             autoServiceTollCount = autoServiceTollCount ?: c.autoServiceTollCount,
             servicePresetsJson = servicePresetsJson ?: c.servicePresetsJson,
+            autoBackupEnabled = autoBackupEnabled ?: c.autoBackupEnabled,
         )
     }
 
@@ -418,6 +438,10 @@ class SettingsStore private constructor(context: Context) {
         private const val K_AUTO_TOLL = "autoServiceTollCount"
         private const val K_AUTO_LAST_RUN = "autoServiceLastRunDate"
         private const val K_PRESETS = "servicePresetsJson"
+        private const val K_TERMS = "acceptedTermsVersion"
+        private const val K_AUTO_BACKUP = "autoBackupEnabled"
+        private const val K_AUTO_BACKUP_DATE = "autoBackupLastDate"
+        private const val K_AUTO_BACKUP_PLACE = "autoBackupLastPlace"
 
         @Volatile private var instance: SettingsStore? = null
 
