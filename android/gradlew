@@ -1,0 +1,83 @@
+#!/bin/sh
+
+APP_HOME=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+CLASSPATH="$APP_HOME/gradle/wrapper/gradle-wrapper.jar"
+
+unset JAVA_TOOL_OPTIONS
+unset _JAVA_OPTIONS
+unset JAVA_OPTS
+unset GRADLE_OPTS
+
+# Determine java binary
+if [ -n "$JAVA_HOME" ] && [ -x "$JAVA_HOME/bin/java" ]; then
+    JAVACMD="$JAVA_HOME/bin/java"
+elif command -v java >/dev/null 2>&1; then
+    JAVACMD="java"
+else
+    echo "ERROR: JAVA_HOME is not set and no 'java' command could be found in your PATH." >&2
+    exit 1
+fi
+
+GRADLE_VERSION="8.11.1"
+
+# 1. If wrapper JAR exists, execute wrapper directly
+if [ -f "$CLASSPATH" ]; then
+    exec "$JAVACMD" \
+        "-Dorg.gradle.appname=gradlew" \
+        -classpath "$CLASSPATH" \
+        org.gradle.wrapper.GradleWrapperMain "$@"
+fi
+
+# 2. Try to download wrapper JAR if missing
+mkdir -p "$APP_HOME/gradle/wrapper"
+if command -v curl >/dev/null 2>&1; then
+    curl -fsSL --connect-timeout 15 --max-time 60 \
+        "https://raw.githubusercontent.com/gradle/gradle/v${GRADLE_VERSION}/gradle/wrapper/gradle-wrapper.jar" \
+        -o "$CLASSPATH" 2>/dev/null || rm -f "$CLASSPATH"
+fi
+
+if [ -f "$CLASSPATH" ]; then
+    exec "$JAVACMD" \
+        "-Dorg.gradle.appname=gradlew" \
+        -classpath "$CLASSPATH" \
+        org.gradle.wrapper.GradleWrapperMain "$@"
+fi
+
+# 3. Fallback: If global gradle command is available
+if command -v gradle >/dev/null 2>&1; then
+    exec gradle "$@"
+fi
+
+# 4. Fallback: Bootstrap Gradle distribution directly
+GRADLE_USER_HOME="${GRADLE_USER_HOME:-$HOME/.gradle}"
+DIST_DIR="$GRADLE_USER_HOME/wrapper/dists/gradle-${GRADLE_VERSION}-bin"
+GRADLE_BIN="$DIST_DIR/gradle-${GRADLE_VERSION}/bin/gradle"
+
+if [ -x "$GRADLE_BIN" ]; then
+    exec "$GRADLE_BIN" "$@"
+fi
+
+echo "Gradle Wrapper JAR not found. Bootstrapping Gradle ${GRADLE_VERSION} for EAS Cloud..."
+mkdir -p "$DIST_DIR"
+TMP_ZIP="$DIST_DIR/gradle-${GRADLE_VERSION}-bin.zip.$$"
+
+if command -v curl >/dev/null 2>&1; then
+    curl -fsSL "https://services.gradle.org/distributions/gradle-${GRADLE_VERSION}-bin.zip" -o "$TMP_ZIP"
+elif command -v wget >/dev/null 2>&1; then
+    wget -q "https://services.gradle.org/distributions/gradle-${GRADLE_VERSION}-bin.zip" -O "$TMP_ZIP"
+else
+    echo "ERROR: Neither curl nor wget found to download Gradle." >&2
+    exit 1
+fi
+
+unzip -q -o "$TMP_ZIP" -d "$DIST_DIR"
+rm -f "$TMP_ZIP"
+
+if [ -x "$GRADLE_BIN" ]; then
+    chmod +x "$GRADLE_BIN"
+    "$GRADLE_BIN" wrapper --gradle-version "$GRADLE_VERSION" >/dev/null 2>&1 || true
+    exec "$GRADLE_BIN" "$@"
+fi
+
+echo "ERROR: Failed to bootstrap Gradle ${GRADLE_VERSION}." >&2
+exit 1
