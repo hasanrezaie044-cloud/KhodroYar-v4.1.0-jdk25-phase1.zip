@@ -4,7 +4,7 @@ package com.khodroyar.app.ai
 data class AiMessage(val role: String, val content: String)
 
 /** Local is an explicit command assistant, not a downloaded/generative language model. */
-enum class AiMode { LOCAL, ONLINE }
+enum class AiMode { LOCAL, ONLINE, GAPGPT_DIRECT }
 
 enum class AiErrorKind {
     OFFLINE, TIMEOUT, NOT_CONFIGURED, DISABLED, BAD_REQUEST, UNAUTHORIZED,
@@ -26,15 +26,15 @@ data class AiProviderStatus(
     val enabled: Boolean = false,
     val configured: Boolean = false,
     val defaultModel: String = "",
-    /** null = unknown (could not be checked), true/false = real answer from the provider's model list. */
+    /** null = unknown (could not be checked), true/false = real answer from the provider's model list or a successful completion. */
     val modelAvailable: Boolean? = null,
     val message: String = "",
     val errorKind: AiErrorKind? = null,
 )
 
 /**
- * Online provider abstraction. Local mode never constructs a request to this surface.
- * Other online providers can be added behind the same backend contract.
+ * Online provider abstraction. The custom backend and direct OpenAI-compatible service
+ * have DIFFERENT endpoint/response contracts. Local mode never calls either one.
  */
 interface AIProvider {
     val name: String

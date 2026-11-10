@@ -79,6 +79,7 @@ import com.khodroyar.app.ai.ChatEntry
 import com.khodroyar.app.ai.ChatRole
 import com.khodroyar.app.ai.ConnectionState
 import com.khodroyar.app.ai.Conversation
+import com.khodroyar.app.ai.GapGptDirectContract
 import com.khodroyar.app.ai.PendingAction
 import com.khodroyar.app.ui.components.ConfirmDialog
 import com.khodroyar.app.ui.components.FieldShape
@@ -146,7 +147,10 @@ fun AiAssistantScreen(vm: AiAssistantViewModel = viewModel()) {
                                 f.message,
                                 retryable = f.kind !in setOf(AiErrorKind.NOT_CONFIGURED, AiErrorKind.NOT_FOUND),
                                 onRetry = vm::retry, onSettings = { showSettings = true },
-                                onLocal = if (settings.mode == AiMode.ONLINE) vm::useLocalMode else null,
+                                onLocal = if (settings.mode != AiMode.LOCAL) vm::useLocalMode else null,
+                                onDirect = if (settings.mode == AiMode.ONLINE && GapGptDirectContract.isProviderHost(settings.backendUrl)) {
+                                    { vm.chooseDirectGapGpt(); showSettings = true }
+                                } else null,
                             )
                         }
                     }
@@ -157,22 +161,27 @@ fun AiAssistantScreen(vm: AiAssistantViewModel = viewModel()) {
         InputBar(
             value = input,
             onChange = { input = it.take(AiLimits.MAX_USER_CHARS) },
-            enabled = settings.enabled && vm.pending == null,
+            enabled = settings.enabled && vm.pending == null && !vm.savingSettings,
             busy = vm.busy,
             placeholder = if (vm.pending != null) "ابتدا عملیات بالا را تأیید یا لغو کنید" else "پیام خود را بنویسید…",
             onSend = { vm.send(input); if (settings.mode == AiMode.LOCAL || settings.consented) input = "" },
         )
     }
 
-    if (vm.needsConsent) ConsentDialog(onAccept = { vm.acceptConsent(); input = "" }, onDecline = vm::declineConsent)
+    if (vm.needsConsent) ConsentDialog(mode = settings.mode, onAccept = { vm.acceptConsent(); input = "" }, onDecline = vm::declineConsent)
 
     if (showSettings && !vm.needsConsent) {
         SettingsDialog(
             current = settings,
             testMessage = vm.testMessage,
-            onTest = { vm.saveSettings(it); vm.testConnection() },
-            onSave = { vm.saveSettings(it); vm.clearTestMessage(); showSettings = false },
-            onDismiss = { vm.clearTestMessage(); showSettings = false },
+            hasDirectKey = vm.hasGapGptKey,
+            saving = vm.savingSettings,
+            settingsError = vm.settingsError,
+            onTest = { new, key, forget -> vm.configure(new, key, forget) { vm.testConnection() } },
+            onSave = { new, key, forget -> vm.configure(new, key, forget) {
+                vm.clearTestMessage(); vm.clearSettingsError(); showSettings = false
+            } },
+            onDismiss = { vm.clearTestMessage(); vm.clearSettingsError(); showSettings = false },
         )
     }
     if (showHistory) {
@@ -242,12 +251,13 @@ private fun AssistantHeader(
 }
 
 private fun connectionLook(s: ConnectionState): Pair<String, Color> = when (s) {
+    ConnectionState.READY -> "تنظیم شده — اتصال آزمایش نشده" to Color(0xFFF9A825)
     ConnectionState.LOCAL -> "داخلی — آماده، بدون API" to Color(0xFF2E7D32)
     ConnectionState.NEEDS_CONSENT -> "آنلاین — نیاز به رضایت ارسال داده" to Color(0xFFF9A825)
     ConnectionState.ONLINE -> "متصل" to Color(0xFF2E7D32)
     ConnectionState.CHECKING, ConnectionState.UNKNOWN -> "در حال بررسی اتصال…" to Color(0xFFF9A825)
     ConnectionState.OFFLINE -> "قطع (اینترنت یا سرور)" to Color(0xFFC62828)
-    ConnectionState.NOT_CONFIGURED -> "سرور تنظیم نشده" to Color(0xFF757575)
+    ConnectionState.NOT_CONFIGURED -> "اتصال یا کلید تنظیم نشده" to Color(0xFF757575)
     ConnectionState.DISABLED -> "غیرفعال" to Color(0xFF757575)
     ConnectionState.ERROR -> "سرور آماده نیست" to Color(0xFFC62828)
 }
@@ -344,10 +354,11 @@ private fun ConfirmCard(p: PendingAction, onConfirm: () -> Unit, onCancel: () ->
 }
 
 @Composable
-private fun ErrorCard(message: String, retryable: Boolean, onRetry: () -> Unit, onSettings: () -> Unit, onLocal: (() -> Unit)?) {
+private fun ErrorCard(message: String, retryable: Boolean, onRetry: () -> Unit, onSettings: () -> Unit, onLocal: (() -> Unit)?, onDirect: (() -> Unit)?) {
     Surface(shape = RoundedCornerShape(18.dp), color = MaterialTheme.colorScheme.errorContainer) {
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text(message, color = MaterialTheme.colorScheme.onErrorContainer)
+            if (onDirect != null) Button(onClick = onDirect) { Text("تنظیم اتصال مستقیم GapGPT") }
             if (onLocal != null) Button(onClick = onLocal) { Text("ادامه با دستیار داخلی — بدون API") }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 if (retryable) OutlinedButton(onClick = onRetry) { Text("تلاش دوباره") }
@@ -371,9 +382,11 @@ private fun EmptyState(state: ConnectionState, mode: AiMode, onSettings: () -> U
         Text("دستیار خودرویار", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
         Spacer(Modifier.height(6.dp))
         Text(
-            if (mode == AiMode.LOCAL)
-                "بدون اینترنت، API یا سرور کار می‌کند. گزارش، هزینه، تعمیر، سوخت و یادآور را با دستورهای مشخص مدیریت کنید. این حالت مدل زبانی عمومی نیست و چیزی به اینترنت نمی‌فرستد."
-            else "دستیار آنلاین به بک‌اند شخصی خودرویار نیاز دارد؛ آدرس مستقیم GapGPT یا صفحهٔ سایت کافی نیست. ارسال اطلاعات فقط پس از رضایت شماست.",
+            when (mode) {
+                AiMode.LOCAL -> "بدون اینترنت، API یا سرور کار می‌کند. گزارش، هزینه، تعمیر، سوخت و یادآور را با دستورهای مشخص مدیریت کنید. این حالت مدل زبانی عمومی نیست و چیزی به اینترنت نمی‌فرستد."
+                AiMode.ONLINE -> "اتصال از طریق بک‌اند خودرویار؛ آدرس مستقیم GapGPT را در این حالت وارد نکنید. برای اتصال مستقیم، گزینهٔ جداگانهٔ GapGPT در تنظیمات است."
+                AiMode.GAPGPT_DIRECT -> "اتصال مستقیم به Chat Completions گپ‌جی‌پی‌تی؛ به کلید واقعی، اینترنت و اعتبار حساب نیاز دارد. کلید فقط با رمزنگاری گوشی نگهداری می‌شود. ارسال اطلاعات و ثبت/حذف همچنان با رضایت و تأیید شماست."
+            },
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -450,17 +463,20 @@ private fun InputBar(
 /* ----------------------------------------------------------------- dialogs */
 
 @Composable
-private fun ConsentDialog(onAccept: () -> Unit, onDecline: () -> Unit) {
+private fun ConsentDialog(mode: AiMode, onAccept: () -> Unit, onDecline: () -> Unit) {
     AlertDialog(
         onDismissRequest = onDecline,
         title = { Text("قبل از شروع") },
         text = {
             Text(
                 "فقط در حالت آنلاین، متن پیام و حداکثر ۱۰ پیام اخیر همین گفتگو و در صورت نیاز خلاصه‌ای از سوابق مرتبط (مثل مبلغ‌ها، تاریخ‌ها و عنوان هزینه‌ها) " +
-                    "به سرور دستیار و از آنجا به سرویس هوش مصنوعی (GapGPT) ارسال می‌شود. بدون موافقت شما چیزی ارسال نمی‌شود.\n\n" +
+                    (if (mode == AiMode.GAPGPT_DIRECT) "مستقیماً به آدرس رسمی GapGPT یا CDN انتخابی شما ارسال می‌شود. کلید حساب فقط در هدر Authorization همان مقصد استفاده می‌شود. "
+                     else "به بک‌اند خودرویار و از آنجا به سرویس مدل ارسال می‌شود. ") +
+                    "بدون موافقت شما چیزی ارسال نمی‌شود. تغییر حساب/آدرس/حالت نیازمند رضایت دوباره است.\n\n" +
                     "گفتگوها فقط روی همین دستگاه ذخیره می‌شوند و هر زمان می‌توانید آن‌ها را پاک یا دستیار را غیرفعال کنید. " +
                     "موقعیت مکانی، مخاطبین، پیامک، فایل‌ها و اطلاعات پرسنل ارسال نمی‌شود. ثبت، ویرایش و حذف فقط با تأیید شما انجام می‌شود.\n\n" +
-                    "سرویس آنلاین ممکن است هزینهٔ توکن داشته باشد. حالت داخلی بدون API و اینترنت کار می‌کند و به این رضایت نیاز ندارد.",
+                    "سرویس آنلاین به اعتبار حساب نیاز دارد. در اتصال مستقیم، «آزمایش اتصال» یک پیام سلام با حداکثر خروجی ۳۲ توکن می‌فرستد و ممکن است هزینه داشته باشد؛ تاریخچه یا اطلاعات مالی را در تست نمی‌فرستد. حالت داخلی بدون API است.",
+                modifier = Modifier.verticalScroll(rememberScrollState()),
             )
         },
         confirmButton = { Button(onClick = onAccept) { Text("موافقم و ادامه") } },
@@ -472,8 +488,11 @@ private fun ConsentDialog(onAccept: () -> Unit, onDecline: () -> Unit) {
 private fun SettingsDialog(
     current: AiSettings,
     testMessage: String?,
-    onTest: (AiSettings) -> Unit,
-    onSave: (AiSettings) -> Unit,
+    hasDirectKey: Boolean,
+    saving: Boolean,
+    settingsError: String?,
+    onTest: (AiSettings, String, Boolean) -> Unit,
+    onSave: (AiSettings, String, Boolean) -> Unit,
     onDismiss: () -> Unit,
 ) {
     var enabled by remember { mutableStateOf(current.enabled) }
@@ -481,64 +500,126 @@ private fun SettingsDialog(
     var url by remember { mutableStateOf(current.backendUrl) }
     var model by remember { mutableStateOf(current.model) }
     var token by remember { mutableStateOf(current.clientToken) }
+    var directUrl by remember { mutableStateOf(current.gapGptBaseUrl) }
+    var directModel by remember { mutableStateOf(current.gapGptModel) }
+    // Never rememberSaveable: a provider key must not enter saved-instance state or backups.
+    var apiKey by remember { mutableStateOf("") }
+    var forgetKey by remember { mutableStateOf(false) }
     val ltr = LocalTextStyle.current.copy(textDirection = TextDirection.Ltr)
-    val valid = mode == AiMode.LOCAL || !enabled || AiSettingsStore.isValidBackendUrl(url)
-    fun candidate() = current.copy(enabled = enabled, mode = mode, backendUrl = url, model = model, clientToken = token)
+    val keyValid = apiKey.isBlank() || GapGptDirectContract.normalizeApiKey(apiKey) != null
+    val valid = when (mode) {
+        AiMode.LOCAL -> true
+        AiMode.ONLINE -> !enabled || AiSettingsStore.isValidBackendUrl(url)
+        AiMode.GAPGPT_DIRECT -> GapGptDirectContract.normalizeBaseUrl(directUrl) != null && keyValid &&
+            (!enabled || hasDirectKey || apiKey.isNotBlank() || forgetKey)
+    }
+    fun candidate() = current.copy(
+        enabled = enabled, mode = mode, backendUrl = url, model = model, clientToken = token,
+        gapGptBaseUrl = directUrl, gapGptModel = directModel,
+    )
 
     AlertDialog(
-        onDismissRequest = onDismiss,
+        onDismissRequest = { if (!saving) onDismiss() },
         title = { Text("تنظیمات دستیار") },
         text = {
             Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text("فعال بودن دستیار", Modifier.weight(1f))
-                    Switch(checked = enabled, onCheckedChange = { enabled = it })
+                    Switch(checked = enabled, onCheckedChange = { enabled = it }, enabled = !saving)
                 }
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    RadioButton(selected = mode == AiMode.LOCAL, onClick = { mode = AiMode.LOCAL })
-                    TextButton(onClick = { mode = AiMode.LOCAL }) { Text("داخلی — بدون API (پیش‌فرض)") }
+                listOf(
+                    AiMode.LOCAL to "داخلی — بدون API",
+                    AiMode.GAPGPT_DIRECT to "اتصال مستقیم GapGPT",
+                    AiMode.ONLINE to "بک‌اند شخصی خودرویار",
+                ).forEach { (choice, title) ->
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        RadioButton(selected = mode == choice, onClick = { mode = choice }, enabled = !saving)
+                        TextButton(onClick = { mode = choice }, enabled = !saving) { Text(title) }
+                    }
                 }
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    RadioButton(selected = mode == AiMode.ONLINE, onClick = { mode = AiMode.ONLINE })
-                    TextButton(onClick = { mode = AiMode.ONLINE }) { Text("آنلاین — سرور شخصی") }
-                }
-                if (mode == AiMode.LOCAL) {
-                    Text(
-                        "به اینترنت، کلید، اعتبار یا دانلود مدل نیاز ندارد. گزارش‌ها از داده‌های واقعی همین دستگاه خوانده می‌شوند. ثبت با تأیید شماست. این دستیار دستورمحور است، نه مدل زبانی عمومی؛ برای نمونه‌ها «راهنما» بفرستید.",
+                when (mode) {
+                    AiMode.LOCAL -> Text(
+                        "به اینترنت، کلید، اعتبار یا دانلود مدل نیاز ندارد. این دستیار دستورمحور است، نه مدل زبانی عمومی؛ برای نمونه‌ها «راهنما» بفرستید. ثبت فقط با تأیید شماست.",
                         style = MaterialTheme.typography.bodyMedium,
                     )
-                } else {
-                    OutlinedTextField(
-                        value = url, onValueChange = { url = it }, singleLine = true, shape = FieldShape, colors = fieldColors(),
-                        label = { Text("آدرس HTTPS بک‌اند خودرویار") }, textStyle = ltr,
-                        supportingText = { Text("آدرس ریشه یا /v1 پذیرفته می‌شود؛ آدرس مستقیم GapGPT یا سایت نیست.") },
-                        isError = url.isNotBlank() && !AiSettingsStore.isValidBackendUrl(url),
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                    OutlinedTextField(
-                        value = model, onValueChange = { model = it }, singleLine = true, shape = FieldShape, colors = fieldColors(),
-                        label = { Text("نام مدل (خالی = پیش‌فرض سرور)") }, textStyle = ltr,
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Ascii),
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                    OutlinedTextField(
-                        value = token, onValueChange = { token = it }, singleLine = true, shape = FieldShape, colors = fieldColors(),
-                        label = { Text("توکن برنامه، نه کلید API (اختیاری)") }, textStyle = ltr,
-                        visualTransformation = PasswordVisualTransformation(),
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Ascii),
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                    Text("کلید سرویس مدل فقط روی سرور نگهداری می‌شود. سرویس آنلاین لزوماً رایگان نیست.", style = MaterialTheme.typography.labelMedium)
+                    AiMode.GAPGPT_DIRECT -> {
+                        Text("آدرس سرویس (مطابق راهنمای GapGPT):", fontWeight = FontWeight.SemiBold)
+                        listOf(
+                            GapGptDirectContract.PRIMARY_BASE_URL to "اصلی — api.gapgpt.app",
+                            GapGptDirectContract.CDN_BASE_URL to "CDN خارجی — api.gapapi.com",
+                        ).forEach { (base, label) ->
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                RadioButton(selected = GapGptDirectContract.normalizeBaseUrl(directUrl) == base, onClick = { directUrl = base }, enabled = !saving)
+                                TextButton(onClick = { directUrl = base }, enabled = !saving) { Text(label) }
+                            }
+                        }
+                        Text("POST " + GapGptDirectContract.chatUrl(directUrl).orEmpty(), style = MaterialTheme.typography.labelSmall.copy(textDirection = TextDirection.Ltr))
+                        OutlinedTextField(
+                            value = directModel, onValueChange = { directModel = it.take(100) }, singleLine = true,
+                            label = { Text("مدل GapGPT (خالی = gpt-4o)") },
+                            supportingText = { Text("مثلاً gpt-4o یا gemini-2.5-pro؛ باید در حساب شما قابل استفاده باشد.") },
+                            enabled = !saving, shape = FieldShape, colors = fieldColors(), textStyle = ltr,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                        OutlinedTextField(
+                            value = apiKey, onValueChange = { apiKey = it.take(4096); if (it.isNotBlank()) forgetKey = false }, singleLine = true,
+                            label = { Text("API Key واقعی حساب GapGPT") },
+                            placeholder = { Text(if (hasDirectKey && !forgetKey) "خالی = حفظ کلید رمزنگاری‌شده" else "کلید را فقط اینجا وارد کنید") },
+                            supportingText = { Text(if (forgetKey) "کلید ذخیره‌شده با ذخیرهٔ تنظیمات پاک می‌شود." else if (hasDirectKey) "کلید رمزنگاری‌شده روی گوشی موجود است؛ نمایش داده نمی‌شود." else "YOUR_GAPGPT_API_KEY کلید واقعی نیست. کلید را در چت نفرستید.") },
+                            isError = !keyValid,
+                            visualTransformation = PasswordVisualTransformation(),
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                            enabled = !saving, shape = FieldShape, colors = fieldColors(), textStyle = ltr,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                        if (hasDirectKey && !forgetKey) TextButton(onClick = { forgetKey = true; apiKey = "" }, enabled = !saving) { Text("حذف کلید از گوشی هنگام ذخیره") }
+                        Text(
+                            "کلید شخصی شما با Android Keystore رمزنگاری می‌شود؛ داخل APK، بکاپ یا تاریخچه نیست. Redirect و تغییر خودکار CDN انجام نمی‌شود. اتصال و تست واقعی ممکن است اعتبار مصرف کنند.",
+                            style = MaterialTheme.typography.labelMedium,
+                        )
+                    }
+                    AiMode.ONLINE -> {
+                        OutlinedTextField(
+                            value = url, onValueChange = { url = it }, singleLine = true, shape = FieldShape, colors = fieldColors(),
+                            label = { Text("آدرس HTTPS بک‌اند خودرویار") }, textStyle = ltr, enabled = !saving,
+                            supportingText = { Text("این فیلد برای سرور واسطِ مستقرشده است، نه آدرس خود GapGPT.") },
+                            isError = url.isNotBlank() && !AiSettingsStore.isValidBackendUrl(url),
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                        if (GapGptDirectContract.isProviderHost(url)) {
+                            Text("این آدرس متعلق به خود GapGPT است و /v1/chat بک‌اند را ندارد. اتصال مستقیم را انتخاب کنید.", color = MaterialTheme.colorScheme.error)
+                            OutlinedButton(onClick = { directUrl = GapGptDirectContract.normalizeBaseUrl(url) ?: GapGptDirectContract.PRIMARY_BASE_URL; mode = AiMode.GAPGPT_DIRECT }, enabled = !saving) { Text("استفاده از اتصال مستقیم GapGPT") }
+                        }
+                        OutlinedTextField(
+                            value = model, onValueChange = { model = it.take(100) }, singleLine = true, shape = FieldShape, colors = fieldColors(),
+                            label = { Text("مدل (خالی = پیش‌فرض بک‌اند)") }, textStyle = ltr, enabled = !saving,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                        OutlinedTextField(
+                            value = token, onValueChange = { token = it }, singleLine = true, shape = FieldShape, colors = fieldColors(),
+                            label = { Text("توکن بک‌اند، نه API Key") }, textStyle = ltr, enabled = !saving,
+                            visualTransformation = PasswordVisualTransformation(),
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                        Text("در این حالت کلید سرویس مدل فقط روی سرور شماست. برای API مستقیم، گزینهٔ جداگانهٔ بالا را انتخاب کنید.", style = MaterialTheme.typography.labelMedium)
+                    }
                 }
-                OutlinedButton(onClick = { onTest(candidate()) }, enabled = valid) {
-                    Text(if (mode == AiMode.LOCAL) "ذخیره و بررسی حالت داخلی" else "ذخیره و آزمایش اتصال")
+                val canTest = valid && !saving && enabled && !(mode == AiMode.GAPGPT_DIRECT && forgetKey && apiKey.isBlank())
+                OutlinedButton(onClick = {
+                    onTest(candidate(), apiKey, forgetKey)
+                    apiKey = ""
+                    forgetKey = false
+                }, enabled = canTest) {
+                    Text(if (mode == AiMode.LOCAL) "ذخیره و بررسی حالت داخلی" else if (mode == AiMode.GAPGPT_DIRECT) "ذخیره و ارسال تست واقعی (مصرف اعتبار)" else "ذخیره و آزمایش بک‌اند")
                 }
-                testMessage?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
+                if (saving) Text("در حال ذخیرهٔ امن تنظیمات…", style = MaterialTheme.typography.bodySmall)
+                settingsError?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
+                testMessage?.let { Text(it, style = MaterialTheme.typography.bodySmall.copy(textDirection = TextDirection.Content)) }
             }
         },
-        confirmButton = { Button(onClick = { onSave(candidate()) }, enabled = valid) { Text("ذخیره") } },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("بستن") } },
+        confirmButton = { Button(onClick = { onSave(candidate(), apiKey, forgetKey) }, enabled = valid && !saving) { Text("ذخیره") } },
+        dismissButton = { TextButton(onClick = onDismiss, enabled = !saving) { Text("بستن") } },
     )
 }
 

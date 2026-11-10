@@ -14,7 +14,7 @@ import java.net.SocketTimeoutException
 import java.net.URL
 import java.net.UnknownHostException
 
-/** Optional ONLINE mode only. A provider API key is never shipped in or entered into the app. */
+/** Custom KhodroYar BACKEND mode only, not the public GapGPT/OpenAI Chat Completions API. */
 class GapGPTProvider(
     private val context: Context,
     private val settings: AiSettingsStore,
@@ -47,7 +47,7 @@ class GapGPTProvider(
                 return@withContext AiResult.Failure(AiErrorKind.DISABLED, "ارسال آنلاین فعال نیست یا رضایت ارسال اطلاعات داده نشده است.")
             }
             val url = AiBackendContract.endpoint(s.backendUrl, "chat") ?: return@withContext AiResult.Failure(
-                AiErrorKind.NOT_CONFIGURED, "آدرس معتبر HTTPS بک‌اند خودرویار را وارد کنید یا از حالت داخلی بدون API استفاده کنید.",
+                AiErrorKind.NOT_CONFIGURED, "این حالت آدرس بک‌اند خودرویار را می‌خواهد. برای api.gapgpt.app یا api.gapapi.com گزینهٔ «اتصال مستقیم GapGPT» و API Key حساب را انتخاب کنید.",
             )
             if (!online()) return@withContext AiResult.Failure(AiErrorKind.OFFLINE, "اینترنت برقرار نیست. می‌توانید از حالت داخلی بدون API استفاده کنید.")
             val payload = JSONObject().apply {
@@ -88,7 +88,7 @@ class GapGPTProvider(
             return@withContext AiProviderStatus(false, message = "برای آزمایش آنلاین ابتدا رضایت ارسال داده را تأیید کنید.", errorKind = AiErrorKind.DISABLED)
         }
         val url = AiBackendContract.endpoint(s.backendUrl, "status") ?: return@withContext AiProviderStatus(
-            false, message = "آدرس معتبر HTTPS بک‌اند خودرویار تنظیم نشده است.", errorKind = AiErrorKind.NOT_CONFIGURED,
+            false, message = "آدرس بک‌اند خودرویار معتبر نیست؛ آدرس‌های خود GapGPT باید در حالت «اتصال مستقیم GapGPT» استفاده شوند، نه در حالت بک‌اند.", errorKind = AiErrorKind.NOT_CONFIGURED,
         )
         if (!online()) return@withContext AiProviderStatus(false, message = "اینترنت قطع است.", errorKind = AiErrorKind.OFFLINE)
         try {

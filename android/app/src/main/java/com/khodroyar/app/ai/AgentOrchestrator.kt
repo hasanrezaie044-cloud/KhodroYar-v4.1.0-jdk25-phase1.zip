@@ -20,7 +20,7 @@ class AgentOrchestrator(
         val working = ArrayList<AiMessage>()
         working.add(AiMessage("system", systemPrompt()))
         working.addAll(historyMessages(history))
-        val model = settings.load().model.ifBlank { null }
+        val model = settings.load().requestedModel
 
         var steps = 0
         while (steps < AiLimits.MAX_AGENT_STEPS) {

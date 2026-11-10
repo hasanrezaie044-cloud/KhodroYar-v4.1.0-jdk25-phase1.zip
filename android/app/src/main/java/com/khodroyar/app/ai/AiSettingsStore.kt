@@ -21,7 +21,13 @@ data class AiSettings(
     /** Empty = let the backend use its own default model. */
     val model: String = "",
     val clientToken: String = "",
-)
+    /** Public URL/model for the explicitly selected direct connection. No API key here. */
+    val gapGptBaseUrl: String = GapGptDirectContract.PRIMARY_BASE_URL,
+    val gapGptModel: String = GapGptDirectContract.DEFAULT_MODEL,
+) {
+    val requestedModel: String? get() = if (mode == AiMode.GAPGPT_DIRECT)
+        GapGptDirectContract.selectedModel(this) else model.ifBlank { null }
+}
 
 class AiSettingsStore(context: Context) {
     private val prefs = context.applicationContext.getSharedPreferences("khodroyar_ai", Context.MODE_PRIVATE)
@@ -33,6 +39,8 @@ class AiSettingsStore(context: Context) {
         backendUrl = prefs.getString("backend_url", null) ?: BuildConfig.AI_BACKEND_URL,
         model = prefs.getString("model", "") ?: "",
         clientToken = prefs.getString("client_token", "") ?: "",
+        gapGptBaseUrl = prefs.getString("gapgpt_base_url", null) ?: GapGptDirectContract.PRIMARY_BASE_URL,
+        gapGptModel = prefs.getString("gapgpt_model", null) ?: GapGptDirectContract.DEFAULT_MODEL,
     )
 
     fun save(s: AiSettings) {
@@ -43,6 +51,8 @@ class AiSettingsStore(context: Context) {
             .putString("backend_url", AiBackendContract.normalizeRoot(s.backendUrl) ?: s.backendUrl.trim())
             .putString("model", s.model.trim())
             .putString("client_token", s.clientToken.trim())
+            .putString("gapgpt_base_url", GapGptDirectContract.normalizeBaseUrl(s.gapGptBaseUrl) ?: s.gapGptBaseUrl.trim())
+            .putString("gapgpt_model", s.gapGptModel.trim())
             .apply()
     }
 
@@ -57,6 +67,6 @@ class AiSettingsStore(context: Context) {
 
     companion object {
         /** Only https is accepted; plain http would expose conversations on the network. */
-        fun isValidBackendUrl(url: String): Boolean = AiBackendContract.normalizeRoot(url) != null
+        fun isValidBackendUrl(url: String): Boolean = AiBackendContract.normalizeRoot(url) != null && !GapGptDirectContract.isProviderHost(url)
     }
 }

@@ -37,6 +37,7 @@ object AiBackendContract {
 
     fun endpoint(input: String, resource: String): String? {
         require(resource in setOf("chat", "status", "models"))
+        if (GapGptDirectContract.isProviderHost(input)) return null
         return normalizeRoot(input)?.let { "$it/v1/$resource" }
     }
 
