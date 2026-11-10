@@ -112,6 +112,16 @@ jobs:
           chmod +x ./gradlew
           STATIC_ONLY=1 bash ../tools/check-permissions.sh
           ./gradlew testDebugUnitTest --stacktrace
+          python3 ../tools/summarize-tests.py app/build/test-results/testDebugUnitTest
+
+      - name: Upload Android unit test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: khodroyar-unit-tests
+          path: android/app/build/test-results/testDebugUnitTest
+          if-no-files-found: ignore
+          retention-days: 14
 
       - name: Build signed release APK
         working-directory: android
@@ -142,6 +152,8 @@ jobs:
           APKSIGNER="$ANDROID_HOME/build-tools/${ANDROID_BUILD_TOOLS}/apksigner"
           test -x "$APKSIGNER"
           "$APKSIGNER" verify --verbose --print-certs "$APK"
+          SHA=$(sha256sum "$APK" | awk '{print $1}')
+          echo "::notice title=Signed APK SHA256::$SHA"
           if "$APKSIGNER" verify "$APK" 2>&1 | grep -qi "DOES NOT VERIFY"; then
             echo "APK signature verification failed"
             exit 1
@@ -172,15 +184,6 @@ jobs:
           path: android/app/build/outputs/apk/release/app-release.apk
           if-no-files-found: error
           retention-days: 30
-
-      - name: Upload Android unit test reports
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: khodroyar-unit-tests
-          path: android/app/build/test-results/testDebugUnitTest
-          if-no-files-found: ignore
-          retention-days: 14
 
       - name: Upload R8 mapping
         if: always()
