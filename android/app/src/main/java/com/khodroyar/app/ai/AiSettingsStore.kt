@@ -13,6 +13,8 @@ import java.util.UUID
  */
 data class AiSettings(
     val enabled: Boolean = true,
+    /** Safe default for new installs AND upgrades: no backend, key, credit or consent required. */
+    val mode: AiMode = AiMode.LOCAL,
     /** The user has read and accepted what is sent to the server. Nothing is sent before this. */
     val consented: Boolean = false,
     val backendUrl: String = "",
@@ -26,6 +28,7 @@ class AiSettingsStore(context: Context) {
 
     fun load(): AiSettings = AiSettings(
         enabled = prefs.getBoolean("enabled", true),
+        mode = runCatching { AiMode.valueOf(prefs.getString("mode", null).orEmpty()) }.getOrDefault(AiMode.LOCAL),
         consented = prefs.getBoolean("consented", false),
         backendUrl = prefs.getString("backend_url", null) ?: BuildConfig.AI_BACKEND_URL,
         model = prefs.getString("model", "") ?: "",
@@ -35,8 +38,9 @@ class AiSettingsStore(context: Context) {
     fun save(s: AiSettings) {
         prefs.edit()
             .putBoolean("enabled", s.enabled)
+            .putString("mode", s.mode.name)
             .putBoolean("consented", s.consented)
-            .putString("backend_url", s.backendUrl.trim())
+            .putString("backend_url", AiBackendContract.normalizeRoot(s.backendUrl) ?: s.backendUrl.trim())
             .putString("model", s.model.trim())
             .putString("client_token", s.clientToken.trim())
             .apply()
@@ -53,9 +57,6 @@ class AiSettingsStore(context: Context) {
 
     companion object {
         /** Only https is accepted; plain http would expose conversations on the network. */
-        fun isValidBackendUrl(url: String): Boolean {
-            val u = url.trim()
-            return u.startsWith("https://", ignoreCase = true) && u.length > 10 && !u.contains(' ')
-        }
+        fun isValidBackendUrl(url: String): Boolean = AiBackendContract.normalizeRoot(url) != null
     }
 }

@@ -23,6 +23,7 @@ class GapGptProvider {
       try {
         const res = await this.fetch(`${this.cfg.baseUrl}${path}`, {
           ...init,
+          redirect: 'error',
           headers: {
             'Content-Type': 'application/json',
             Authorization: `Bearer ${this.cfg.apiKey}`,
@@ -59,7 +60,7 @@ class GapGptProvider {
       return new HttpError(502, 'provider_auth_failed', 'Server is not authorised with the AI provider (administrator must check the API key)');
     }
     if (s === 402) return new HttpError(402, 'credit_exhausted', 'AI provider credit is exhausted');
-    if (s === 404) return new HttpError(502, 'model_unavailable', 'The model is not available on this account');
+    if (s === 404) return new HttpError(502, 'upstream_not_found', 'The provider API endpoint or model was not found (check GAPGPT_BASE_URL and model)');
     if (s === 429) {
       const ra = Number(res.headers.get('retry-after'));
       return new HttpError(429, 'provider_rate_limited', 'The AI provider is rate limiting requests', {

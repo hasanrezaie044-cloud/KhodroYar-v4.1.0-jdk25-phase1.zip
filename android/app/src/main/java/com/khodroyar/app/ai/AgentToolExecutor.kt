@@ -12,18 +12,16 @@ import com.khodroyar.app.data.db.PersonalExpenseEntity
 import com.khodroyar.app.data.db.PersonalIncomeEntity
 import com.khodroyar.app.data.db.ServiceEntity
 import com.khodroyar.app.data.repo.AppRepository
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.first
 import java.util.Locale
 import java.util.UUID
-
-/** What actually happened. [text] is real data/state from the app, never model text. */
-data class ToolOutcome(val ok: Boolean, val text: String)
 
 /**
  * Runs validated tools through the EXISTING [AppRepository]. The model never touches the
  * database: it only names a tool; this class performs it and reports the verified result.
  */
-class AgentToolExecutor(private val repo: AppRepository) {
+class AgentToolExecutor(private val repo: AppRepository) : AgentToolRunner {
 
     // ------------------------------------------------------------ formatting
 
@@ -89,7 +87,7 @@ class AgentToolExecutor(private val repo: AppRepository) {
     // ---------------------------------------------------------- confirmation
 
     /** Persian summary the USER confirms. Built from validated values, not from model prose. */
-    fun describe(call: ValidatedCall): String {
+    override fun describe(call: ValidatedCall): String {
         val a = call
         fun amt(key: String) = a.dbl(key)?.let { "${n(it)} تومان" }
         return when (a.spec.name) {
@@ -129,7 +127,7 @@ class AgentToolExecutor(private val repo: AppRepository) {
 
     // ------------------------------------------------------------- execution
 
-    suspend fun execute(call: ValidatedCall): ToolOutcome = try {
+    override suspend fun execute(call: ValidatedCall): ToolOutcome = try {
         when (call.spec.name) {
             "get_today_expenses" -> todayExpenses()
             "get_monthly_report" -> periodReport(call, withBreakdown = true)
@@ -156,6 +154,8 @@ class AgentToolExecutor(private val repo: AppRepository) {
             "delete_fuel" -> deleteFuel(call)
             else -> ToolOutcome(false, "ابزار مجاز نیست.")
         }
+    } catch (e: CancellationException) {
+        throw e
     } catch (e: Exception) {
         ToolOutcome(false, "عملیات انجام نشد: ${e.message ?: "خطای داخلی"}")
     }
@@ -215,7 +215,7 @@ class AgentToolExecutor(private val repo: AppRepository) {
     }
 
     private suspend fun listMaintenance(call: ValidatedCall): ToolOutcome {
-        val prefix = call.int("year")?.toString() ?: ""
+        val prefix = if (call.has("year") || call.has("month")) prefixFor(call).first else ""
         val rows = repo.maintenancesByPrefixOnce(prefix).sortedByDescending { it.date }.take(call.int("limit") ?: 10)
         if (rows.isEmpty()) return ToolOutcome(true, "سابقهٔ تعمیر یا سرویسی ثبت نشده است.")
         val sb = StringBuilder("سوابق تعمیرات (شناسه | تاریخ | نوع | هزینه | کیلومتر | توضیح):\n")
@@ -228,7 +228,7 @@ class AgentToolExecutor(private val repo: AppRepository) {
     }
 
     private suspend fun listServices(call: ValidatedCall): ToolOutcome {
-        val prefix = call.str("date") ?: call.int("year")?.toString() ?: ""
+        val prefix = call.str("date") ?: if (call.has("year") || call.has("month")) prefixFor(call).first else ""
         val rows = repo.servicesByPrefixOnce(prefix).sortedByDescending { it.date }.take(call.int("limit") ?: 10)
         if (rows.isEmpty()) return ToolOutcome(true, "سرویسی ثبت نشده است.")
         val sb = StringBuilder("سرویس‌های ثبت‌شده (تاریخ | نوع | کیلومتر | ساعت | درآمد):\n")
@@ -486,7 +486,7 @@ class AgentToolExecutor(private val repo: AppRepository) {
     }
 
     /** Human-readable description of the record a delete would remove (shown before confirming). */
-    suspend fun describeTarget(call: ValidatedCall): String? {
+    override suspend fun describeTarget(call: ValidatedCall): String? {
         val idArg = call.str("id") ?: return null
         return when (call.spec.name) {
             "delete_expense" -> resolve(idArg, repo.personalExpenses("").first()) { it.id }?.let { "هزینه ${n(it.amount)} تومان · ${clip(it.title)} · ${it.date}" }

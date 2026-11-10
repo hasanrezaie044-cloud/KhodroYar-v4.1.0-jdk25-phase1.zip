@@ -31,7 +31,7 @@ echo
 # 4. Check database entities
 echo "4. Database Schema"
 grep -q "InsuranceEntity::class" android/app/src/main/java/com/khodroyar/app/data/db/AppDatabase.kt && echo "  ✓ Insurance entity registered" || { echo "  ✗ Insurance entity missing"; fail=1; }
-grep -q "version = 6" android/app/src/main/java/com/khodroyar/app/data/db/AppDatabase.kt && echo "  ✓ Database version 6 (unchanged in 5.1.9)" || { echo "  ✗ DB version wrong"; fail=1; }
+grep -q "version = 6" android/app/src/main/java/com/khodroyar/app/data/db/AppDatabase.kt && echo "  ✓ Database version 6 (unchanged in 5.1.10)" || { echo "  ✗ DB version wrong"; fail=1; }
 grep -q "InsuranceDao" android/app/src/main/java/com/khodroyar/app/data/db/Daos.kt && echo "  ✓ Insurance DAO exists" || { echo "  ✗ Insurance DAO missing"; fail=1; }
 grep -q "MIGRATION_5_6" android/app/src/main/java/com/khodroyar/app/data/db/AppDatabase.kt && echo "  ✓ Migrations wired (up to 5→6)" || { echo "  ✗ Migration missing"; fail=1; }
 echo
@@ -68,8 +68,8 @@ echo
 
 # 9. Check version info
 echo "9. Version Information"
-grep -q "versionCode 54" android/app/build.gradle && echo "  ✓ versionCode 54" || { echo "  ✗ versionCode wrong"; fail=1; }
-grep -q "versionName '5.1.9'" android/app/build.gradle && echo "  ✓ versionName 5.1.9" || { echo "  ✗ versionName wrong"; fail=1; }
+grep -q "versionCode 55" android/app/build.gradle && echo "  ✓ versionCode 55" || { echo "  ✗ versionCode wrong"; fail=1; }
+grep -q "versionName '5.1.10'" android/app/build.gradle && echo "  ✓ versionName 5.1.10" || { echo "  ✗ versionName wrong"; fail=1; }
 echo
 
 # 10. Check no debug signing for release

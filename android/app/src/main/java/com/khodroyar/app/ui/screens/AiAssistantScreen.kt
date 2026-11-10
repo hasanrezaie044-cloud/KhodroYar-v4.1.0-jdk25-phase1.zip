@@ -4,6 +4,8 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import androidx.compose.foundation.background
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -45,6 +47,7 @@ import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -69,6 +72,8 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.khodroyar.app.ai.AiAssistantViewModel
 import com.khodroyar.app.ai.AiErrorKind
 import com.khodroyar.app.ai.AiLimits
+import com.khodroyar.app.ai.AiMode
+import com.khodroyar.app.ai.AiSettingsStore
 import com.khodroyar.app.ai.AiSettings
 import com.khodroyar.app.ai.ChatEntry
 import com.khodroyar.app.ai.ChatRole
@@ -123,7 +128,7 @@ fun AiAssistantScreen(vm: AiAssistantViewModel = viewModel()) {
         Box(Modifier.weight(1f).fillMaxWidth()) {
             when {
                 !settings.enabled -> DisabledCard(onEnable = { vm.saveSettings(settings.copy(enabled = true)) })
-                vm.messages.isEmpty() && !vm.busy -> EmptyState(vm.connection) { showSettings = true }
+                vm.messages.isEmpty() && !vm.busy -> EmptyState(vm.connection, settings.mode, onSettings = { showSettings = true }, onExample = vm::send)
                 else -> LazyColumn(
                     state = listState,
                     modifier = Modifier.fillMaxSize(),
@@ -134,9 +139,16 @@ fun AiAssistantScreen(vm: AiAssistantViewModel = viewModel()) {
                     vm.pending?.let { p ->
                         item(key = "pending") { ConfirmCard(p, onConfirm = vm::confirmPending, onCancel = vm::cancelPending) }
                     }
-                    if (vm.busy) item(key = "busy") { TypingBubble(onStop = vm::stop) }
+                    if (vm.busy) item(key = "busy") { TypingBubble(canStop = !vm.executingAction, onStop = vm::stop) }
                     vm.failure?.let { f ->
-                        item(key = "failure") { ErrorCard(f.message, retryable = f.kind != AiErrorKind.NOT_CONFIGURED, onRetry = vm::retry, onSettings = { showSettings = true }) }
+                        item(key = "failure") {
+                            ErrorCard(
+                                f.message,
+                                retryable = f.kind !in setOf(AiErrorKind.NOT_CONFIGURED, AiErrorKind.NOT_FOUND),
+                                onRetry = vm::retry, onSettings = { showSettings = true },
+                                onLocal = if (settings.mode == AiMode.ONLINE) vm::useLocalMode else null,
+                            )
+                        }
                     }
                 }
             }
@@ -148,17 +160,17 @@ fun AiAssistantScreen(vm: AiAssistantViewModel = viewModel()) {
             enabled = settings.enabled && vm.pending == null,
             busy = vm.busy,
             placeholder = if (vm.pending != null) "ابتدا عملیات بالا را تأیید یا لغو کنید" else "پیام خود را بنویسید…",
-            onSend = { vm.send(input); if (settings.consented) input = "" },
+            onSend = { vm.send(input); if (settings.mode == AiMode.LOCAL || settings.consented) input = "" },
         )
     }
 
     if (vm.needsConsent) ConsentDialog(onAccept = { vm.acceptConsent(); input = "" }, onDecline = vm::declineConsent)
 
-    if (showSettings) {
+    if (showSettings && !vm.needsConsent) {
         SettingsDialog(
             current = settings,
             testMessage = vm.testMessage,
-            onTest = vm::testConnection,
+            onTest = { vm.saveSettings(it); vm.testConnection() },
             onSave = { vm.saveSettings(it); vm.clearTestMessage(); showSettings = false },
             onDismiss = { vm.clearTestMessage(); showSettings = false },
         )
@@ -216,7 +228,7 @@ private fun AssistantHeader(
                 Text(label, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
             }
             Text(
-                "مدل فعال: " + model.ifBlank { "تعیین‌نشده" },
+                "دستیار: " + model.ifBlank { "تعیین‌نشده" },
                 style = MaterialTheme.typography.labelSmall.copy(textDirection = TextDirection.Content),
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 1,
@@ -230,11 +242,13 @@ private fun AssistantHeader(
 }
 
 private fun connectionLook(s: ConnectionState): Pair<String, Color> = when (s) {
+    ConnectionState.LOCAL -> "داخلی — آماده، بدون API" to Color(0xFF2E7D32)
+    ConnectionState.NEEDS_CONSENT -> "آنلاین — نیاز به رضایت ارسال داده" to Color(0xFFF9A825)
     ConnectionState.ONLINE -> "متصل" to Color(0xFF2E7D32)
     ConnectionState.CHECKING, ConnectionState.UNKNOWN -> "در حال بررسی اتصال…" to Color(0xFFF9A825)
     ConnectionState.OFFLINE -> "قطع (اینترنت یا سرور)" to Color(0xFFC62828)
     ConnectionState.NOT_CONFIGURED -> "سرور تنظیم نشده" to Color(0xFF757575)
-    ConnectionState.DISABLED -> "غیرفعال از سمت سرور" to Color(0xFF757575)
+    ConnectionState.DISABLED -> "غیرفعال" to Color(0xFF757575)
     ConnectionState.ERROR -> "سرور آماده نیست" to Color(0xFFC62828)
 }
 
@@ -281,14 +295,14 @@ private fun Bubble(entry: ChatEntry, onCopy: (String) -> Unit) {
 }
 
 @Composable
-private fun TypingBubble(onStop: () -> Unit) {
+private fun TypingBubble(canStop: Boolean, onStop: () -> Unit) {
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Absolute.Left) {
         Surface(shape = RoundedCornerShape(18.dp), color = MaterialTheme.colorScheme.surfaceContainerHigh) {
             Row(Modifier.padding(horizontal = 14.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
                 CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
                 Spacer(Modifier.width(10.dp))
-                Text("دستیار در حال پاسخ دادن است…", style = MaterialTheme.typography.bodyMedium)
-                TextButton(onClick = onStop) { Text("توقف") }
+                Text(if (canStop) "دستیار در حال پاسخ دادن است…" else "در حال انجام عملیات تأییدشده…", style = MaterialTheme.typography.bodyMedium)
+                if (canStop) TextButton(onClick = onStop) { Text("توقف") }
             }
         }
     }
@@ -330,10 +344,11 @@ private fun ConfirmCard(p: PendingAction, onConfirm: () -> Unit, onCancel: () ->
 }
 
 @Composable
-private fun ErrorCard(message: String, retryable: Boolean, onRetry: () -> Unit, onSettings: () -> Unit) {
+private fun ErrorCard(message: String, retryable: Boolean, onRetry: () -> Unit, onSettings: () -> Unit, onLocal: (() -> Unit)?) {
     Surface(shape = RoundedCornerShape(18.dp), color = MaterialTheme.colorScheme.errorContainer) {
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text(message, color = MaterialTheme.colorScheme.onErrorContainer)
+            if (onLocal != null) Button(onClick = onLocal) { Text("ادامه با دستیار داخلی — بدون API") }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 if (retryable) OutlinedButton(onClick = onRetry) { Text("تلاش دوباره") }
                 TextButton(onClick = onSettings) { Text("تنظیمات دستیار") }
@@ -345,24 +360,29 @@ private fun ErrorCard(message: String, retryable: Boolean, onRetry: () -> Unit, 
 /* ----------------------------------------------------------------- empty/off */
 
 @Composable
-private fun EmptyState(state: ConnectionState, onSettings: () -> Unit) {
+private fun EmptyState(state: ConnectionState, mode: AiMode, onSettings: () -> Unit, onExample: (String) -> Unit) {
     Column(
-        Modifier.fillMaxSize().padding(24.dp),
+        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
     ) {
         Icon(Icons.Outlined.AutoAwesome, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(44.dp))
         Spacer(Modifier.height(12.dp))
-        Text("دستیار هوشمند خودرویار", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+        Text("دستیار خودرویار", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
         Spacer(Modifier.height(6.dp))
         Text(
-            "بپرسید: «این ماه چقدر برای ماشین خرج کردم؟» یا بگویید: «امروز دو میلیون تومان هزینه تعمیر داشتم ثبتش کن».",
+            if (mode == AiMode.LOCAL)
+                "بدون اینترنت، API یا سرور کار می‌کند. گزارش، هزینه، تعمیر، سوخت و یادآور را با دستورهای مشخص مدیریت کنید. این حالت مدل زبانی عمومی نیست و چیزی به اینترنت نمی‌فرستد."
+            else "دستیار آنلاین به بک‌اند شخصی خودرویار نیاز دارد؛ آدرس مستقیم GapGPT یا صفحهٔ سایت کافی نیست. ارسال اطلاعات فقط پس از رضایت شماست.",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
+        Spacer(Modifier.height(8.dp))
+        listOf("گزارش این ماه", "وضعیت خودرو", "راهنما").forEach { example ->
+            OutlinedButton(onClick = { onExample(example) }, modifier = Modifier.fillMaxWidth()) { Text(example) }
+        }
         if (state == ConnectionState.NOT_CONFIGURED) {
-            Spacer(Modifier.height(14.dp))
-            Button(onClick = onSettings) { Text("تنظیم آدرس سرور دستیار") }
+            Button(onClick = onSettings) { Text("انتخاب حالت داخلی یا تنظیم سرور") }
         }
     }
 }
@@ -372,7 +392,7 @@ private fun DisabledCard(onEnable: () -> Unit) {
     Column(Modifier.fillMaxSize().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
         Text("دستیار هوشمند غیرفعال است", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
         Spacer(Modifier.height(6.dp))
-        Text("تا فعال نکنید هیچ داده‌ای به سرور ارسال نمی‌شود.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text("حالت داخلی بدون اینترنت و API کار می‌کند؛ فعال‌کردن آن باعث ارسال داده به سرور نمی‌شود.", color = MaterialTheme.colorScheme.onSurfaceVariant)
         Spacer(Modifier.height(14.dp))
         Button(onClick = onEnable) { Text("فعال کردن دستیار") }
     }
@@ -436,11 +456,11 @@ private fun ConsentDialog(onAccept: () -> Unit, onDecline: () -> Unit) {
         title = { Text("قبل از شروع") },
         text = {
             Text(
-                "برای پاسخ دادن، متن پیام شما و در صورت نیاز خلاصه‌ای از سوابق مرتبط (مثل مبلغ‌ها، تاریخ‌ها و عنوان هزینه‌ها) " +
+                "فقط در حالت آنلاین، متن پیام و حداکثر ۱۰ پیام اخیر همین گفتگو و در صورت نیاز خلاصه‌ای از سوابق مرتبط (مثل مبلغ‌ها، تاریخ‌ها و عنوان هزینه‌ها) " +
                     "به سرور دستیار و از آنجا به سرویس هوش مصنوعی (GapGPT) ارسال می‌شود. بدون موافقت شما چیزی ارسال نمی‌شود.\n\n" +
                     "گفتگوها فقط روی همین دستگاه ذخیره می‌شوند و هر زمان می‌توانید آن‌ها را پاک یا دستیار را غیرفعال کنید. " +
                     "موقعیت مکانی، مخاطبین، پیامک، فایل‌ها و اطلاعات پرسنل ارسال نمی‌شود. ثبت، ویرایش و حذف فقط با تأیید شما انجام می‌شود.\n\n" +
-                    "توجه: استفاده از سرویس هوش مصنوعی رایگان یا نامحدود نیست و ممکن است هزینهٔ توکن داشته باشد.",
+                    "سرویس آنلاین ممکن است هزینهٔ توکن داشته باشد. حالت داخلی بدون API و اینترنت کار می‌کند و به این رضایت نیاز ندارد.",
             )
         },
         confirmButton = { Button(onClick = onAccept) { Text("موافقم و ادامه") } },
@@ -452,58 +472,72 @@ private fun ConsentDialog(onAccept: () -> Unit, onDecline: () -> Unit) {
 private fun SettingsDialog(
     current: AiSettings,
     testMessage: String?,
-    onTest: () -> Unit,
+    onTest: (AiSettings) -> Unit,
     onSave: (AiSettings) -> Unit,
     onDismiss: () -> Unit,
 ) {
     var enabled by remember { mutableStateOf(current.enabled) }
+    var mode by remember { mutableStateOf(current.mode) }
     var url by remember { mutableStateOf(current.backendUrl) }
     var model by remember { mutableStateOf(current.model) }
     var token by remember { mutableStateOf(current.clientToken) }
     val ltr = LocalTextStyle.current.copy(textDirection = TextDirection.Ltr)
+    val valid = mode == AiMode.LOCAL || !enabled || AiSettingsStore.isValidBackendUrl(url)
+    fun candidate() = current.copy(enabled = enabled, mode = mode, backendUrl = url, model = model, clientToken = token)
 
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("تنظیمات دستیار") },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text("فعال بودن دستیار", Modifier.weight(1f))
                     Switch(checked = enabled, onCheckedChange = { enabled = it })
                 }
-                OutlinedTextField(
-                    value = url, onValueChange = { url = it }, singleLine = true, shape = FieldShape, colors = fieldColors(),
-                    label = { Text("آدرس سرور دستیار (https)") }, textStyle = ltr,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                OutlinedTextField(
-                    value = model, onValueChange = { model = it }, singleLine = true, shape = FieldShape, colors = fieldColors(),
-                    label = { Text("نام مدل (خالی = پیش‌فرض سرور)") }, textStyle = ltr,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Ascii),
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                OutlinedTextField(
-                    value = token, onValueChange = { token = it }, singleLine = true, shape = FieldShape, colors = fieldColors(),
-                    label = { Text("توکن برنامه (اختیاری)") }, textStyle = ltr,
-                    visualTransformation = PasswordVisualTransformation(),
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Ascii),
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                Text(
-                    "کلید GapGPT هرگز در برنامه وارد نمی‌شود؛ فقط روی سرور شما نگهداری می‌شود.",
-                    style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                OutlinedButton(onClick = {
-                    onSave(current.copy(enabled = enabled, backendUrl = url, model = model, clientToken = token))
-                    onTest()
-                }) { Text("ذخیره و آزمایش اتصال") }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    RadioButton(selected = mode == AiMode.LOCAL, onClick = { mode = AiMode.LOCAL })
+                    TextButton(onClick = { mode = AiMode.LOCAL }) { Text("داخلی — بدون API (پیش‌فرض)") }
+                }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    RadioButton(selected = mode == AiMode.ONLINE, onClick = { mode = AiMode.ONLINE })
+                    TextButton(onClick = { mode = AiMode.ONLINE }) { Text("آنلاین — سرور شخصی") }
+                }
+                if (mode == AiMode.LOCAL) {
+                    Text(
+                        "به اینترنت، کلید، اعتبار یا دانلود مدل نیاز ندارد. گزارش‌ها از داده‌های واقعی همین دستگاه خوانده می‌شوند. ثبت با تأیید شماست. این دستیار دستورمحور است، نه مدل زبانی عمومی؛ برای نمونه‌ها «راهنما» بفرستید.",
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                } else {
+                    OutlinedTextField(
+                        value = url, onValueChange = { url = it }, singleLine = true, shape = FieldShape, colors = fieldColors(),
+                        label = { Text("آدرس HTTPS بک‌اند خودرویار") }, textStyle = ltr,
+                        supportingText = { Text("آدرس ریشه یا /v1 پذیرفته می‌شود؛ آدرس مستقیم GapGPT یا سایت نیست.") },
+                        isError = url.isNotBlank() && !AiSettingsStore.isValidBackendUrl(url),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    OutlinedTextField(
+                        value = model, onValueChange = { model = it }, singleLine = true, shape = FieldShape, colors = fieldColors(),
+                        label = { Text("نام مدل (خالی = پیش‌فرض سرور)") }, textStyle = ltr,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Ascii),
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    OutlinedTextField(
+                        value = token, onValueChange = { token = it }, singleLine = true, shape = FieldShape, colors = fieldColors(),
+                        label = { Text("توکن برنامه، نه کلید API (اختیاری)") }, textStyle = ltr,
+                        visualTransformation = PasswordVisualTransformation(),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Ascii),
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    Text("کلید سرویس مدل فقط روی سرور نگهداری می‌شود. سرویس آنلاین لزوماً رایگان نیست.", style = MaterialTheme.typography.labelMedium)
+                }
+                OutlinedButton(onClick = { onTest(candidate()) }, enabled = valid) {
+                    Text(if (mode == AiMode.LOCAL) "ذخیره و بررسی حالت داخلی" else "ذخیره و آزمایش اتصال")
+                }
                 testMessage?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
             }
         },
-        confirmButton = {
-            Button(onClick = { onSave(current.copy(enabled = enabled, backendUrl = url, model = model, clientToken = token)) }) { Text("ذخیره") }
-        },
+        confirmButton = { Button(onClick = { onSave(candidate()) }, enabled = valid) { Text("ذخیره") } },
         dismissButton = { TextButton(onClick = onDismiss) { Text("بستن") } },
     )
 }

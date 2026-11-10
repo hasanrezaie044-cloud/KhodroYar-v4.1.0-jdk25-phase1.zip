@@ -47,7 +47,7 @@ Base URL: آدرس استقرار شما، مثلاً `https://<دامنه-شم�
 | 429 | `rate_limited` / `provider_rate_limited` | سقف درخواست؛ هدر `Retry-After` |
 | 500 | `provider_error` / `internal_error` | خطای سرویس یا داخلی |
 | 502 | `provider_auth_failed` | کلید روی سرور نامعتبر است (مدیر باید بررسی کند) |
-| 502 | `model_unavailable` / `upstream_unreachable` | مدل/سرویس در دسترس نیست |
+| 502 | `upstream_not_found` / `upstream_unreachable` | مسیر API یا مدل پیدا نشد؛ آدرس پایه و مدل بررسی شوند |
 | 503 | `assistant_disabled` / `not_configured` | `AI_ENABLED=0` یا نبودن کلید |
 | 504 | `upstream_timeout` | پایان زمان انتظار |
 

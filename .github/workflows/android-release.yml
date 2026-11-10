@@ -102,6 +102,10 @@ jobs:
 
 
 
+      - name: Test AI backend (mock provider, no API key)
+        working-directory: backend
+        run: npm test
+
       - name: Static checks and unit tests
         working-directory: android
         run: |
@@ -126,7 +130,11 @@ jobs:
         id: version
         run: |
           VERSION=$(grep "versionName" android/app/build.gradle | head -1 | sed -E "s/.*versionName '([^']+)'.*/\1/")
+          CODE=$(grep "versionCode" android/app/build.gradle | head -1 | awk '{print $2}')
+          test -n "$VERSION"
+          [[ "$CODE" =~ ^[0-9]+$ ]]
           echo "version_name=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "version_code=$CODE" >> "$GITHUB_OUTPUT"
 
       - name: Verify APK signature
         run: |
@@ -149,7 +157,7 @@ jobs:
       - name: Verify version
         run: |
           AAPT="$ANDROID_HOME/build-tools/${ANDROID_BUILD_TOOLS}/aapt2"
-          "$AAPT" dump badging android/app/build/outputs/apk/release/app-release.apk | grep -E "versionCode='54' versionName='5\.1\.9'" || exit 1
+          "$AAPT" dump badging android/app/build/outputs/apk/release/app-release.apk | grep -F "versionCode='${{ steps.version.outputs.version_code }}' versionName='${{ steps.version.outputs.version_name }}'" || exit 1
 
       - name: Verify package name
         run: |
@@ -164,6 +172,15 @@ jobs:
           path: android/app/build/outputs/apk/release/app-release.apk
           if-no-files-found: error
           retention-days: 30
+
+      - name: Upload Android unit test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: khodroyar-unit-tests
+          path: android/app/build/test-results/testDebugUnitTest
+          if-no-files-found: ignore
+          retention-days: 14
 
       - name: Upload R8 mapping
         if: always()

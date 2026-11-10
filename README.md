@@ -1,5 +1,18 @@
 # مدیریت خودرو — Native Android
 
+## Current release: 5.1.10 (versionCode 55)
+
+The assistant now defaults to **Local — no API**: supported Persian commands work on-device
+without internet, a server, a model download or a paid account. This is a deterministic
+command assistant, **not a general-purpose generative language model**. Try `گزارش این ماه`,
+`وضعیت خودرو`, or `راهنما`. Writes still require explicit approval.
+
+Online mode remains optional. It needs the deployed **KhodroYar backend**, not a website or
+a direct GapGPT/OpenAI URL. Root, `/v1` and full endpoint URLs are normalised to avoid duplicate
+paths and HTTP 404. See [assistant guide](docs/AI-ASSISTANT.md) and [release notes](CHANGES_5.1.10.md).
+Backend signing secrets and an AI server/API key are unrelated; local mode needs neither an
+AI server nor an AI key. Room stays at schema version 6.
+
 Native Kotlin rewrite of the Expo/React Native vehicle-management app, now with the full Compose UI shell.
 Built entirely in the cloud — no Android Studio required.
 

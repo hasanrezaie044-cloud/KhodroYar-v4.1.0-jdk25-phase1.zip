@@ -98,7 +98,7 @@ test('max_tokens is capped to server limit', async () => {
   await t.close();
 });
 
-for (const [up, expected, code] of [[401, 502, 'provider_auth_failed'], [402, 402, 'credit_exhausted'], [429, 429, 'provider_rate_limited'], [500, 500, 'provider_error'], [400, 400, 'upstream_bad_request']]) {
+for (const [up, expected, code] of [[404, 502, 'upstream_not_found'], [401, 502, 'provider_auth_failed'], [402, 402, 'credit_exhausted'], [429, 429, 'provider_rate_limited'], [500, 500, 'provider_error'], [400, 400, 'upstream_bad_request']]) {
   test(`upstream ${up} -> ${expected} ${code}`, async () => {
     const t = await boot({}, (q, res) => { res.writeHead(up, { 'retry-after': '7' }); res.end(`{"error":"${SECRET}"}`); });
     const r = await post(t.base, msg);
