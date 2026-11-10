@@ -1,0 +1,17 @@
+{
+  "name": "khodroyar-ai-backend",
+  "version": "1.0.0",
+  "description": "Lightweight, key-safe proxy between the KhodroYar Android app and GapGPT (OpenAI-compatible)",
+  "private": true,
+  "license": "UNLICENSED",
+  "main": "src/server.js",
+  "engines": {
+    "node": ">=18.17"
+  },
+  "scripts": {
+    "start": "node src/server.js",
+    "test": "node --test test/*.test.js",
+    "test:connection": "node scripts/test-connection.js"
+  },
+  "dependencies": {}
+}

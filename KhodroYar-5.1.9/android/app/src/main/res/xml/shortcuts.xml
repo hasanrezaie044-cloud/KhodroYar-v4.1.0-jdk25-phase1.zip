@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="utf-8"?>
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <shortcut
+        android:shortcutId="traffic"
+        android:enabled="true"
+        android:icon="@drawable/ic_shortcut_traffic"
+        android:shortcutShortLabel="@string/shortcut_traffic_short"
+        android:shortcutLongLabel="@string/shortcut_traffic_long">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:targetPackage="com.khodroyar.app"
+            android:targetClass="com.khodroyar.app.MainActivity">
+            <extra android:name="khodroyar.target" android:value="traffic" />
+        </intent>
+    </shortcut>
+    <shortcut
+        android:shortcutId="service"
+        android:enabled="true"
+        android:icon="@drawable/ic_shortcut_service"
+        android:shortcutShortLabel="@string/shortcut_service_short"
+        android:shortcutLongLabel="@string/shortcut_service_long">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:targetPackage="com.khodroyar.app"
+            android:targetClass="com.khodroyar.app.MainActivity">
+            <extra android:name="khodroyar.target" android:value="services" />
+        </intent>
+    </shortcut>
+    <shortcut
+        android:shortcutId="backup"
+        android:enabled="true"
+        android:icon="@drawable/ic_shortcut_backup"
+        android:shortcutShortLabel="@string/shortcut_backup_short"
+        android:shortcutLongLabel="@string/shortcut_backup_long">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:targetPackage="com.khodroyar.app"
+            android:targetClass="com.khodroyar.app.MainActivity">
+            <extra android:name="khodroyar.target" android:value="backup" />
+        </intent>
+    </shortcut>
+</shortcuts>

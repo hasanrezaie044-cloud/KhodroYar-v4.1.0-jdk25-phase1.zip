@@ -1,0 +1,9 @@
+<resources>
+    <string name="app_name">مدیریت خودرو</string>
+    <string name="shortcut_traffic_short">ترافیک</string>
+    <string name="shortcut_traffic_long">دستیار ترافیک</string>
+    <string name="shortcut_service_short">ثبت سرویس</string>
+    <string name="shortcut_service_long">ثبت سرویس جدید</string>
+    <string name="shortcut_backup_short">پشتیبان</string>
+    <string name="shortcut_backup_long">پشتیبان‌گیری</string>
+</resources>

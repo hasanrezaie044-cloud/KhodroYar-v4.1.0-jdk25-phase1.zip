@@ -1,0 +1,142 @@
+plugins {
+    id 'com.android.application'
+    id 'org.jetbrains.kotlin.plugin.compose'
+    id 'com.google.devtools.ksp'
+}
+
+def easBuildGradle = file("eas-build.gradle")
+if (easBuildGradle.exists()) {
+    apply from: "./eas-build.gradle"
+}
+
+// Public backend URL for the AI assistant (not a secret). Empty by default.
+def aiBackendUrl = (project.findProperty('aiBackendUrl') ?: '').toString().replaceAll('["\\\\\\s]', '')
+
+android {
+    namespace 'com.khodroyar.app'
+    compileSdk 36
+    buildToolsVersion '36.0.0'
+
+    defaultConfig {
+        applicationId 'com.khodroyar.app'
+        minSdk 24
+        targetSdk 35
+        versionCode 54
+        versionName '5.1.9'
+        vectorDrawables.useSupportLibrary = true
+        // Public URL of the AI backend (NOT a secret). Set with -PaiBackendUrl=https://... or leave
+        // empty and enter it in the assistant settings. No API key is ever placed here.
+        buildConfigField 'String', 'AI_BACKEND_URL', '"' + aiBackendUrl + '"'
+    }
+
+    androidResources {
+        localeFilters += ['fa', 'en']
+    }
+
+    signingConfigs {
+        release {
+            def ksPath = System.getenv("ANDROID_KEYSTORE_PATH")
+            def ksPassword = System.getenv("ANDROID_KEYSTORE_PASSWORD")
+            def ksAlias = System.getenv("ANDROID_KEY_ALIAS")
+            def ksKeyPassword = System.getenv("ANDROID_KEY_PASSWORD")
+
+            def signingComplete = ![ksPath, ksPassword, ksAlias, ksKeyPassword].any { it == null || it.trim().isEmpty() }
+
+            // 5.1.9: fail fast ONLY when a signed release artifact is really being built.
+            // Before, merely configuring the project (debug build, unit tests, IDE sync) threw
+            // because the release secrets were absent. The signing identity itself is unchanged.
+            def wantsSignedRelease = gradle.startParameter.taskNames.any { t ->
+                def n = t.toLowerCase()
+                n.contains('release') && (n.contains('assemble') || n.contains('bundle') || n.contains('package') || n.contains('install'))
+            }
+            if (!signingComplete && wantsSignedRelease) {
+                throw new GradleException("Release signing configuration is missing. Set ANDROID_KEYSTORE_PATH, ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS and ANDROID_KEY_PASSWORD.")
+            }
+
+            if (signingComplete) {
+                storeFile file(ksPath)
+                storePassword ksPassword
+                keyAlias ksAlias
+                keyPassword ksKeyPassword
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled true
+            shrinkResources true
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+            signingConfig signingConfigs.release
+        }
+        debug {
+            minifyEnabled false
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_25
+        targetCompatibility JavaVersion.VERSION_25
+        coreLibraryDesugaringEnabled true
+    }
+
+    buildFeatures {
+        compose true
+        buildConfig true
+    }
+
+    packaging {
+        resources {
+            excludes += ['/META-INF/{AL2.0,LGPL2.1}']
+        }
+    }
+
+    testOptions {
+        unitTests.returnDefaultValues = true
+    }
+}
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(25)
+    }
+}
+
+dependencies {
+    def composeBom = platform('androidx.compose:compose-bom:2026.02.00')
+    implementation composeBom
+    androidTestImplementation composeBom
+
+    implementation 'androidx.core:core-ktx:1.17.0'
+    implementation 'androidx.activity:activity-compose:1.11.0'
+    implementation 'androidx.lifecycle:lifecycle-runtime-compose:2.9.4'
+    implementation 'androidx.lifecycle:lifecycle-viewmodel-compose:2.9.4'
+
+    implementation 'androidx.compose.ui:ui'
+    implementation 'androidx.compose.ui:ui-graphics'
+    implementation 'androidx.compose.material3:material3'
+    implementation 'androidx.compose.material:material-icons-extended'
+    implementation 'androidx.navigation:navigation-compose:2.9.5'
+
+    implementation 'androidx.room:room-runtime:2.8.4'
+    implementation 'androidx.room:room-ktx:2.8.4'
+    ksp 'androidx.room:room-compiler:2.8.4'
+    implementation 'androidx.datastore:datastore-preferences:1.1.7'
+    implementation 'androidx.security:security-crypto:1.1.0-alpha07'
+
+    implementation 'androidx.biometric:biometric:1.1.0'
+    implementation 'androidx.fragment:fragment-ktx:1.8.9'
+    implementation 'androidx.work:work-runtime-ktx:2.10.5'
+
+    coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs:2.1.5'
+
+    implementation 'org.jetbrains.kotlinx:kotlinx-serialization-json:1.9.0'
+
+    implementation 'com.google.code.findbugs:jsr305:3.0.2'
+    implementation 'com.google.errorprone:error_prone_annotations:2.36.0'
+
+    testImplementation 'junit:junit:4.13.2'
+    testImplementation 'org.jetbrains.kotlinx:kotlinx-serialization-json:1.9.0'
+    // Real org.json for JVM unit tests (the android.jar stub returns defaults)
+    testImplementation 'org.json:json:20240303'
+}
