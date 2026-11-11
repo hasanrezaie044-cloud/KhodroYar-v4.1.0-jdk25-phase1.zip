@@ -1,6 +1,8 @@
 package com.khodroyar.app.ui
 
 import android.content.Context
+import android.content.ContentValues
+import android.provider.MediaStore
 import android.graphics.Bitmap
 import android.os.Build
 import androidx.compose.foundation.layout.*
@@ -36,7 +38,6 @@ import org.junit.Assert.*
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
-import java.io.File
 
 /** Synthetic fixtures in a disposable emulator only. Never run against a personal app installation. */
 class OrbitUiSmokeTest {
@@ -240,8 +241,19 @@ class OrbitUiSmokeTest {
     private fun shot(name: String) {
         compose.waitForIdle()
         val bitmap = requireNotNull(InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot())
-        val directory = requireNotNull(context.getExternalFilesDir("orbit-ui")).also { it.mkdirs() }
-        File(directory, "$name.png").outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
+        // UTP uninstalls the tested APK after a run, removing its app-specific external files.
+        // Publish synthetic screenshots to shared Downloads so CI can collect them afterwards.
+        check(Build.VERSION.SDK_INT >= 29)
+        val resolver = context.contentResolver
+        val metadata = ContentValues().apply {
+            put(MediaStore.Downloads.DISPLAY_NAME, "$name.png")
+            put(MediaStore.Downloads.MIME_TYPE, "image/png")
+            put(MediaStore.Downloads.RELATIVE_PATH, "Download/KhodroYar-UI-Smoke")
+            put(MediaStore.Downloads.IS_PENDING, 1)
+        }
+        val uri = requireNotNull(resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, metadata))
+        requireNotNull(resolver.openOutputStream(uri)).use { check(bitmap.compress(Bitmap.CompressFormat.PNG, 100, it)) }
+        resolver.update(uri, ContentValues().apply { put(MediaStore.Downloads.IS_PENDING, 0) }, null, null)
         bitmap.recycle()
     }
 }

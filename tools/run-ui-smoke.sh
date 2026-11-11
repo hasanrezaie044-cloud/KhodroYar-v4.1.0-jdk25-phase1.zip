@@ -13,7 +13,7 @@ python3 "$ROOT/tools/annotate-build-errors.py" "${RUNNER_TEMP:-/tmp}/khodroyar-u
 if ! python3 "$ROOT/tools/summarize-tests.py" "$ROOT/android/app/build/outputs/androidTest-results/connected" "Android emulator UI tests"; then
     RESULT=1
 fi
-if ! adb pull /sdcard/Android/data/com.khodroyar.app/files/orbit-ui/. "$SCREENSHOTS/"; then
+if ! adb pull /sdcard/Download/KhodroYar-UI-Smoke/. "$SCREENSHOTS/"; then
     RESULT=1
 fi
 COUNT=$(find "$SCREENSHOTS" -type f -name '*.png' | wc -l)
