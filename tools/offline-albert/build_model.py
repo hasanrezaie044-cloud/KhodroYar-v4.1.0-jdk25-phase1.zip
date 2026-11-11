@@ -162,8 +162,27 @@ def build(args):
         torch.onnx.export(model, sample, str(fp32), input_names=['input_ids', 'attention_mask', 'token_type_ids'],
                           output_names=['logits'], opset_version=17, do_constant_folding=True, dynamo=False)
     onnx.checker.check_model(str(fp32))
+    # Torch emits Identity aliases for the SAME shared ALBERT matrices. Resolve
+    # these before quantization, otherwise later layers keep fp32 aliases while
+    # the first layer adds int8 duplicates (making the 'compressed' model larger).
+    graph_model = onnx.load(str(fp32))
+    aliases = {}
+    kept = []
+    output_names = {v.name for v in graph_model.graph.output}
+    for node in graph_model.graph.node:
+        for i, name in enumerate(node.input):
+            while name in aliases:
+                name = aliases[name]
+            node.input[i] = name
+        if node.op_type == 'Identity' and node.output[0] not in output_names:
+            aliases[node.output[0]] = node.input[0]
+        else:
+            kept.append(node)
+    del graph_model.graph.node[:]
+    graph_model.graph.node.extend(kept)
+    onnx.save(graph_model, str(fp32))
     quantize_dynamic(str(fp32), str(final), weight_type=QuantType.QInt8, per_channel=False,
-                     op_types_to_quantize=['MatMul', 'Gemm'])
+                     op_types_to_quantize=['MatMul', 'Gemm', 'Gather'])
     onnx.checker.check_model(str(final))
     print('::notice title=ALBERT export sizes::'+json.dumps({'fp32':fp32.stat().st_size,'int8':final.stat().st_size}),flush=True)
     options = ort.SessionOptions()
