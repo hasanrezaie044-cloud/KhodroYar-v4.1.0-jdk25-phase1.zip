@@ -43,6 +43,13 @@ class PersianAlbertBoundaryTest {
         assertNull(PersianHintSafety.allow("قهوه و بنزین رو ثبت کن", hint(PersianIntent.EXPENSE)))
     }
 
+    @Test fun wrongConfidentHintCannotTurnIncomeOrExternalBankingIntoAnExpense() {
+        for (text in listOf("ثبت درآمد صد هزار تومان", "پنجاه هزار به حساب بانکی دوستم واریز کن", "دستور انتقال وجه رو یادداشت کن")) {
+            assertNull(PersianHintSafety.allow(LocalIntentParser.normalize(text), hint(PersianIntent.EXPENSE)))
+        }
+        assertTrue(engine().parse("ثبت درآمد صد هزار تومان", hint(PersianIntent.EXPENSE)) is LocalIntent.Reply)
+    }
+
     @Test fun modelWidensWordingButDoesNotSupplyMissingMoney() {
         val e = engine()
         val question = e.parse("یه مورد بابت پول خرید قهوه به خرجام بیفزا", hint(PersianIntent.EXPENSE))

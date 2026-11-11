@@ -18,14 +18,20 @@ if ! adb pull /sdcard/Download/KhodroYar-UI-Smoke/. "$SCREENSHOTS/"; then
 fi
 COUNT=$(find "$SCREENSHOTS" -type f -name '*.png' | wc -l)
 echo "::notice title=Native UI screenshots::$COUNT PNGs captured from API 35 emulator"
-if [ "$COUNT" -lt 33 ]; then
-    echo "::error::Expected 33 native UI screenshots; found $COUNT"
+if [ "$COUNT" -lt 37 ]; then
+    echo "::error::Expected 37 native UI screenshots; found $COUNT"
     RESULT=1
 fi
 if [ -f "$SCREENSHOTS/performance-12000.json" ]; then
     echo "::notice title=12000-record emulator measurement::$(cat "$SCREENSHOTS/performance-12000.json")"
 else
     echo "::error::Missing 12000-record emulator measurement"
+    RESULT=1
+fi
+if [ -f "$SCREENSHOTS/albert-emulator.json" ]; then
+    echo "::notice title=Actual bundled ALBERT emulator execution::$(cat "$SCREENSHOTS/albert-emulator.json")"
+else
+    echo "::error::Missing actual ALBERT native execution and tokenizer parity evidence"
     RESULT=1
 fi
 exit "$RESULT"

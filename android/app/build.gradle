@@ -110,9 +110,12 @@ android {
     }
 }
 
+// Resolve Project paths at configuration time; task actions capture only a File,
+// never the Gradle script/Project object (configuration-cache safe).
+def offlineAlbertDirectory = rootProject.file('.cache/offline-assets/albert')
 def verifyOfflineAssets = tasks.register('verifyOfflineAlbertAssets') {
     doLast {
-        def assets = rootProject.file('.cache/offline-assets/albert')
+        def assets = offlineAlbertDirectory
         ['manifest.json', 'intent-int8.onnx', 'spiece.model'].each { name ->
             if (!new File(assets, name).isFile()) {
                 throw new GradleException('Missing bundled ALBERT assets. Follow docs/OFFLINE-ALBERT.md or run the signed-release CI; no model is downloaded by the installed app.')

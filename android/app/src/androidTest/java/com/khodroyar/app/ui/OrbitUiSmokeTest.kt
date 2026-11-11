@@ -668,6 +668,28 @@ class OrbitUiSmokeTest {
         writeTextArtifact("performance-12000.json", """{"environment":"API35 x86_64 debug emulator; not a phone benchmark","records":12000,"aggregateQueryMs":$queryMs,"homeFirstDataMs":$renderMs,"mileageRows":${daily.size}}""")
     }
 
+    @Test fun realOfflineAlbertChatShowsReviewWithoutWritingAnyExpense() {
+        lateinit var vm: AiAssistantViewModel
+        render(fontScale = 1.2f) {
+            val current: AiAssistantViewModel = androidx.lifecycle.viewmodel.compose.viewModel()
+            SideEffect { vm = current }
+            Box(Modifier.width(320.dp).fillMaxHeight()) { AiAssistantScreen(current) }
+        }
+        compose.waitUntil(20_000) { vm.connection == ConnectionState.LOCAL }
+        val before = runBlocking { AppDatabase.get(context).personalExpenses().allOnce().size }
+        compose.runOnIdle { vm.newChat(); vm.send("پول قهوه امروز پنجاه هزار تومان رو یادداشت کن") }
+        compose.waitUntil(60_000) { !vm.busy && vm.pending != null }
+        assertEquals(com.khodroyar.app.ai.albert.PersianAlbertEngine.Status.READY, vm.localModelStatus)
+        assertEquals("add_expense", vm.pending!!.call.spec.name)
+        assertEquals(50_000.0, vm.pending!!.call.dbl("amount")!!, 0.0)
+        compose.onNodeWithText("تأیید و انجام").assertIsDisplayed()
+        assertEquals(before, runBlocking { AppDatabase.get(context).personalExpenses().allOnce().size })
+        shot("37-offline-albert-approval")
+        compose.runOnIdle { vm.cancelPending(); vm.onWorkspaceHidden() }
+        compose.waitUntil(10_000) { vm.localModelStatus == com.khodroyar.app.ai.albert.PersianAlbertEngine.Status.NOT_LOADED }
+        assertEquals(before, runBlocking { AppDatabase.get(context).personalExpenses().allOnce().size })
+    }
+
     @Test fun newerBazaarVersionHasDismissibleCompactRtlWarningAndManualRecheck() {
         context.getSharedPreferences("bazaar_update_notice", 0).edit().clear().commit()
         var checks = 0

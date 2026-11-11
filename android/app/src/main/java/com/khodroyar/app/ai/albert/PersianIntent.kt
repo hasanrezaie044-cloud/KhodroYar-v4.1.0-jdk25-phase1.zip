@@ -38,7 +38,8 @@ object PersianHintSafety {
         val p = prediction ?: return null
         if (!p.accepted || normalized.length !in 2..600 || unsafe.containsMatchIn(normalized)) return null
         if (p.intent.entry) {
-            if (readQuestion.containsMatchIn(normalized)) return null
+            if (readQuestion.containsMatchIn(normalized) ||
+                Regex("درآمد|درامد|حقوق|انتقال|واریز|کارت به کارت|حساب بانکی|خرید بیمه|بخر|کنترل اپ").containsMatchIn(normalized)) return null
             val domains = listOf(
                 Regex("بنزین|سوخت|باک"), Regex("روغن|تعمیر|لنت|لاستیک|تسمه|شمع|کارواش|مکانیک"),
                 Regex("قهوه|ناهار|خوراک|صبحانه|قبض|کرایه|دارو|لباس"), Regex("سفر|رفت و آمد|سرویس شب")

@@ -168,3 +168,32 @@ jobs:
       - name: Quick edit failure diagnostics
         if: always()
         run: '"$RUNNER_TEMP/feature-preview-env/bin/python" tools/ui-previews.py "$RUNNER_TEMP/native-feature-review" debug-quick-edit-state'
+
+  offline-feature-previews:
+    name: ALBERT and Bazaar native visual review
+    needs: ui-smoke
+    if: always() && github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: khodroyar-orbit-native-ui
+          path: ${{ runner.temp }}/offline-feature-review
+      - name: Set up bounded native preview encoder
+        run: |
+          python3 -m venv "$RUNNER_TEMP/offline-preview-env"
+          "$RUNNER_TEMP/offline-preview-env/bin/pip" --disable-pip-version-check -q install Pillow==12.0.0
+      - name: Dismissible Bazaar warning in compact Persian layout
+        run: '"$RUNNER_TEMP/offline-preview-env/bin/python" tools/ui-previews.py "$RUNNER_TEMP/offline-feature-review" 34-bazaar-update-rtl-320'
+      - name: Manual Bazaar check and listing link
+        run: '"$RUNNER_TEMP/offline-preview-env/bin/python" tools/ui-previews.py "$RUNNER_TEMP/offline-feature-review" 35-bazaar-update-settings'
+      - name: Bazaar not installed is not an update warning
+        run: '"$RUNNER_TEMP/offline-preview-env/bin/python" tools/ui-previews.py "$RUNNER_TEMP/offline-feature-review" 36-bazaar-not-installed'
+      - name: Actual offline ALBERT request awaiting approval
+        run: '"$RUNNER_TEMP/offline-preview-env/bin/python" tools/ui-previews.py "$RUNNER_TEMP/offline-feature-review" 37-offline-albert-approval'
