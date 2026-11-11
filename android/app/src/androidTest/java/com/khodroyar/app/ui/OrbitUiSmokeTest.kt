@@ -10,6 +10,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.testTag
@@ -102,6 +103,8 @@ class OrbitUiSmokeTest {
         compose.onNodeWithContentDescription("نمایش مبالغ").performClick()
         compose.onNodeWithTag("dashboard-list").performScrollToNode(hasText("ستونی"))
         compose.onNodeWithText("ستونی").performClick()
+        compose.onNodeWithTag("dashboard-list").performScrollToNode(
+            hasContentDescription("نمودار روند؛ برای جزئیات نقطه‌ای را لمس کنید"))
         shot("18-dashboard-bars")
         compose.onNodeWithTag("nav-SERVICES").performClick()
         compose.onNodeWithText("سرویس جدید").assertIsDisplayed()
@@ -239,8 +242,12 @@ class OrbitUiSmokeTest {
     }
 
     private fun shot(name: String) {
+        // Synchronize the rendered Compose frame, not just updated semantics. A raw
+        // UiAutomation screenshot can still contain the frame before a chart tap.
+        compose.mainClock.advanceTimeBy(500)
         compose.waitForIdle()
-        val bitmap = requireNotNull(InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot())
+        val node = if (name == "19-home-dark-320-large-text") compose.onNodeWithTag("compact-app") else compose.onRoot()
+        val bitmap = node.captureToImage().asAndroidBitmap()
         // UTP uninstalls the tested APK after a run, removing its app-specific external files.
         // Publish synthetic screenshots to shared Downloads so CI can collect them afterwards.
         check(Build.VERSION.SDK_INT >= 29)

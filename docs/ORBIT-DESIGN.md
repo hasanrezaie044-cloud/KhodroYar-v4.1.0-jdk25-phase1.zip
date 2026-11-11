@@ -27,6 +27,14 @@ Dashboard, calendar, reports, financial overview, loan chart, service registrati
 8. Financial charts are replaced by a privacy message when masked, including accessibility semantics. No fake unit slice is rendered for empty reports.
 9. Short, one-shot fades use Compose animation timing. No chart runtime, native model or continuously animated backdrop was added.
 
+### Shared-screen audit
+
+Fuel, insurance, maintenance (including its tracked-service editor), personnel detail, rates,
+offline search and attachment previews retain their repository calls and confirmation flows.
+Their forms, field colours, selection controls, cards, headings, metrics and empty states use
+the shared Orbit tokens/components, rather than a second screen-specific theme. This is a
+source-level coverage audit, not a claim that every secondary workflow was exercised on a phone.
+
 ## Data and safety boundaries
 
 No database migration, permission addition, provider request change, automation change or approval bypass. Package and signing configuration remain the same. PDF/XLSX continue to use the existing aggregation and export implementations. A saved legacy colour choice is preserved; the new Orbit palette is the default for new/unknown choices only. Backup 5.2.0 was verified and delivered before UI work began.
@@ -36,7 +44,7 @@ No database migration, permission addition, provider request change, automation 
 - `bash VERIFY.sh`, `git diff --check`, `cd backend && npm test`.
 - Real JDK 25 Android compilation, JVM regression tests and signed release/permission/package/version/100 MB gates in `.github/workflows/android-release.yml`.
 - New JVM suites: display geometry (20 cases), report partitions (4), palette wire compatibility and text contrast (4, across all 16 light/dark palette combinations).
-- Eight native Compose smoke tests in `src/androidTest`: real repository fixtures and tab/tool navigation, privacy, RTL point selection at 320dp/1.35× text, signed-value LTR/dark chart selection, donut selection, empty states, native password input/biometric callback, explicit terms consent and usable dark navigation at 320dp/enlarged text. Nineteen PNGs are captured by Android's screenshot API, not drawn as mockups.
+- Eight native Compose smoke tests in `src/androidTest`: real repository fixtures and tab/tool navigation, privacy, RTL point selection at 320dp/1.35× text, signed-value LTR/dark chart selection, donut selection, empty states, native password input/biometric callback, explicit terms consent and usable dark navigation at 320dp/enlarged text. Nineteen PNGs are captured from the actual Compose surface after frame synchronization, not drawn as mockups. The compact app capture is cropped to its genuine 320dp test surface; the bar capture scrolls the plot into view.
 - `.github/workflows/android-release.yml` also calls `android-ui-smoke.yml` from the same ref, so the new workflow can be exercised on an open PR branch before it exists on the default branch. JUnit failures and missing screenshots fail the UI job. The test helper publishes synthetic PNGs to the emulator’s shared Downloads via MediaStore (app-specific directories are removed by UTP); the runner gathers them **before** the emulator shuts down.
 - Manual runs also publish five bounded WebP previews as check notices for visual review when artifact-download hosts are unreachable; these are compressed views of real emulator PNGs, never generated mockups. Notices are split below the checks API’s 4096-character message limit, with at most six pieces per preview. Pillow is a CI-only image tool and is not an Android dependency.
 - Fixtures refuse to run on a physical phone; they replace data only in a disposable API 35 emulator. No screenshot contains personal data or credentials.
