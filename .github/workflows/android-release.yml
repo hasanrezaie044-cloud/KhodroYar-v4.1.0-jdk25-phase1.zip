@@ -171,6 +171,9 @@ jobs:
           "$APKSIGNER" verify --verbose --print-certs "$APK"
           SHA=$(sha256sum "$APK" | awk '{print $1}')
           echo "::notice title=Signed APK SHA256::$SHA"
+          CERT=$("$APKSIGNER" verify --print-certs "$APK" | sed -n 's/^Signer #1 certificate SHA-256 digest: //p')
+          test "${#CERT}" -eq 64
+          echo "::notice title=APK signing certificate SHA256::$CERT"
           if "$APKSIGNER" verify "$APK" 2>&1 | grep -qi "DOES NOT VERIFY"; then
             echo "APK signature verification failed"
             exit 1

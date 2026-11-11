@@ -59,6 +59,10 @@ internal fun FinancialComparisonSection(repository: AppRepository, from: String,
                             (if (pct != null && !LocalPrivacyMode.current) " · ${money(pct)}٪" else ""), color = color)
                     }
                 }
+                if (!expanded && data.previous.hasData) data.increases.firstOrNull()?.let { top ->
+                    Text(tr("بیشترین رشد هزینه: ", "Largest cost rise: ") + expenseGroupLabel(top.key) + " · +${amount(top.increase)} " + tr("تومان", "Toman"),
+                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
                 TextButton(onClick = { expanded = !expanded }, modifier = Modifier.testTag("comparison-details").fillMaxWidth().heightIn(min = 48.dp)) {
                     Text(if (expanded) tr("بستن جزئیات", "Hide details") else tr("شاخص‌ها و تغییر هزینه", "Metrics and cost changes"))
                     Spacer(Modifier.width(6.dp)); Icon(if (expanded) Icons.Outlined.ExpandLess else Icons.Outlined.ExpandMore, null)

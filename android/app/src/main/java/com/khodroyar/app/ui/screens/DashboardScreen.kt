@@ -176,7 +176,7 @@ fun DashboardScreen(
                     else -> {
                         val next = dues.filter { it.remainingKm != null }.minByOrNull { it.remainingKm!! }
                         if (next != null) "نزدیک‌ترین: ${next.label} · ${money(next.remainingKm ?: 0.0)} کیلومتر"
-                        else "وضعیت سرویس‌های دوره‌ای"
+                        else ""
                     }
                 }
                 Collapsible(

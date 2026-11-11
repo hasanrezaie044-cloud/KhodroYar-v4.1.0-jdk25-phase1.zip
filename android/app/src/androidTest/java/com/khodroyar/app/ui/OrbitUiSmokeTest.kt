@@ -36,6 +36,8 @@ import com.khodroyar.app.data.repo.AppRepository
 import com.khodroyar.app.ui.components.*
 import com.khodroyar.app.ui.screens.*
 import com.khodroyar.app.ui.theme.*
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
@@ -341,15 +343,27 @@ class OrbitUiSmokeTest {
         compose.waitUntil(15_000) { repository.quickEntries.receipt.value != null }
         assertEquals(2, runBlocking { AppDatabase.get(context).personalExpenses().allOnce().size })
         val id = repository.quickEntries.receipt.value!!.id
+        // A native success snackbar temporarily overlays the bottom of the scrolled
+        // card. Dismiss it as a person can, rather than tapping through the overlay.
+        compose.waitUntil(15_000) { compose.onAllNodesWithTag("dismiss-snackbar").fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithTag("dismiss-snackbar").performClick()
         compose.onNodeWithTag("dashboard-list").performScrollToNode(hasTestTag("edit-quick-entry"))
         compose.onNodeWithTag("edit-quick-entry").performClick()
-        compose.waitUntil(15_000) { compose.onAllNodesWithTag("quick-title").fetchSemanticsNodes().isNotEmpty() }
+        try {
+            compose.waitUntil(15_000) { compose.onAllNodesWithTag("quick-title").fetchSemanticsNodes().isNotEmpty() }
+        } catch (e: Throwable) {
+            shot("debug-quick-edit-state")
+            val root=compose.onAllNodes(isRoot()).onLast().printToString(maxDepth=3).take(1500)
+            throw AssertionError("Quick edit did not open; receipt=${repository.quickEntries.receipt.value?.id}; $root",e)
+        }
         compose.onNodeWithTag("quick-amount").performScrollTo().performTextReplacement("80000")
         compose.onNodeWithTag("quick-confirm").performClick()
         compose.onNodeWithTag("quick-confirm").performClick()
         compose.waitUntil(15_000) { repository.quickEntries.receipt.value?.draft?.amount == 80000.0 }
         assertEquals(2, runBlocking { AppDatabase.get(context).personalExpenses().allOnce().size })
         assertEquals(id, repository.quickEntries.receipt.value!!.id)
+        compose.waitUntil(15_000) { compose.onAllNodesWithTag("dismiss-snackbar").fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithTag("dismiss-snackbar").performClick()
         compose.onNodeWithTag("dashboard-list").performScrollToNode(hasTestTag("recent-quick-entry"))
         shot("27-recent-entry-edit-undo")
         compose.onNodeWithTag("undo-quick-entry").performClick()
@@ -404,6 +418,35 @@ class OrbitUiSmokeTest {
         repository.updatePersonalExpense(row.copy(amount = 70000.0))
         assertFalse(repository.quickEntries.undo(receipt))
         assertEquals(70000.0, AppDatabase.get(context).insights().expense(receipt.id)!!.amount, 0.0)
+    }
+
+    @Test fun frequentAmountsComeFromRepeatedRealRecordsAndOnlyFillTheDraft() {
+        runBlocking {
+            val db=AppDatabase.get(context)
+            repeat(3) { i -> db.personalExpenses().insert(PersonalExpenseEntity("hint-$i",Jalali.todayString(),"coffee","قهوه",50000.0,"2026-01-01T00:00:00Z")) }
+            val hints=repository.insights.frequentAmounts(QuickKind.EXPENSE.name).first()
+            assertEquals(1,hints.size);assertEquals(50000.0,hints.single().value,0.0);assertEquals(3,hints.single().uses)
+        }
+        render { QuickEntryScreen(repository,onFullService={},onDone={}) }
+        compose.waitUntil(15_000) { compose.onAllNodesWithTag("frequent-amount-0").fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithTag("frequent-amount-0").performScrollTo().performClick()
+        compose.onNodeWithTag("quick-amount").assertTextContains("50,000")
+        assertEquals(4,runBlocking { AppDatabase.get(context).personalExpenses().allOnce().size })
+    }
+
+    @Test fun quickAndFullTripWritersDoNotLoseEachOthersMileage() = runBlocking {
+        val db=AppDatabase.get(context);val draft=QuickDraft.from(db.services().byId("ui-service-0")!!)
+        val income=repository.quickEntries.previewIncome(draft)
+        val receipt=coroutineScope {
+            val quick=async(Dispatchers.Default) { repository.quickEntries.save(draft,java.util.UUID.randomUUID().toString(),income) }
+            val full=async(Dispatchers.Default) { repository.addService(Jalali.todayString(),com.khodroyar.app.core.rates.ServiceType.NIGHT,"soren",40.0,1.0,1.0,"08:00","09:00","a","b","","",0,0.0,0.0,0.0) }
+            full.await();quick.await()
+        }
+        assertEquals(120.0,repository.settingsNow.vehicleCurrentKm,0.0)
+        assertEquals(8,db.services().allOnce().size)
+        val undone=repository.quickEntries.undo(receipt)
+        assertEquals(if(undone) 40.0 else 120.0,repository.settingsNow.vehicleCurrentKm,0.0)
+        assertEquals(if(undone) 7 else 8,db.services().allOnce().size)
     }
 
     @Test fun maintenanceForecastUsesHistoryAndOpensTheCorrectReplacementForm() {

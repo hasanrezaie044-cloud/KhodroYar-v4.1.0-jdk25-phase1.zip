@@ -1,13 +1,28 @@
 # مدیریت خودرو — Native Android
 
-## Current release: 5.3.1 (versionCode 59)
+## Current release: 5.4.0 (versionCode 60)
 
-A quieter, phone-first Orbit layout: Home keeps the daily overview and a left-to-right
-time axis even in Persian. Annual statistics and the latest five service records are
-now in Reports. Automatic tab tutorials, slogans and duplicate summaries are removed;
-consent, destructive confirmations, units and genuine error messages stay intact.
-Material 3 navigation handles Android insets; compact report filters stack on narrow
-screens/enlarged text. See the [5.3.1 changes](CHANGES_5.3.1.md).
+Five practical upgrades, on the same native app and Room 6 data:
+- **Quick add**: actual-history drafts, frequent recorded amounts, separate review/confirmation,
+  reprice repeated trips for their new date, and guarded recent-entry correction/confirmed undo.
+- **Local agent**: repeat yesterday's identified expense after fresh approval, compare equal-length
+  month/week periods, and inspect persisted automation results. No AI API/model download needed.
+- **Reports**: equal-period cash comparison, vehicle-only net/km and net/hour, and the largest
+  recorded cost increases with optional details; the existing PDF/XLSX maths stay intact.
+- **Maintenance**: remaining mileage, evidence-gated approximate dates, and typed entry actions
+  from status cards and reminders. Insufficient history does not produce an invented date.
+- **Android polish**: refreshed native surfaces/charts/floating navigation, enlarged-font quick
+  forms, bounded SQL reads, a recoverable quick-mileage handoff and point-in-time background
+  diagnostics. WorkManager timing is inexact; a late task is not automatically a failed one.
+
+Home's timeline still advances **left to right** in Persian. Annual statistics and the latest
+five services stay **only in Reports**. Consent, units, approval/destructive confirmations and
+real errors remain; redundant tutorial copy does not return. See the [5.4.0 changes](CHANGES_5.4.0.md)
+and the [earlier 5.3.1 layout changes](CHANGES_5.3.1.md).
+
+Build/test evidence is commit-specific. API 35 emulator coverage includes a 12,000-record fixture,
+not a physical S23 FE/weak-phone, battery, Doze or memory benchmark. A saved 5.3.1 checkpoint is
+retained before these edits. Install a signed update **over** the existing app; do not uninstall.
 
 
 **Orbit / مدار: a complete native UI refresh**, with bundled Persian Vazirmatn typography,

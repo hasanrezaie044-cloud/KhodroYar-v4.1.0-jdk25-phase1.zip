@@ -45,6 +45,16 @@ interface InsightsDao {
     """)
     fun mileageDays(start: String, end: String): Flow<List<MileageDay>>
 
+    @Query("""
+        SELECT value, COUNT(*) AS uses FROM (
+            SELECT amount AS value FROM personal_expenses WHERE :kind = 'EXPENSE'
+            UNION ALL SELECT total AS value FROM fuels WHERE :kind = 'FUEL'
+            UNION ALL SELECT cost AS value FROM maintenances WHERE :kind = 'MAINTENANCE'
+        ) WHERE value >= 0 GROUP BY value HAVING COUNT(*) > 1
+        ORDER BY uses DESC, value DESC LIMIT 3
+    """)
+    fun frequentAmounts(kind: String): Flow<List<FrequentAmount>>
+
     @Query("SELECT * FROM services ORDER BY timestamp DESC, date DESC, id DESC LIMIT 3")
     fun recentServices(): Flow<List<ServiceEntity>>
     @Query("SELECT * FROM fuels ORDER BY timestamp DESC, date DESC, id DESC LIMIT 3")
@@ -75,3 +85,6 @@ interface InsightsDao {
     @Query("SELECT * FROM maintenances WHERE id = :id") suspend fun maintenance(id: String): MaintenanceEntity?
     @Query("SELECT * FROM personal_expenses WHERE id = :id") suspend fun expense(id: String): PersonalExpenseEntity?
 }
+
+/** A bounded, aggregate suggestion from actual past values, never a default write. */
+data class FrequentAmount(val value: Double, val uses: Int)

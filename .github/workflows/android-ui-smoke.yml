@@ -96,24 +96,6 @@ jobs:
       - name: Compact report table preview
         if: always() && github.event_name == 'workflow_dispatch'
         run: '"$RUNNER_TEMP/ui-preview-env/bin/python" tools/ui-previews.py "$RUNNER_TEMP/orbit-ui-screenshots" 23-report-table-320-large-text'
-      - name: Compact quick entry preview
-        if: always() && github.event_name == 'workflow_dispatch'
-        run: '"$RUNNER_TEMP/ui-preview-env/bin/python" tools/ui-previews.py "$RUNNER_TEMP/orbit-ui-screenshots" 25-quick-entry-320-large-text'
-      - name: Reviewed quick entry preview
-        if: always() && github.event_name == 'workflow_dispatch'
-        run: '"$RUNNER_TEMP/ui-preview-env/bin/python" tools/ui-previews.py "$RUNNER_TEMP/orbit-ui-screenshots" 26-quick-entry-review'
-      - name: Fuel review in dark mode preview
-        if: always() && github.event_name == 'workflow_dispatch'
-        run: '"$RUNNER_TEMP/ui-preview-env/bin/python" tools/ui-previews.py "$RUNNER_TEMP/orbit-ui-screenshots" 28-quick-fuel-dark-review'
-      - name: Maintenance forecast preview
-        if: always() && github.event_name == 'workflow_dispatch'
-        run: '"$RUNNER_TEMP/ui-preview-env/bin/python" tools/ui-previews.py "$RUNNER_TEMP/orbit-ui-screenshots" 29-maintenance-forecast'
-      - name: Financial comparison preview
-        if: always() && github.event_name == 'workflow_dispatch'
-        run: '"$RUNNER_TEMP/ui-preview-env/bin/python" tools/ui-previews.py "$RUNNER_TEMP/orbit-ui-screenshots" 31-financial-comparison'
-      - name: Automation health preview
-        if: always() && github.event_name == 'workflow_dispatch'
-        run: '"$RUNNER_TEMP/ui-preview-env/bin/python" tools/ui-previews.py "$RUNNER_TEMP/orbit-ui-screenshots" 32-automation-health'
       - name: Upload native screenshots and test reports
         if: always()
         uses: actions/upload-artifact@v4
@@ -125,3 +107,40 @@ jobs:
             android/app/build/outputs/androidTest-results/connected
           if-no-files-found: warn
           retention-days: 14
+
+  feature-previews:
+    name: Feature screen visual review
+    needs: ui-smoke
+    if: always() && github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+      - name: Read this run's native screenshots
+        uses: actions/download-artifact@v4
+        with:
+          name: khodroyar-orbit-native-ui
+          path: ${{ runner.temp }}/native-feature-review
+      - name: Set up bounded preview encoder
+        run: |
+          python3 -m venv "$RUNNER_TEMP/feature-preview-env"
+          "$RUNNER_TEMP/feature-preview-env/bin/pip" --disable-pip-version-check -q install Pillow==12.0.0
+      - name: Compact quick entry
+        run: '"$RUNNER_TEMP/feature-preview-env/bin/python" tools/ui-previews.py "$RUNNER_TEMP/native-feature-review" 25-quick-entry-320-large-text'
+      - name: Reviewed quick entry
+        run: '"$RUNNER_TEMP/feature-preview-env/bin/python" tools/ui-previews.py "$RUNNER_TEMP/native-feature-review" 26-quick-entry-review'
+      - name: Fuel review in dark mode
+        run: '"$RUNNER_TEMP/feature-preview-env/bin/python" tools/ui-previews.py "$RUNNER_TEMP/native-feature-review" 28-quick-fuel-dark-review'
+      - name: Maintenance forecast
+        run: '"$RUNNER_TEMP/feature-preview-env/bin/python" tools/ui-previews.py "$RUNNER_TEMP/native-feature-review" 29-maintenance-forecast'
+      - name: Financial comparison
+        run: '"$RUNNER_TEMP/feature-preview-env/bin/python" tools/ui-previews.py "$RUNNER_TEMP/native-feature-review" 31-financial-comparison'
+      - name: Automation health
+        run: '"$RUNNER_TEMP/feature-preview-env/bin/python" tools/ui-previews.py "$RUNNER_TEMP/native-feature-review" 32-automation-health'
+      - name: Quick edit failure diagnostics
+        if: always()
+        run: '"$RUNNER_TEMP/feature-preview-env/bin/python" tools/ui-previews.py "$RUNNER_TEMP/native-feature-review" debug-quick-edit-state'

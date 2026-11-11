@@ -141,7 +141,7 @@ class AppAgentTools(context: Context, private val repo: AppRepository) : AgentTo
         "repeat_expense" -> {
             val source = repo.insights.expense(requireNotNull(c.str("source_id")))
             userCheck(source != null && source.toString() == c.str("source_fingerprint"), "هزینهٔ مبنا بعد از خلاصه تغییر کرده یا حذف شده؛ دوباره درخواست بده. چیزی ثبت نشد.")
-            val saved = repo.quickEntries.save(QuickDraft.from(requireNotNull(source), requireNotNull(c.str("date"))), requireNotNull(c.str("operation_id")))
+            val saved = repo.quickEntries.save(QuickDraft.from(requireNotNull(source), requireNotNull(c.str("date"))), requireNotNull(c.str("operation_id")), expectedExpenseSource = source)
             ToolOutcome(true, "تکرار هزینه در پایگاه‌داده تأیید شد: ${saved.draft.title} · ${Analytics.formatNumber(saved.draft.amount)} تومان · ${saved.draft.date}")
         }
         "get_period_comparison" -> periodComparison(c.str("period") ?: "month")

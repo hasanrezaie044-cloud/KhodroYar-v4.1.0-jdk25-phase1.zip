@@ -45,7 +45,7 @@ fun QuickEntryScreen(
     val repairs by remember { repository.insights.recentMaintenance() }.collectAsState(initial = emptyList())
     val original = editing?.draft ?: QuickDraft(initialKind, maintenanceType = initialMaintenanceType ?: "repair", km = if (initialMaintenanceType != null) settings.vehicleCurrentKm else 0.0)
     var draft by remember { mutableStateOf(original) }
-    var amountText by rememberSaveable { mutableStateOf(if (original.amount > 0) original.amount.trimNumber() else "") }
+    var amountText by rememberSaveable { mutableStateOf(if (editing != null || original.amount > 0) original.amount.trimNumber() else "") }
     var litersText by rememberSaveable { mutableStateOf(if (original.liters > 0) original.liters.trimNumber() else "") }
     var kmText by rememberSaveable { mutableStateOf(if (original.km > 0) original.km.trimNumber() else "") }
     var tripKmText by rememberSaveable { mutableStateOf(original.trip?.km?.trimNumber().orEmpty()) }
@@ -59,9 +59,10 @@ fun QuickEntryScreen(
     val savedMessage = tr("ثبت در پایگاه‌داده تأیید شد", "Saved and verified")
     val preparationError = tr("آماده‌سازی انجام نشد؛ دوباره تلاش کن.", "Could not prepare this entry.")
     val reviewing = review != null
+    val frequentAmounts by remember(draft.kind) { repository.insights.frequentAmounts(draft.kind.name) }.collectAsState(initial = emptyList())
 
     fun fill(value: QuickDraft) {
-        draft = value; amountText = value.amount.takeIf { it > 0 }?.trimNumber().orEmpty()
+        draft = value; amountText = if (value.kind != QuickKind.SERVICE) value.amount.trimNumber() else ""
         litersText = value.liters.takeIf { it > 0 }?.trimNumber().orEmpty()
         kmText = value.km.takeIf { it > 0 }?.trimNumber().orEmpty()
         tripKmText = value.trip?.km?.trimNumber().orEmpty(); tripHoursText = value.trip?.hours?.trimNumber().orEmpty(); error = null
@@ -161,6 +162,16 @@ fun QuickEntryScreen(
                                 fill(QuickDraft.from(row, draft.date))
                             }) { Text(tr("الگوی ذخیره‌شده", "Saved trip preset")) }
                             if (editing == null) OutlinedButton(onClick = { onFullService(draft.date) }, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text(tr("فرم کامل سرویس", "Full trip form")) }
+                        }
+                    }
+                    if (draft.kind != QuickKind.SERVICE && frequentAmounts.isNotEmpty()) {
+                        Spacer(Modifier.height(10.dp))
+                        Text(tr("مبالغ پرتکرار", "Frequent recorded amounts"), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            frequentAmounts.forEachIndexed { index, hint ->
+                                SuggestionChip(onClick = { amountText = hint.value.trimNumber() }, label = { Text(amount(hint.value)) },
+                                    modifier = Modifier.heightIn(min = 48.dp).testTag("frequent-amount-$index"))
+                            }
                         }
                     }
                     if (draft.kind != QuickKind.EXPENSE) {

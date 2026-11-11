@@ -202,9 +202,13 @@ fun CarManagerRoot(
                             .fillMaxWidth(),
                     ) { data ->
                         Snackbar(
-                            snackbarData = data,
-                            modifier = Modifier.padding(horizontal = 12.dp),
-                        )
+                            modifier = Modifier.padding(horizontal = 12.dp).testTag("app-snackbar"),
+                            dismissAction = {
+                                IconButton(onClick = { data.dismiss() }, modifier = Modifier.testTag("dismiss-snackbar")) {
+                                    Icon(Icons.Outlined.Close, tr("بستن پیام", "Dismiss message"))
+                                }
+                            },
+                        ) { Text(data.visuals.message) }
                     }
                 },
                 bottomBar = {

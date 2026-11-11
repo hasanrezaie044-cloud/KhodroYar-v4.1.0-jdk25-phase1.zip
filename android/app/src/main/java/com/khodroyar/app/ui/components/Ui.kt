@@ -411,7 +411,7 @@ fun Collapsible(
             ) {
                 Column(Modifier.weight(1f)) {
                     Text(title, style = MaterialTheme.typography.titleMedium)
-                    Text(
+                    if (summary.isNotBlank()) Text(
                         summary,
                         color = MaterialTheme.colorScheme.primary,
                         style = MaterialTheme.typography.bodyMedium,

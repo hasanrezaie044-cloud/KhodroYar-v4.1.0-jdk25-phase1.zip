@@ -86,7 +86,7 @@ class QuickEntries(
             row.missionFood, row.missionToll, row.missionFine, rates, row.startTime.ifBlank { null }, row.endTime.ifBlank { null })
     }
 
-    suspend fun save(draft: QuickDraft, operationId: String, expectedIncome: Long? = null, editing: EntryReceipt? = null): EntryReceipt = withContext(Dispatchers.IO + NonCancellable) {
+    suspend fun save(draft: QuickDraft, operationId: String, expectedIncome: Long? = null, editing: EntryReceipt? = null, expectedExpenseSource: PersonalExpenseEntity? = null): EntryReceipt = withContext(Dispatchers.IO + NonCancellable) {
         RecordMutations.mutate(db, settings) {
             require(draft.error() == null) { draft.error().orEmpty() }
             require(runCatching { UUID.fromString(operationId) }.isSuccess)
@@ -125,6 +125,7 @@ class QuickEntries(
             var recovery = QuickMileageJournal.Recovery.NONE
             try {
                 db.withTransaction {
+                    if (expectedExpenseSource != null) check(db.insights().expense(expectedExpenseSource.id) == expectedExpenseSource) { "هزینهٔ مبنا هم‌زمان تغییر کرد؛ خلاصهٔ تازه لازم است. چیزی ثبت نشد." }
                     if (editing != null) check(matches(editing)) { "رکورد هم‌زمان ویرایش شد؛ تغییری نکرد." }
                     when (row) {
                         is PersonalExpenseEntity -> if (editing == null) check(db.personalExpenses().insertIfAbsent(row) != -1L) else db.personalExpenses().insert(row)

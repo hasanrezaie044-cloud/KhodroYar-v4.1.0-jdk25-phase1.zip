@@ -14,6 +14,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.BarChart
+import androidx.compose.material.icons.outlined.ShowChart
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -143,13 +144,17 @@ private fun SeriesChart(
 
     Column(modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         // Reserved space avoids a layout jump when a user changes selection.
-        Row(Modifier.fillMaxWidth().heightIn(min = 60.dp), verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f)) {
-                Text(label, color = muted, style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text(valueText(data[index]), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold,
-                    maxLines = 2, overflow = TextOverflow.Ellipsis)
+        Surface(shape = RoundedCornerShape(16.dp), color = lineColor.copy(alpha = 0.06f)) {
+            Row(Modifier.fillMaxWidth().heightIn(min = 64.dp).padding(horizontal = 12.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Column(Modifier.weight(1f)) {
+                    Text(label, color = muted, style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(valueText(data[index]), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold,
+                        maxLines = 2, overflow = TextOverflow.Ellipsis)
+                }
+                IconBadge(if (bars) Icons.Outlined.BarChart else Icons.Outlined.ShowChart,
+                    tint = if (index in markers) markerColor else lineColor, size = 32.dp)
             }
-            Box(Modifier.size(8.dp).clip(CircleShape).background(if (index in markers) markerColor else lineColor))
         }
         Canvas(Modifier.fillMaxWidth().height(height).semantics {
             contentDescription = title
@@ -200,6 +205,8 @@ private fun SeriesChart(
                     pathEffect = PathEffect.dashPathEffect(floatArrayOf(7.dp.toPx(), 5.dp.toPx())))
             }
             val selectionX = px(index)
+            drawRoundRect(lineColor.copy(alpha = 0.045f), Offset((selectionX - 12.dp.toPx()).coerceAtLeast(left), top),
+                Size(min(24.dp.toPx(), right - (selectionX - 12.dp.toPx()).coerceAtLeast(left)).coerceAtLeast(1f), plotH), CornerRadius(10.dp.toPx()))
             drawLine(lineColor.copy(alpha = 0.18f), Offset(selectionX, top), Offset(selectionX, bottom), strokeWidth = 1.dp.toPx())
             if (bars) {
                 val width = min(28.dp.toPx(), plotW / (data.size + 1) * 0.58f)
@@ -315,6 +322,8 @@ fun InteractiveDonutChart(
                 val radius = min(this.size.width, this.size.height) / 2f - stroke
                 val topLeft = Offset(center.x - radius, center.y - radius)
                 val arcSize = Size(radius * 2, radius * 2)
+                drawCircle(track.copy(alpha = 0.35f), radius * 0.66f)
+                drawCircle(track.copy(alpha = 0.65f), radius - stroke, style = Stroke(1.dp.toPx()))
                 drawCircle(track, radius, style = Stroke(stroke))
                 var start = -90f
                 data.forEachIndexed { i, slice ->
