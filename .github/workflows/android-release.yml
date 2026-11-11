@@ -4,6 +4,12 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      model_only:
+        description: 'Prepare and evaluate offline ALBERT assets only (not a release)'
+        required: false
+        type: boolean
+        default: false
   workflow_call:
     inputs:
       ref:
@@ -33,8 +39,18 @@ env:
   ANDROID_BUILD_TOOLS: '36.0.0'
 
 jobs:
+  offline-albert:
+    name: Offline Persian ALBERT
+    permissions:
+      contents: read
+    uses: ./.github/workflows/offline-albert.yml
+    with:
+      ref: ${{ inputs.ref || github.ref }}
+
   release:
     name: Signed APK Release (JDK 25)
+    needs: offline-albert
+    if: ${{ inputs.model_only != true }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -216,6 +232,8 @@ jobs:
 
   ui-smoke:
     name: Native UI smoke and screenshots
+    needs: offline-albert
+    if: ${{ inputs.model_only != true }}
     permissions:
       contents: read
     uses: ./.github/workflows/android-ui-smoke.yml
