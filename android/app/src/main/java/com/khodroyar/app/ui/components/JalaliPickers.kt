@@ -10,8 +10,6 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.onClick
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.material.icons.automirrored.outlined.ChevronLeft
-import androidx.compose.material.icons.automirrored.outlined.ChevronRight
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
@@ -24,6 +22,8 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
@@ -201,14 +201,14 @@ fun MonthNavigator(
     trailing: String = "",
 ) {
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-        IconButton(onClick = onPrevious) { Icon(Icons.AutoMirrored.Outlined.ChevronLeft, tr("ماه قبل", "Previous month")) }
+        IconButton(onClick = onPrevious) { Icon(if (LocalLayoutDirection.current == LayoutDirection.Rtl) Icons.Outlined.ChevronRight else Icons.Outlined.ChevronLeft, tr("ماه قبل", "Previous month")) }
         Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
             Text("${Jalali.monthName(month)} $year", style = MaterialTheme.typography.titleLarge)
             if (trailing.isNotBlank()) {
                 Text(trailing, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodyMedium)
             }
         }
-        IconButton(onClick = onNext) { Icon(Icons.AutoMirrored.Outlined.ChevronRight, tr("ماه بعد", "Next month")) }
+        IconButton(onClick = onNext) { Icon(if (LocalLayoutDirection.current == LayoutDirection.Rtl) Icons.Outlined.ChevronLeft else Icons.Outlined.ChevronRight, tr("ماه بعد", "Next month")) }
     }
 }
 

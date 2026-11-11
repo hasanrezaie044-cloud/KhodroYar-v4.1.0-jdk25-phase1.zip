@@ -5,6 +5,8 @@ import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.*
@@ -20,6 +22,8 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.khodroyar.app.BuildConfig
+import com.khodroyar.app.R
 import com.khodroyar.app.core.holidays.IranHolidays
 import com.khodroyar.app.core.jalali.Jalali
 import com.khodroyar.app.data.backup.AutoBackup
@@ -541,6 +545,7 @@ fun SettingsScreen(repository: AppRepository, settings: AppSettings, onToggleThe
         if ("about" in sectionOpen.value) {
         item { AboutCard() }
         item { TermsLinkCard() }
+        item { FontLicenseLink() }
     }
 
         }
@@ -752,7 +757,7 @@ private fun AboutCard() {
             Spacer(Modifier.height(12.dp))
             Text(tr("مدیریت خودرو", "KhodroYar"), color = Color.White, style = MaterialTheme.typography.titleLarge)
             Text(
-                "نسخه ۴",
+                "${BuildConfig.VERSION_NAME} · Orbit",
                 color = Color.White.copy(alpha = 0.82f),
                 style = MaterialTheme.typography.bodySmall,
                 textAlign = TextAlign.Center,
@@ -768,6 +773,23 @@ private fun AboutCard() {
                 textAlign = TextAlign.Center,
             )
         }
+    }
+}
+
+/** Referenced from the APK so resource shrinking also retains the full OFL copyright notice. */
+@Composable
+private fun FontLicenseLink() {
+    var show by remember { mutableStateOf(false) }
+    val context = LocalContext.current
+    OutlinedButton(onClick = { show = true }, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp), shape = FieldShape) {
+        Text(tr("مجوز فونت وزیرمتن", "Vazirmatn font licence"))
+    }
+    if (show) {
+        val licence = remember(context) { context.resources.openRawResource(R.raw.vazirmatn_license).bufferedReader().use { it.readText() } }
+        AlertDialog(onDismissRequest = { show = false }, title = { Text("Vazirmatn · OFL 1.1") },
+            text = { Column(Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState())) {
+                Text(licence, style = MaterialTheme.typography.bodySmall.copy(textDirection = androidx.compose.ui.text.style.TextDirection.Ltr))
+            } }, confirmButton = { TextButton(onClick = { show = false }) { Text(tr("بستن", "Close")) } })
     }
 }
 

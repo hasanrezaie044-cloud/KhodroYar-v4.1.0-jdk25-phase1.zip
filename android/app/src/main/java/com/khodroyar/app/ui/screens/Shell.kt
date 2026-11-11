@@ -40,6 +40,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.LayoutDirection
@@ -516,7 +517,7 @@ private fun AppBottomBar(selected: AppDestination, toolActive: Boolean, onSelect
                     val title = if (LocalLanguage.current == "en") item.englishTitle else item.title
                     val tint by animateColorAsState(if (active) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant, label = "destination")
                     val add = item == AppDestination.SERVICES
-                    Column(Modifier.weight(1f).clip(RoundedCornerShape(14.dp))
+                    Column(Modifier.weight(1f).testTag("nav-${item.name}").clip(RoundedCornerShape(14.dp))
                         .selectable(selected = active, role = Role.Tab, onClick = { onSelect(item) })
                         .heightIn(min = 64.dp).padding(horizontal = 2.dp, vertical = 4.dp),
                         horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(3.dp, Alignment.CenterVertically)) {

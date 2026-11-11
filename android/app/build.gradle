@@ -23,6 +23,7 @@ android {
         targetSdk 35
         versionCode 58
         versionName '5.3.0'
+        testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
         vectorDrawables.useSupportLibrary = true
         // Public URL of the AI backend (NOT a secret). Set with -PaiBackendUrl=https://... or leave
         // empty and enter it in the assistant settings. No API key is ever placed here.
@@ -134,6 +135,12 @@ dependencies {
 
     implementation 'com.google.code.findbugs:jsr305:3.0.2'
     implementation 'com.google.errorprone:error_prone_annotations:2.36.0'
+
+    androidTestImplementation platform('androidx.compose:compose-bom:2026.02.00')
+    androidTestImplementation 'androidx.compose.ui:ui-test-junit4'
+    androidTestImplementation 'androidx.test.ext:junit:1.2.1'
+    androidTestImplementation 'androidx.test:runner:1.6.2'
+    debugImplementation 'androidx.compose.ui:ui-test-manifest'
 
     testImplementation 'junit:junit:4.13.2'
     testImplementation 'org.jetbrains.kotlinx:kotlinx-serialization-json:1.9.0'

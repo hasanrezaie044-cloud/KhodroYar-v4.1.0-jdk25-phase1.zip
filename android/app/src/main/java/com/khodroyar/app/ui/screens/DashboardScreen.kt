@@ -12,6 +12,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.khodroyar.app.core.analytics.Analytics
@@ -106,6 +107,7 @@ fun DashboardScreen(
 
     Box(Modifier.fillMaxSize()) {
         LazyColumn(
+            modifier = Modifier.testTag("dashboard-list"),
             contentPadding = PaddingValues(
                 start = AppDimens.screenPadding,
                 end = AppDimens.screenPadding,

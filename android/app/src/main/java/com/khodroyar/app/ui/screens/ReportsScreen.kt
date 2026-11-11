@@ -17,6 +17,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.khodroyar.app.core.analytics.Analytics
@@ -273,6 +274,7 @@ fun ReportsScreen(repository: AppRepository) {
     }
 
     LazyColumn(
+        modifier = Modifier.testTag("report-list"),
         contentPadding = PaddingValues(
             start = AppDimens.screenPadding,
             end = AppDimens.screenPadding,
@@ -386,8 +388,10 @@ fun ReportsScreen(repository: AppRepository) {
             SurfaceCard {
                 Text(tr("ترکیب مالی بازه", "Financial breakdown"), style = MaterialTheme.typography.titleMedium)
                 Spacer(Modifier.height(12.dp))
+                val expenseLabel = tr("هزینه‌ها", "Expenses")
+                val incomeLabel = tr("درآمدها", "Income")
                 SegmentedSelector(options = listOf(true, false), selected = expenseBreakdown,
-                    label = { if (it) tr("هزینه‌ها", "Expenses") else tr("درآمدها", "Income") }, onSelect = { expenseBreakdown = it })
+                    label = { if (it) expenseLabel else incomeLabel }, onSelect = { expenseBreakdown = it })
                 Spacer(Modifier.height(16.dp))
                 InteractiveDonutChart(
                     slices = breakdownSlices,
