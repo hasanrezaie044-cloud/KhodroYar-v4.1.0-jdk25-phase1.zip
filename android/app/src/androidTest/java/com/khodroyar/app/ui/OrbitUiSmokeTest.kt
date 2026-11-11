@@ -74,6 +74,9 @@ class OrbitUiSmokeTest {
         // First-use navigation must stay free of automatic tutorial dialogs.
         context.getSharedPreferences("car_manager_onboarding", Context.MODE_PRIVATE).edit().clear().commit()
         runBlocking {
+            // The real ALBERT chat test persists history by design. A different
+            // first-use/navigation fixture must not depend on JUnit method order.
+            ConversationRepository(context).clearAll()
             withContext(Dispatchers.IO) { AppDatabase.get(context).clearAllTables() }
             val db = AppDatabase.get(context)
             val today = Jalali.todayString()
