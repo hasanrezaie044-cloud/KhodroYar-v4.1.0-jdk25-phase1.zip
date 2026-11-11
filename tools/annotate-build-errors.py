@@ -14,8 +14,12 @@ for filename in sys.argv[1:]:
     if not path.is_file():
         continue
     seen = set()
-    for line in path.read_text(errors='replace').splitlines():
-        if not re.match(r'^(e: |.*\berror: |ERROR: )', line) or line in seen:
+    lines = path.read_text(errors='replace').splitlines()
+    for index, line in enumerate(lines):
+        if line.startswith('* What went wrong:'):
+            detail = '\n'.join(lines[index + 1:index + 16])
+            print('::error title=Android build failure::' + escape(detail[:3000]))
+        if not re.match(r'^(e: |.*\berror: |ERROR: |CMake Error|ninja: (?:error|build stopped)|FAILED: )', line) or line in seen:
             continue
         seen.add(line)
         print('::error title=Android compiler::' + escape(line[:1000]))

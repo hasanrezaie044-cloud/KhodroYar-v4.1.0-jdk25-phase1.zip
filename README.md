@@ -1,8 +1,26 @@
 # مدیریت خودرو — Native Android
 
-## Current release: 5.4.0 (versionCode 60)
+## Current release: 5.5.0 (versionCode 61)
 
-Five practical upgrades, on the same native app and Room 6 data:
+**Real offline Persian ALBERT + optional Cafe Bazaar update warning.** The pinned
+`HooshvareLab/albert-fa-zwnj-base-v2` encoder now runs on-device with a trained,
+quantized app-intent head. It is not fastText, an API wrapper or a general chatbot.
+The model only suggests a task domain; existing clarification, validated slots,
+grounded tools and fresh approval still control every write. Low-memory devices
+retain the clearly labelled lightweight mode. No runtime model download or key.
+
+An official own-package Bazaar service check can show a dismissible warning only
+when a greater numeric versionCode is reported. The action opens the existing
+**https://cafebazaar.ir/app/com.khodroyar.app** listing, with browser fallback.
+Missing Bazaar/cache/network errors do not block startup or invent an update.
+Manual check and offline licence notices are under Settings → About.
+
+Read the [5.5.0 changes](CHANGES_5.5.0.md) and [model/build/test contract](docs/OFFLINE-ALBERT.md).
+The whole signed APK must remain **below 100,000,000 bytes**, not merely the model.
+Source/model provenance, licences, native execution and package/signing/size gates
+are checked in CI. No physical-phone RAM/speed or live Bazaar publication claim.
+
+The five 5.4.0 upgrades are preserved, on the same native app and Room 6 data:
 - **Quick add**: actual-history drafts, frequent recorded amounts, separate review/confirmation,
   reprice repeated trips for their new date, and guarded recent-entry correction/confirmed undo.
 - **Local agent**: repeat yesterday's identified expense after fresh approval, compare equal-length
@@ -21,15 +39,17 @@ real errors remain; redundant tutorial copy does not return. See the [5.4.0 chan
 and the [earlier 5.3.1 layout changes](CHANGES_5.3.1.md).
 
 Build/test evidence is commit-specific. API 35 emulator coverage includes a 12,000-record fixture,
-not a physical S23 FE/weak-phone, battery, Doze or memory benchmark. A saved 5.3.1 checkpoint is
-retained before these edits. Install a signed update **over** the existing app; do not uninstall.
+not a physical S23 FE/weak-phone, battery or Doze benchmark. A verified 5.4.0 source/history
+checkpoint was retained before the ALBERT changes (older checkpoints remain too).
+Install a signed update **over** the existing app; do not uninstall.
 
 
 **Orbit / مدار: a complete native UI refresh**, with bundled Persian Vazirmatn typography,
 calm light/dark palettes, redesigned navigation, dashboard, forms, conversation and authentication.
 All charts now share a native interactive system: zero-based axes, RTL-aware selection,
 full-value readouts, expense/income partitions, honest empty states and privacy masking.
-No chart library, downloaded model or continuous login animation was added.
+No chart library or continuous login animation was added. The 5.5.0 ALBERT assets
+are bundled at build time, not downloaded on the installed device.
 
 Read the [5.3.0 changes](CHANGES_5.3.0.md), [design and test contract](docs/ORBIT-DESIGN.md)
 and [font licence notices](THIRD_PARTY_NOTICES.md). The 5.2.0 agent functionality below is preserved.
@@ -47,9 +67,10 @@ explicit online Neshan data request requiring its own configured key, not an AI 
 
 The assistant has three **explicit** modes:
 
-- **Local — no AI API** (default): bounded Persian dialogue and approved automations; no
-  AI key/server/model download. Expense/service processing is offline; explicitly requested
-  traffic data is online. **Not** a general-purpose language model. Try `راهنما`.
+- **Local — no AI API** (default): bundled Persian ALBERT intent classification, bounded
+  dialogue and approved automations; no AI key/server/runtime model download. Expense/service
+  processing is offline; explicitly requested traffic data is online. **Not** a general-purpose
+  chatbot. Low-memory/native failures retain the prior lightweight assistant. Try `راهنما`.
 - **Direct GapGPT**: the documented OpenAI Chat Completions API at `https://api.gapgpt.app/v1`
   or the user-selected `https://api.gapapi.com/v1` CDN. Needs the owner's real API key and credit.
   The personal key is entered only in-app and stored with Android Keystore-backed encryption,
@@ -90,10 +111,18 @@ parity is proven, and exactly what is and is not done.
 
 ## Build
 
+Prepare the pinned model assets and native tokenizer source first, following
+[docs/OFFLINE-ALBERT.md](docs/OFFLINE-ALBERT.md). The GitHub signed-release workflow
+already does this, using the existing signing secrets. Then:
+
 ```bash
-cd android && gradle testDebugUnitTest   # logic parity gate
-cd android && gradle assembleRelease     # release APK
+cd android
+./gradlew testDebugUnitTest   # logic parity and safety gate
+./gradlew assembleRelease    # existing release signing environment required
 ```
+
+Bare local/EAS builds without the prepared `android/.cache/offline-assets/albert/`
+will fail clearly rather than distribute a model-free APK labelled as ALBERT.
 
 EAS uses the checked-in `android/` Gradle project directly. It does not use Expo
 prebuild or a custom Expo workflow:
