@@ -1,0 +1,71 @@
+name: KhodroYar Offline Persian ALBERT
+
+on:
+  workflow_dispatch:
+  workflow_call:
+    inputs:
+      ref:
+        required: false
+        type: string
+
+jobs:
+  build-model:
+    name: Train app intent head and verify int8 ALBERT
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+          cache-dependency-path: tools/offline-albert/requirements.txt
+      - name: Install pinned build-only CPU tooling
+        run: |
+          python -m pip install --disable-pip-version-check torch==2.8.0+cpu --index-url https://download.pytorch.org/whl/cpu
+          python -m pip install --disable-pip-version-check -r tools/offline-albert/requirements.txt
+      - name: Cache immutable upstream files
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/khodroyar-albert-source
+          key: persian-albert-${{ hashFiles('tools/offline-albert/source-lock.json') }}
+      - name: Verify source, train intent head, export and evaluate int8 model
+        env:
+          HF_HUB_DISABLE_TELEMETRY: '1'
+          DO_NOT_TRACK: '1'
+          TOKENIZERS_PARALLELISM: 'false'
+          OMP_NUM_THREADS: '2'
+        run: |
+          python tools/offline-albert/build_model.py --source "$HOME/.cache/khodroyar-albert-source" --output android/.cache/offline-assets/albert
+      - name: Publish bounded model evaluation evidence
+        if: always()
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path('android/.cache/offline-assets/albert/evaluation.json')
+          if p.exists():
+              v=json.loads(p.read_text())
+              print('::notice title=ALBERT authored holdout::'+json.dumps({k:v[k] for k in ('holdoutExamples','holdoutRawCorrect','holdoutAccepted','holdoutAcceptedCorrect','threshold','minimumMargin')},separators=(',',':')))
+              for row in v['holdout']:
+                  if row['expected'] != row['predicted']:
+                      print('::notice title=ALBERT holdout mismatch::'+json.dumps(row,ensure_ascii=False,separators=(',',':')))
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: khodroyar-offline-albert
+          path: android/.cache/offline-assets
+          if-no-files-found: error
+          retention-days: 30
+      - name: Upload model failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: khodroyar-albert-diagnostics
+          path: android/.cache/offline-assets/albert/evaluation.json
+          if-no-files-found: ignore
+          retention-days: 14

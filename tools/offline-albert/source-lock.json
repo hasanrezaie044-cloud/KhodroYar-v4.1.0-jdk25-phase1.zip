@@ -1,0 +1,14 @@
+{
+  "model": "HooshvareLab/albert-fa-zwnj-base-v2",
+  "revision": "2315c0d4ddd6bd68f7703c5651978706bf8aff37",
+  "license": "Apache-2.0",
+  "files": {
+    "pytorch_model.bin": {"bytes": 44903266, "sha256": "6d68f3f623302e00bea37f6cdc4b6c01cb28fbd936367319c2a6ad2a6dd7a6f5"},
+    "spiece.model": {"bytes": 857476, "sha256": "903319b1a4a7e58e49383764d33897a7f49784510247d68438e4f3bff25b01f1"},
+    "config.json": {"bytes": 760, "git_blob": "481a1710cba38b47bb755985e267ccb5a2c9b596"},
+    "README.md": {"bytes": 760, "git_blob": "962b42b47b1b9fa187b114f5a6347afccef09d72"}
+  },
+  "sentencepiece": {"version": "0.2.1", "revision": "31646a467d2051eb904e0b45de3a73e91fe1c1e3"},
+  "maxTokens": 64,
+  "scope": "Frozen original Persian ALBERT encoder plus an app-specific trained intent head. Not a generative LLM, slot extractor, permission or writer."
+}
