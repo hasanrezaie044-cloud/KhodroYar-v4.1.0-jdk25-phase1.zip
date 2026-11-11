@@ -31,7 +31,7 @@ internal fun AnnualReportStatistics(repository: AppRepository, year: Int) {
             second = { MetricCard(tr("کیلومتر", "Distance"), money(totals.totalKm), Icons.Outlined.Speed, it, compact = true) },
         )
         MetricPair(
-            first = { MetricCard(tr("کارکرد", "Hours"), Analytics.formatHours(totals.totalHours), Icons.Outlined.Schedule, it, compact = true) },
+            first = { MetricCard(tr("ساعت کار", "Hours"), Analytics.formatHours(totals.totalHours), Icons.Outlined.Schedule, it, compact = true) },
             second = { MetricCard(tr("درآمد", "Income"), amount(totals.totalIncome), Icons.Outlined.Payments, it, compact = true) },
         )
         MetricPair(

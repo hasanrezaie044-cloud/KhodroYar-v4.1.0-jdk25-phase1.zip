@@ -29,6 +29,7 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.CustomAccessibilityAction
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
@@ -128,6 +129,13 @@ private fun SeriesChart(
     val goalColor = MaterialTheme.colorScheme.tertiary
     val measurer = rememberTextMeasurer()
     val axisStyle = MaterialTheme.typography.labelSmall
+    val axisUnits = listOf(tr("هزار", "K"), tr("میلیون", "M"), tr("میلیارد", "B"))
+    val axisLabels = remember(scale, axisStyle, axisUnits, measurer) {
+        scale.ticks.map { measurer.measure(compactAxis(it, axisUnits), axisStyle, maxLines = 1) }
+    }
+    // Units are on each tick, not a permanent explanatory paragraph below the plot.
+    // The same measured gutter is used by drawing and hit-testing, including large fonts.
+    val axisGutter = with(LocalDensity.current) { (axisLabels.maxOf { it.size.width }).toDp() + 12.dp }.coerceIn(40.dp, 96.dp)
     val reveal = remember { Animatable(0f) }
     LaunchedEffect(data) { reveal.snapTo(0f); reveal.animateTo(1f, tween(360)) }
     val visibleLabels = remember(data.size) { ChartGeometry.visibleLabels(data.size) }
@@ -149,16 +157,16 @@ private fun SeriesChart(
                 CustomAccessibilityAction(previousText) { selected = (index - 1).coerceAtLeast(0); true },
                 CustomAccessibilityAction(nextText) { selected = (index + 1).coerceAtMost(data.lastIndex); true },
             )
-        }.pointerInput(data, rtl) {
+        }.pointerInput(data, rtl, axisGutter) {
             detectTapGestures { tap ->
-                val axis = 52.dp.toPx()
+                val axis = axisGutter.toPx()
                 val left = if (rtl) 10.dp.toPx() else axis
                 val right = size.width - if (rtl) axis else 10.dp.toPx()
                 val inset = if (bars) 14.dp.toPx() else 0f
                 ChartGeometry.nearestIndex((tap.x - left - inset) / (right - left - 2 * inset).coerceAtLeast(1f), data.size, rtl)?.let { selected = it }
             }
         }) {
-            val axis = 52.dp.toPx()
+            val axis = axisGutter.toPx()
             val left = if (rtl) 10.dp.toPx() else axis
             val right = size.width - if (rtl) axis else 10.dp.toPx()
             val top = 12.dp.toPx()
@@ -169,11 +177,10 @@ private fun SeriesChart(
             fun px(i: Int) = left + barInset + ChartGeometry.xFraction(i, data.size, rtl) * (plotW - 2 * barInset).coerceAtLeast(1f)
             fun py(v: Double) = bottom - scale.fraction(v) * plotH
             val zeroY = py(0.0)
-            scale.ticks.forEach { tick ->
+            scale.ticks.zip(axisLabels).forEach { (tick, text) ->
                 val y = py(tick)
                 drawLine(grid.copy(alpha = if (abs(tick) < scale.step * 0.01) 0.95f else 0.6f), Offset(left, y), Offset(right, y),
                     strokeWidth = 1.dp.toPx(), pathEffect = if (tick == 0.0) null else PathEffect.dashPathEffect(floatArrayOf(3.dp.toPx(), 5.dp.toPx())))
-                val text = measurer.measure(compactAxis(tick), axisStyle)
                 drawText(text, color = muted, topLeft = Offset(if (rtl) right + 8.dp.toPx() else left - text.size.width - 8.dp.toPx(), y - text.size.height / 2))
             }
             goalValue?.takeIf { it.isFinite() && it > 0 }?.let { goal ->
@@ -220,8 +227,6 @@ private fun SeriesChart(
                     topLeft = Offset((px(i) - text.size.width / 2).coerceIn(left, (right - text.size.width).coerceAtLeast(left)), bottom + 9.dp.toPx()))
             }
         }
-        if (data.any { abs(it) >= 1_000.0 }) Text(tr("K هزار · M میلیون · B میلیارد", "K thousand · M million · B billion"),
-            style = MaterialTheme.typography.labelSmall, color = muted)
         if (goalValue != null && goalValue > 0 && goalValue.isFinite()) Text("$goalText · ${valueText(goalValue)}",
             style = MaterialTheme.typography.labelSmall, color = goalColor)
         if (markers.isNotEmpty()) Text(markerText, style = MaterialTheme.typography.labelSmall, color = markerColor)
@@ -240,11 +245,12 @@ private fun SeriesChart(
     }
 }
 
-private fun compactAxis(value: Double): String {
+private fun compactAxis(value: Double, units: List<String>): String {
     val v = abs(value)
     val divisor = when { v >= 1e9 -> 1e9; v >= 1e6 -> 1e6; v >= 1e3 -> 1e3; else -> 1.0 }
-    val suffix = when (divisor) { 1e9 -> "B"; 1e6 -> "M"; 1e3 -> "K"; else -> "" }
-    return String.format(Locale.ROOT, if (v / divisor >= 10 || v == 0.0) "%.0f%s" else "%.1f%s", value / divisor, suffix)
+    val suffix = when (divisor) { 1e9 -> units[2]; 1e6 -> units[1]; 1e3 -> units[0]; else -> "" }
+    val number = String.format(Locale.ROOT, if (v / divisor >= 10 || v == 0.0) "%.0f" else "%.1f", value / divisor).removeSuffix(".0")
+    return if (suffix.isBlank()) number else "$number $suffix"
 }
 
 @Composable

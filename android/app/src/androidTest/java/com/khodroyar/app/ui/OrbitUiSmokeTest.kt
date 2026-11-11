@@ -293,9 +293,12 @@ class OrbitUiSmokeTest {
         compose.onNodeWithTag("compact-app").assertWidthIsEqualTo(320.dp)
         compose.onNodeWithTag("nav-REPORTS").performClick()
         val list = compose.onNodeWithTag("report-list")
-        list.performScrollToNode(hasText("از تاریخ"))
-        compose.onNodeWithText("از تاریخ").assertIsDisplayed()
-        compose.onNodeWithText("تا تاریخ").assertIsDisplayed()
+        // Date fields deliberately expose one accessible button description,
+        // not their decorative inner Text/OutlinedTextField semantics.
+        list.performScrollToNode(hasContentDescription("از تاریخ", substring = true))
+        val fromField = compose.onNodeWithContentDescription("از تاریخ", substring = true).assertIsDisplayed()
+        val toField = compose.onNodeWithContentDescription("تا تاریخ", substring = true).assertIsDisplayed()
+        assertTrue(fromField.fetchSemanticsNode().boundsInRoot.bottom <= toField.fetchSemanticsNode().boundsInRoot.top)
         list.performScrollToNode(hasTestTag("report-summary-table"))
         compose.onNodeWithTag("report-summary-table").assertIsDisplayed()
         compose.onNode(hasText("نوع سرویس") and hasAnyAncestor(hasTestTag("report-summary-table"))).assertIsDisplayed()
