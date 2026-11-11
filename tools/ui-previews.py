@@ -23,15 +23,18 @@ for name in ("01-home-light-fa", "20-home-line-timeline-right", "18-dashboard-ba
         image = image.convert("RGB")
         image.thumbnail((480, 1000))
         encoded = ""
+        # The dense real ALBERT approval panel has its own four-image review job;
+        # permit ten small chunks there without exhausting the 50-notice limit.
+        limit = 30_000 if name == "37-offline-albert-approval" else 18_000
         for quality in (76, 65, 50, 35):
             buffer = BytesIO()
             image.save(buffer, "WEBP", quality=quality, method=6)
             encoded = b64encode(buffer.getvalue()).decode("ascii")
-            if len(encoded) <= 18_000:
+            if len(encoded) <= limit:
                 break
-        if len(encoded) <= 18_000:
+        if len(encoded) <= limit:
             # Check annotations retain at most 4096 message characters. Keep each
-            # piece under 3100; at most six notices per image / forty-two per preview group.
+            # piece under 3100; six per ordinary image / ten for the separate ALBERT group.
             pieces = [encoded[i:i + 3000] for i in range(0, len(encoded), 3000)]
             for index, piece in enumerate(pieces, 1):
                 print(f"::notice title=native-preview/{name}/{index}-of-{len(pieces)}::ORB2:{index}:{len(pieces)}:{piece}")

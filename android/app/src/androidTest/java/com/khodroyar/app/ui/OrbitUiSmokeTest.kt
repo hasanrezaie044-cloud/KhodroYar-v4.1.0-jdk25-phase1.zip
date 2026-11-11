@@ -688,7 +688,7 @@ class OrbitUiSmokeTest {
         render(fontScale = 1.2f) {
             val current: AiAssistantViewModel = androidx.lifecycle.viewmodel.compose.viewModel()
             SideEffect { vm = current }
-            Box(Modifier.width(320.dp).fillMaxHeight()) { AiAssistantScreen(current) }
+            Box(Modifier.width(320.dp).fillMaxHeight().testTag("offline-agent-workspace")) { AiAssistantScreen(current) }
         }
         compose.waitUntil(20_000) { vm.connection == ConnectionState.LOCAL }
         val before = runBlocking { AppDatabase.get(context).personalExpenses().allOnce().size }
@@ -787,7 +787,13 @@ class OrbitUiSmokeTest {
         compose.waitForIdle()
         // ModalBottomSheet/Dialog adds another root; capture the topmost visible
         // surface rather than asking onRoot() to match exactly one window.
-        val node = if (name == "32-automation-health") compose.onNodeWithTag("automation-sheet-content") else if (name in setOf("19-home-dark-320-large-text", "23-report-table-320-large-text", "24-report-table-scrolled-amount", "25-quick-entry-320-large-text", "26-quick-entry-review", "27-recent-entry-edit-undo")) compose.onNodeWithTag("compact-app") else compose.onAllNodes(isRoot()).onLast()
+        val node = when {
+            name == "32-automation-health" -> compose.onNodeWithTag("automation-sheet-content")
+            name == "34-bazaar-update-rtl-320" -> compose.onNodeWithTag("bazaar-update-dialog")
+            name == "37-offline-albert-approval" -> compose.onNodeWithTag("offline-agent-workspace")
+            name in setOf("19-home-dark-320-large-text", "23-report-table-320-large-text", "24-report-table-scrolled-amount", "25-quick-entry-320-large-text", "26-quick-entry-review", "27-recent-entry-edit-undo") -> compose.onNodeWithTag("compact-app")
+            else -> compose.onAllNodes(isRoot()).onLast()
+        }
         val bitmap = node.captureToImage().asAndroidBitmap()
         // UTP uninstalls the tested APK after a run, removing its app-specific external files.
         // Publish synthetic screenshots to shared Downloads so CI can collect them afterwards.
