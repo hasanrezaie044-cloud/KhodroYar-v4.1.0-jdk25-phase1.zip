@@ -10,6 +10,16 @@ on:
         required: false
         type: boolean
         default: false
+      repair_delivery:
+        description: 'Verify and redeliver the existing signed 5.5.1 APK without rebuilding or publishing a release'
+        required: false
+        type: boolean
+        default: false
+      delivery_callback:
+        description: 'Optional one-time workspace upload endpoint; never receives GitHub credentials'
+        required: false
+        type: string
+        default: ''
   workflow_call:
     inputs:
       ref:
@@ -41,6 +51,7 @@ env:
 jobs:
   offline-albert:
     name: Offline Persian ALBERT
+    if: ${{ inputs.repair_delivery != true }}
     permissions:
       contents: read
     uses: ./.github/workflows/offline-albert.yml
@@ -50,7 +61,7 @@ jobs:
   release:
     name: Signed APK Release (JDK 25)
     needs: offline-albert
-    if: ${{ inputs.model_only != true }}
+    if: ${{ inputs.model_only != true && inputs.repair_delivery != true }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -248,10 +259,46 @@ jobs:
   ui-smoke:
     name: Native UI smoke and screenshots
     needs: offline-albert
-    if: ${{ inputs.model_only != true }}
+    if: ${{ inputs.model_only != true && inputs.repair_delivery != true }}
     permissions:
       contents: read
     uses: ./.github/workflows/android-ui-smoke.yml
     with:
       ref: ${{ inputs.ref || github.sha }}
       prepared_model: true
+
+  verify-delivery:
+    name: Verify existing signed APK and private delivery
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.repair_delivery == true }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test archive and private-transfer guards
+        run: python3 -m unittest discover -s tools/tests -p 'test_release_delivery.py' -v
+      - name: Set up JDK 25 for APK signature verification
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '25'
+      - name: Set up APK verification tools only
+        uses: android-actions/setup-android@v3
+        with:
+          packages: 'build-tools;36.0.0'
+      - name: Verify original ZIP CRC, APK hash and publisher signature
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 tools/verify-release-delivery.py
+      - name: Keep the verified APK without a nested ZIP
+        uses: actions/upload-artifact@v4
+        with:
+          name: khodroyar-5.5.1-delivery-verified
+          path: |
+            ${{ runner.temp }}/khodroyar-delivery-verified/KhodroYar-5.5.1.apk
+            ${{ runner.temp }}/khodroyar-delivery-verified/delivery-verification.json
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 14
