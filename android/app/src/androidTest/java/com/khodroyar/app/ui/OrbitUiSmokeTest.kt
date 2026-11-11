@@ -9,6 +9,7 @@ import android.content.ContentValues
 import android.provider.MediaStore
 import android.graphics.Bitmap
 import android.os.Build
+import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -102,7 +103,9 @@ class OrbitUiSmokeTest {
             SideEffect { imeVisible = imeBottom > 0 }
             DisposableEffect(activity) {
                 val previous = activity?.window?.attributes?.softInputMode
-                // Match MainActivity's manifest instead of the test host's adjust-pan default.
+                // Match BOTH MainActivity's edge-to-edge setup and manifest resize.
+                // A fitting-decor test host can consume IME insets before Compose.
+                (activity as? androidx.activity.ComponentActivity)?.enableEdgeToEdge()
                 activity?.window?.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
                 onDispose { previous?.let { activity?.window?.setSoftInputMode(it) } }
             }
@@ -345,16 +348,22 @@ class OrbitUiSmokeTest {
         }
         compose.onNodeWithTag("dashboard-list").performScrollToNode(hasTestTag("home-quick-add"))
         compose.onNodeWithTag("home-quick-add").performClick()
-        compose.onNodeWithTag("quick-title").performScrollTo().performTextReplacement("پارکینگ")
-        compose.onNodeWithTag("quick-amount").performScrollTo().performTextReplacement("75000")
-        compose.onNodeWithTag("quick-amount").performScrollTo().performClick()
+        compose.onNodeWithTag("quick-title").performScrollTo().performClick()
+        compose.onNodeWithTag("quick-title").performTextReplacement("پارکینگ")
+        // Focus through an actual tap BEFORE semantic text injection. The tag
+        // includes supporting text; tap the editor, not its lower support area.
+        compose.onNodeWithTag("quick-amount").performScrollTo().performTouchInput {
+            click(Offset(width / 2f, height / 3f))
+        }
         try {
             compose.waitUntil(15_000) { imeVisible }
         } catch (e: Throwable) {
             shot("debug-quick-edit-state")
             val focused = compose.onAllNodes(hasTestTag("quick-amount") and isFocused()).fetchSemanticsNodes().size
-            throw AssertionError("Software IME did not open after tapping amount; focused fields=$focused", e)
+            throw AssertionError("Software IME did not open after tapping amount; focused fields=$focused; ${imeDiagnostics()}", e)
         }
+        compose.onNodeWithTag("quick-amount").performTextReplacement("75000")
+        compose.waitUntil(15_000) { imeVisible }
         pressSystemBack()
         try {
             compose.waitUntil(15_000) { !imeVisible }
@@ -834,6 +843,13 @@ class OrbitUiSmokeTest {
         assertFalse(com.khodroyar.app.updates.BazaarListing.open { throw android.content.ActivityNotFoundException("No browser") })
     }
 
+    private fun imeDiagnostics(): String = runCatching {
+        val descriptor = InstrumentationRegistry.getInstrumentation().uiAutomation.executeShellCommand("dumpsys input_method")
+        android.os.ParcelFileDescriptor.AutoCloseInputStream(descriptor).bufferedReader().use { it.readText() }
+            .lineSequence().filter { line -> listOf("mInputShown", "mShowRequested", "mImeWindowVis", "mCurFocusedWindow", "mCurMethodId").any { key -> line.contains(key) } }
+            .take(12).joinToString("; ") { it.trim().take(240) }
+    }.getOrDefault("IME diagnostics unavailable")
+
     private fun pressSystemBack() {
         // Use instrumentation's complete system-key event, not a dispatcher shortcut
         // (which would bypass the input method) or an un-sourced synthetic key pair.
@@ -871,7 +887,12 @@ class OrbitUiSmokeTest {
             name in setOf("19-home-dark-320-large-text", "23-report-table-320-large-text", "24-report-table-scrolled-amount", "25-quick-entry-320-large-text", "26-quick-entry-review", "27-recent-entry-edit-undo") -> compose.onNodeWithTag("compact-app")
             else -> compose.onAllNodes(isRoot()).onLast()
         }
-        val bitmap = node.captureToImage().asAndroidBitmap()
+        // On IME failure include the real system keyboard/window, which a
+        // Compose-only capture deliberately excludes. Normal previews stay Compose.
+        val bitmap = if (name == "debug-quick-edit-state") {
+            InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot()
+                ?: node.captureToImage().asAndroidBitmap()
+        } else node.captureToImage().asAndroidBitmap()
         // UTP uninstalls the tested APK after a run, removing its app-specific external files.
         // Publish synthetic screenshots to shared Downloads so CI can collect them afterwards.
         check(Build.VERSION.SDK_INT >= 29)
