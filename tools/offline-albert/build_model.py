@@ -165,6 +165,7 @@ def build(args):
     quantize_dynamic(str(fp32), str(final), weight_type=QuantType.QInt8, per_channel=False,
                      op_types_to_quantize=['MatMul', 'Gemm'])
     onnx.checker.check_model(str(final))
+    print('::notice title=ALBERT export sizes::'+json.dumps({'fp32':fp32.stat().st_size,'int8':final.stat().st_size}),flush=True)
     options = ort.SessionOptions()
     options.intra_op_num_threads = 2
     options.inter_op_num_threads = 1
@@ -251,4 +252,10 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--source',type=Path,required=True)
     parser.add_argument('--output',type=Path,required=True)
-    build(parser.parse_args())
+    try:
+        build(parser.parse_args())
+    except Exception as exc:
+        import traceback
+        message = (type(exc).__name__ + ': ' + str(exc) + '\n' + traceback.format_exc()[-1800:])
+        print('::error title=ALBERT preparation failed::'+message.replace('%','%25').replace('\r','%0D').replace('\n','%0A'),flush=True)
+        raise
