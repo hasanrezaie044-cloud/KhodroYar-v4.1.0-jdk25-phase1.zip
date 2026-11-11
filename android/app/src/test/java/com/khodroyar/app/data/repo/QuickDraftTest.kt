@@ -17,5 +17,11 @@ class QuickDraftTest {
         val copy=QuickDraft.from(row,today)
         assertEquals("",copy.trip!!.id);assertEquals("",copy.trip.requestNumber);assertEquals("",copy.trip.attachmentPath);assertEquals("نام",copy.trip.passengers);assertNull(copy.error(today))
     }
+    @Test fun fixedSalaryNeedsNoInventedDistanceOrRoute() {
+        val row=ServiceEntity("salary",today,"fixed-salary","soren",0.0,0.0,0.0,"","","","","","",0,0.0,0.0,0.0,2_000_000L,"")
+        assertNull(QuickDraft.from(row,today).error(today))
+        assertNotNull(QuickDraft.from(row.copy(type="night"),today).error(today))
+        assertNotNull(QuickDraft.from(row.copy(workHours=Double.NaN),today).error(today))
+    }
     @Test fun emptyTripCannotBeSubmitted() { assertNotNull(QuickDraft(QuickKind.SERVICE,today).error(today)) }
 }

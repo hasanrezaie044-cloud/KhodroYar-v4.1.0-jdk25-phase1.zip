@@ -42,14 +42,15 @@ class LocalDialogueEngine(
         var ruleId: String? = null,
     )
     private var draft: Draft? = null
+    private var repeatDates: Pair<String, String>? = null
     private var waiting = ""
     private var management: String? = null
     private var lastRuleId: String? = null
     var context = LocalDialogueContext()
         private set
 
-    fun reset() { draft = null; waiting = ""; management = null; lastRuleId = null; context = LocalDialogueContext() }
-    fun discardDraft() { draft = null; management = null; waiting = ""; context = LocalDialogueContext() }
+    fun reset() { repeatDates = null; draft = null; waiting = ""; management = null; lastRuleId = null; context = LocalDialogueContext() }
+    fun discardDraft() { repeatDates = null; draft = null; management = null; waiting = ""; context = LocalDialogueContext() }
     fun completed(call: ValidatedCall, success: Boolean) {
         if (success) {
             if (call.spec.name.startsWith("create_") && call.spec.name.endsWith("_rule")) lastRuleId = call.str("operation_id")
@@ -76,7 +77,7 @@ class LocalDialogueEngine(
         }
         if (has(t, "سوخت", "بنزین") && has(t, "تعمیر", "روغن", "لنت", "لاستیک") && has(t, "ثبت", "بزن")) return reply("سوخت و تعمیر دو ثبت جدا هستند؛ هر بار یکی را تنظیم کنیم.")
         if (Regex("(?: و |؛|;)\\s*(?:ثبت|اضافه|ذخیره|هر روز)").containsMatchIn(t) ||
-            categoryHits(t).size > 1 && (has(t, "ثبت", "بزن", "روزانه", "هر روز") || draft != null)) {
+            categoryHits(t).size > 1 && (has(t, "ثبت", "بزن", "روزانه", "هر روز") || draft != null || repeatDates != null)) {
             return reply("این پیام چند کار یا چند هزینه دارد. برای جلوگیری از ثبت اشتباه، هر کدام را جدا تنظیم کنیم؛ اول کدام؟")
         }
         // Short, explicit app questions. No record text is ever re-parsed as an instruction.
@@ -91,7 +92,8 @@ class LocalDialogueEngine(
             if (draft != null) return reply("اول درخواست قبلی را کامل یا لغو کن تا دو ثبت قاطی نشوند.", listOf("لغو"))
             if (has(t, "فردا", "پس فردا")) return reply("تکرار دستی را فقط برای امروز یا گذشته ثبت می‌کنم؛ برای آینده یک قانون خودکار تنظیم کن.")
             val title = categoryHits(t).singleOrNull()?.first ?: if (has(t, "پارکینگ")) "پارکینگ" else null
-            return tool("repeat_expense", JSONObject().put("source_date", Jalali.addDays(today(), -1)).put("date", today()).apply { if (title != null) put("title", title) })
+            repeatDates = Jalali.addDays(today(), -1) to today()
+            return repeatExpense(title)
         }
         navigation(t)?.let { return it }
         if (has(t, "کارهای خودکار", "قانون هام", "قوانین", "قانون ها", "برنامه های خودکار", "کارای خودکار")) return tool("list_automations")
@@ -112,6 +114,14 @@ class LocalDialogueEngine(
             }
             return tool("get_traffic_status")
         }
+        if (repeatDates != null && has(t, "فردا", "پس فردا")) return reply("برای آینده یک قانون جدا با مبلغ و برنامهٔ مشخص تنظیم کن؛ این تکرار را برای آینده ثبت نمی‌کنم.", listOf("لغو"))
+        if (repeatDates != null && draft == null && t.length <= 80 &&
+            !has(t, "ثبت", "بزن", "اضافه", "هر روز", "روزانه", "تومان", "ریال", "لیتر", "ساعت", "چطور", "قانون", "مقایسه")) {
+            if (t in setOf("بله", "آره", "اره", "اوکی", "باشه", "تایید", "تأیید")) return reply("عنوان هزینهٔ آن روز را بگو؛ مثلاً قهوه. هنوز چیزی ثبت نشده.")
+            val title = categoryHits(t).singleOrNull()?.first ?: t.removePrefix("عنوانش ").removePrefix("عنوان ").trim()
+            return repeatExpense(title)
+        }
+        repeatDates = null
         if (management != null) return manage(t, requireNotNull(management))
         if (draft == null && (isPause(t) || isResume(t) || isRuleEdit(t) || has(t, "حذف") && has(t, "قانون"))) {
             return manage(t, when { has(t, "حذف") -> "delete"; isPause(t) -> "off"; isResume(t) -> "on"; else -> "edit" })
@@ -389,8 +399,13 @@ class LocalDialogueEngine(
         return LocalIntent.Reply(text)
     }
     private fun tool(name: String, args: JSONObject = JSONObject(), preserveContext: Boolean = false): LocalIntent.Tool {
-        if (!preserveContext && draft == null) context = LocalDialogueContext()
+        if (!preserveContext && draft == null) { repeatDates = null; context = LocalDialogueContext() }
         return LocalIntent.Tool(name, args)
+    }
+    private fun repeatExpense(title: String?): LocalIntent.Tool {
+        val (source, target) = requireNotNull(repeatDates)
+        context = LocalDialogueContext("تکرار هزینه", "$source ← $target", listOf("لغو"))
+        return tool("repeat_expense", JSONObject().put("source_date",source).put("date",target).apply { if (!title.isNullOrBlank()) put("title",title) }, preserveContext = true)
     }
     private fun isReport(t: String) = has(t, "گزارش", "چقدر خرج", "چقدر درآمد", "چقدر درآوردم", "چقد خرج", "خرج این ماه", "مصرف سوخت", "لیست", "سوابق", "وضعیت خودرو", "وضعیت ماشین") && !has(t, "ثبت کن", "ثبتش", "هر روز", "روزانه")
     private fun reportText(t: String) = t.replace("چقدر درآوردم", "گزارش درآمد").replace("چقد خرج", "گزارش هزینه").replace("چقدر خرج", "گزارش هزینه")

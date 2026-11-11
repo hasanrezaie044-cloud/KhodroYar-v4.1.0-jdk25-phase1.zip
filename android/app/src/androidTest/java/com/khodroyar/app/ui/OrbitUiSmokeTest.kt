@@ -533,6 +533,28 @@ class OrbitUiSmokeTest {
         assertEquals(3,db.personalExpenses().allOnce().size)
     }
 
+    @Test fun ambiguousRepeatAsksThenAcceptsAShortTitleWithoutWritingBeforeApproval() = runBlocking {
+        val db=AppDatabase.get(context);val yesterday=Jalali.addDays(Jalali.todayString(),-1)
+        db.personalExpenses().insert(PersonalExpenseEntity("y-coffee",yesterday,"coffee","قهوه",50000.0,""))
+        db.personalExpenses().insert(PersonalExpenseEntity("y-food",yesterday,"food","خوراک",90000.0,""))
+        val tools=AppAgentTools(context,repository);val assistant=LocalAssistant(tools)
+        assertTrue(assistant.run("همون هزینه دیروز رو برای امروز ثبت کن") is AgentStep.Reply)
+        assertEquals(3,db.personalExpenses().allOnce().size)
+        val action=(assistant.run("قهوه") as AgentStep.Confirm).pending
+        assertTrue(action.summary.contains("50,000"));assertEquals(3,db.personalExpenses().allOnce().size)
+        assertTrue(tools.execute(action.call).ok);assertEquals(4,db.personalExpenses().allOnce().size)
+    }
+
+    @Test fun fixedSalaryRepeatNeverAdvancesVehicleMileage() = runBlocking {
+        val source=AppDatabase.get(context).services().byId("ui-service-0")!!.copy(type="fixed-salary",km=0.0,hours=0.0,workHours=0.0,startTime="",endTime="",origin="",destination="")
+        repository.saveRatesForYear(Jalali.currentYear(),repository.ratesFor(Jalali.currentYear()).copy(dailySalary=2_000_000.0))
+        val draft=QuickDraft.from(source);val income=repository.quickEntries.previewIncome(draft)
+        assertEquals(2_000_000L,income)
+        val receipt=repository.quickEntries.save(draft,java.util.UUID.randomUUID().toString(),income)
+        assertEquals(0.0,repository.settingsNow.vehicleCurrentKm,0.0)
+        assertTrue(repository.quickEntries.undo(receipt));assertEquals(0.0,repository.settingsNow.vehicleCurrentKm,0.0)
+    }
+
     @Test fun interruptedQuickTripRecoversCommittedMileageOnlyOnceAndAbortedWriteDoesNothing() = runBlocking {
         val db=AppDatabase.get(context);val settings=SettingsStore.get(context)
         val row=db.services().byId("ui-service-0")!!.copy(id=java.util.UUID.randomUUID().toString())

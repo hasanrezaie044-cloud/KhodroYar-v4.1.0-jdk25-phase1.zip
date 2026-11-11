@@ -43,10 +43,19 @@ data class QuickDraft(
         kind == QuickKind.EXPENSE && (amount <= 0 || title.isBlank() || PurchaseCategory.entries.none { it.wire == category }) -> "عنوان، مبلغ مثبت و دستهٔ هزینه را مشخص کن."
         kind == QuickKind.FUEL && (!liters.isFinite() || liters !in 0.1..500.0 || FuelType.entries.none { it.wire == fuelType }) -> "مقدار سوخت بین ۰٫۱ تا ۵۰۰ لیتر و نوع آن را مشخص کن."
         kind == QuickKind.MAINTENANCE && (!km.isFinite() || km !in 0.0..3_000_000.0 || MaintenanceType.entries.none { it.wire == maintenanceType }) -> "نوع تعمیر و کیلومتر معتبر را مشخص کن."
-        kind == QuickKind.SERVICE && (trip == null || ServiceType.fromWireOrNull(trip.type) == null || !trip.km.isFinite() || trip.km !in 0.0..3000.0 || !trip.hours.isFinite() || trip.hours !in 0.0..24.0 || trip.tollCount !in 0..100 || listOf(trip.missionFood, trip.missionToll, trip.missionFine).any { !it.isFinite() || it !in 0.0..1_000_000_000.0 } ||
-            listOf(trip.startTime, trip.endTime).any { it.isNotEmpty() && !com.khodroyar.app.automation.validTime(it) } ||
-            (ServiceType.fromWire(trip.type) !in ServiceType.FIXED_AMOUNT_TYPES && (trip.origin.isBlank() || trip.destination.isBlank() || trip.km <= 0 && trip.hours <= 0))) -> "برای ثبت سریع سرویس، یک سابقه یا الگوی کامل انتخاب کن؛ فرم کامل هم در دسترس است."
+        kind == QuickKind.SERVICE && !validTrip() -> "برای ثبت سریع سرویس، یک سابقه یا الگوی کامل انتخاب کن؛ فرم کامل هم در دسترس است."
         else -> null
+    }
+
+    private fun validTrip(): Boolean {
+        val row = trip ?: return false
+        val type = ServiceType.fromWireOrNull(row.type) ?: return false
+        val fixed = type in ServiceType.FIXED_AMOUNT_TYPES
+        return row.km.isFinite() && row.km in 0.0..3000.0 &&
+            row.hours.isFinite() && row.hours in 0.0..24.0 && row.workHours.isFinite() && row.workHours in 0.0..24.0 && row.tollCount in 0..100 &&
+            listOf(row.missionFood, row.missionToll, row.missionFine).all { it.isFinite() && it in 0.0..1_000_000_000.0 } &&
+            listOf(row.startTime,row.endTime).all { it.isEmpty() || com.khodroyar.app.automation.validTime(it) } &&
+            (fixed || row.origin.isNotBlank() && row.destination.isNotBlank() && (row.km > 0 || row.hours > 0))
     }
 
     companion object {

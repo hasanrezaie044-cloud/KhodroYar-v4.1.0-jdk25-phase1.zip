@@ -90,7 +90,7 @@ fun QuickEntryScreen(
                         QuickKind.EXPENSE -> expenses.map { "${it.title} · ${amount(it.amount)}" to QuickDraft.from(it, draft.date) }
                         QuickKind.FUEL -> fuels.map { "${money(it.liters)} ${tr("لیتر", "litres")} · ${it.date}" to QuickDraft.from(it, draft.date) }
                         QuickKind.MAINTENANCE -> repairs.map { it.typeText to QuickDraft.from(it, draft.date).copy(km = settings.vehicleCurrentKm) }
-                        QuickKind.SERVICE -> services.map { "${it.origin} ← ${it.destination}" to QuickDraft.from(it, draft.date) }
+                        QuickKind.SERVICE -> services.map { (if (ServiceType.fromWire(it.type) in ServiceType.FIXED_AMOUNT_TYPES) ServiceType.fromWire(it.type).label else "${it.origin} ← ${it.destination}") to QuickDraft.from(it, draft.date) }
                     }
                     if (suggestions.isNotEmpty()) {
                         Column {
@@ -138,21 +138,24 @@ fun QuickEntryScreen(
                             val trip = draft.trip
                             if (trip == null) Text(tr("یک سابقه یا الگوی سرویس انتخاب کن.", "Choose a recent trip or a saved preset."), style = MaterialTheme.typography.bodyMedium)
                             else {
-                                Text("${trip.origin} ← ${trip.destination}", style = MaterialTheme.typography.titleMedium)
+                                val fixed = ServiceType.fromWire(trip.type) in ServiceType.FIXED_AMOUNT_TYPES
+                                if (!fixed) Text("${trip.origin} ← ${trip.destination}", style = MaterialTheme.typography.titleMedium)
                                 Text(ServiceType.fromWire(trip.type).label, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
                                 Spacer(Modifier.height(12.dp))
-                                NumberField(tr("مسافت", "Distance"), tripKmText, { tripKmText = it; draft = draft.copy(trip = trip.copy(km = it.asDouble())) }, suffix = tr("کیلومتر", "km"))
-                                Spacer(Modifier.height(12.dp))
-                                NumberField(tr("مدت کار", "Work duration"), tripHoursText, { tripHoursText = it; draft = draft.copy(trip = trip.copy(hours = it.asDouble(), workHours = it.asDouble())) }, suffix = tr("ساعت", "hours"))
-                                Spacer(Modifier.height(12.dp))
-                                Collapsible(title = tr("مسیر و زمان سفر", "Route and time"), summary = "") {
-                                    TextFieldR(tr("مبدأ", "Origin"), trip.origin, { draft = draft.copy(trip = trip.copy(origin = it)) })
+                                if (!fixed) {
+                                    NumberField(tr("مسافت", "Distance"), tripKmText, { tripKmText = it; draft = draft.copy(trip = trip.copy(km = it.asDouble())) }, suffix = tr("کیلومتر", "km"))
                                     Spacer(Modifier.height(12.dp))
-                                    TextFieldR(tr("مقصد", "Destination"), trip.destination, { draft = draft.copy(trip = trip.copy(destination = it)) })
+                                    NumberField(tr("مدت کار", "Work duration"), tripHoursText, { tripHoursText = it; draft = draft.copy(trip = trip.copy(hours = it.asDouble(), workHours = it.asDouble())) }, suffix = tr("ساعت", "hours"))
                                     Spacer(Modifier.height(12.dp))
-                                    TextFieldR(tr("شروع HH:mm", "Start HH:mm"), trip.startTime, { draft = draft.copy(trip = trip.copy(startTime = it.toLatinDigits())) })
-                                    Spacer(Modifier.height(12.dp))
-                                    TextFieldR(tr("پایان HH:mm", "End HH:mm"), trip.endTime, { draft = draft.copy(trip = trip.copy(endTime = it.toLatinDigits())) })
+                                    Collapsible(title = tr("مسیر و زمان سفر", "Route and time"), summary = "") {
+                                        TextFieldR(tr("مبدأ", "Origin"), trip.origin, { draft = draft.copy(trip = trip.copy(origin = it)) })
+                                        Spacer(Modifier.height(12.dp))
+                                        TextFieldR(tr("مقصد", "Destination"), trip.destination, { draft = draft.copy(trip = trip.copy(destination = it)) })
+                                        Spacer(Modifier.height(12.dp))
+                                        TextFieldR(tr("شروع HH:mm", "Start HH:mm"), trip.startTime, { draft = draft.copy(trip = trip.copy(startTime = it.toLatinDigits())) })
+                                        Spacer(Modifier.height(12.dp))
+                                        TextFieldR(tr("پایان HH:mm", "End HH:mm"), trip.endTime, { draft = draft.copy(trip = trip.copy(endTime = it.toLatinDigits())) })
+                                    }
                                 }
                             }
                             if (settings.autoServicePresetSaved) TextButton(onClick = {
@@ -234,11 +237,15 @@ private fun QuickReview(value: QuickDraft, income: Long?) {
             QuickKind.FUEL -> { InfoRow(tr("نوع سوخت", "Fuel type"), FuelType.fromWire(value.fuelType).label); InfoRow(tr("مقدار", "Amount"), "${money(value.liters)} ${tr("لیتر", "litres")}") }
             QuickKind.MAINTENANCE -> { InfoRow(tr("تعمیر", "Maintenance"), MaintenanceType.fromWire(value.maintenanceType).label); InfoRow(tr("کیلومتر", "Odometer"), money(value.km)) }
             QuickKind.SERVICE -> value.trip?.let { row ->
-                InfoRow(tr("مسیر", "Route"), "${row.origin} ← ${row.destination}"); InfoRow(tr("نوع سرویس", "Trip type"), ServiceType.fromWire(row.type).label)
-                InfoRow(tr("مسافت / ساعت", "Distance / hours"), "${money(row.km)} / ${row.hours}")
-                InfoRow(tr("زمان سفر", "Trip time"), "${row.startTime.ifBlank { "—" }} — ${row.endTime.ifBlank { "—" }}")
-                InfoRow(tr("عوارض", "Tolls"), money(row.tollCount))
-                if (row.missionFood + row.missionToll + row.missionFine > 0) InfoRow(tr("مبالغ مأموریت", "Mission amounts"), amount(row.missionFood + row.missionToll + row.missionFine))
+                val fixed = ServiceType.fromWire(row.type) in ServiceType.FIXED_AMOUNT_TYPES
+                InfoRow(tr("نوع سرویس", "Trip type"), ServiceType.fromWire(row.type).label)
+                if (!fixed) {
+                    InfoRow(tr("مسیر", "Route"), "${row.origin} ← ${row.destination}")
+                    InfoRow(tr("مسافت / ساعت", "Distance / hours"), "${money(row.km)} / ${row.hours}")
+                    InfoRow(tr("زمان سفر", "Trip time"), "${row.startTime.ifBlank { "—" }} — ${row.endTime.ifBlank { "—" }}")
+                    InfoRow(tr("عوارض", "Tolls"), money(row.tollCount))
+                    if (row.missionFood + row.missionToll + row.missionFine > 0) InfoRow(tr("مبالغ مأموریت", "Mission amounts"), amount(row.missionFood + row.missionToll + row.missionFine))
+                }
             }
         }
         if (value.kind != QuickKind.EXPENSE) InfoRow(tr("خودرو", "Car"), CarType.fromWire(value.carType).label)
