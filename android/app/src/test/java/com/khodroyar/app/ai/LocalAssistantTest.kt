@@ -33,7 +33,7 @@ class LocalAssistantTest {
     }
 
     @Test fun everyLocalWriteTypeRequiresApproval() = runBlocking {
-        listOf("ثبت هزینه ۵۰۰ تومان", "ثبت تعمیر ۲۰۰ هزار تومان", "ثبت تعویض روغن ۵۰۰ هزار تومان", "ثبت سوخت ۴۰ لیتر ۱۲۰ هزار تومان", "ثبت یادآور بیمه تاریخ ۱۵۰۰/۰۱/۰۱").forEach {
+        listOf("ثبت هزینه قهوه ۵۰۰ تومان", "ثبت تعمیر ۲۰۰ هزار تومان", "ثبت تعویض روغن ۵۰۰ هزار تومان", "ثبت سوخت ۴۰ لیتر ۱۲۰ هزار تومان", "ثبت یادآور بیمه تاریخ ۱۵۰۰/۰۱/۰۱").forEach {
             val tools = FakeTools()
             assertTrue(it, LocalAssistant(tools).run(it) is AgentStep.Confirm)
             assertTrue(tools.calls.isEmpty())

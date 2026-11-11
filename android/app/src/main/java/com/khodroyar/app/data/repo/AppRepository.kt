@@ -1,6 +1,10 @@
 package com.khodroyar.app.data.repo
 
 import android.content.Context
+import androidx.room.withTransaction
+import com.khodroyar.app.automation.AutomationRule
+import com.khodroyar.app.automation.AutomationStore
+import com.khodroyar.app.automation.RuleKind
 import com.khodroyar.app.core.finance.LoanCalculator
 import com.khodroyar.app.core.holidays.IranHolidays
 import com.khodroyar.app.core.jalali.Jalali
@@ -141,6 +145,36 @@ class AppRepository(context: Context) {
             settingsStore.update { s -> s.copy(vehicleCurrentKm = s.vehicleCurrentKm + km) }
         }
         id
+    }
+
+    /** Atomic INSERT IGNORE + readback: retries/overlapping workers never overwrite an edited occurrence. */
+    suspend fun recordAutomation(rule: AutomationRule, date: String, id: String) = withContext(io) {
+        require(rule.valid() && id == rule.occurrenceId(date))
+        when (rule.kind) {
+            RuleKind.TRAFFIC -> error("Traffic is not a database write")
+            RuleKind.EXPENSE -> db.withTransaction {
+                db.personalExpenses().insertIfAbsent(PersonalExpenseEntity(id, date, rule.category,
+                    rule.title, rule.amount, java.time.Instant.now().toString()))
+                check(db.personalExpenses().byId(id)?.date == date)
+            }
+            RuleKind.SERVICE -> {
+                val t = requireNotNull(rule.service)
+                val type = requireNotNull(ServiceType.fromWireOrNull(t.type))
+                val rates = ratesFor(requireNotNull(Jalali.parse(date)).year)
+                val income = IncomeCalculator.calculate(type, t.km, t.hours, t.tollCount, 0.0, 0.0, 0.0,
+                    rates, t.startTime.ifEmpty { null }, t.endTime.ifEmpty { null })
+                val saved = db.withTransaction {
+                    db.services().insertIfAbsent(ServiceEntity(id, date, t.type, t.carType, t.km, t.hours, t.hours,
+                        t.startTime, t.endTime, t.origin, t.destination, t.passengers, "", t.tollCount,
+                        0.0, 0.0, 0.0, income, java.time.Instant.now().toString()))
+                    requireNotNull(db.services().byId(id)).also { check(it.date == date) }
+                }
+                // Also repaired on a retry after a process death between Room and preferences.
+                if (ServiceType.fromWire(saved.type) !in ServiceType.FIXED_AMOUNT_TYPES) {
+                    settingsStore.applyScheduledMileageOnce(id, saved.km)
+                }
+            }
+        }
     }
 
     suspend fun updateService(entity: ServiceEntity, recomputeIncome: Boolean = true) = withContext(io) {
@@ -601,6 +635,8 @@ class AppRepository(context: Context) {
         val payload = LegacyBackup.parse(json)
             ?: return@withContext Result.failure(IllegalArgumentException("ساختار فایل نامعتبر است"))
         try {
+            // Never let a restored/rolled-back dataset silently receive old unattended rules.
+            AutomationStore.get(appContext).pauseAll()
             db.runInTransaction {
                 // Room's runInTransaction needs blocking calls; DAO suspend functions
                 // are invoked through runBlocking on the already-IO thread.

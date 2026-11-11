@@ -8,6 +8,10 @@ import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.khodroyar.app.data.repo.AppRepository
+import com.khodroyar.app.automation.AutomationRule
+import com.khodroyar.app.automation.AutomationStore
+import com.khodroyar.app.notifications.AgentAutomationScheduler
+import org.json.JSONObject
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -22,13 +26,23 @@ enum class ConnectionState { LOCAL, READY, UNKNOWN, CHECKING, ONLINE, OFFLINE, N
 class AiAssistantViewModel(app: Application) : AndroidViewModel(app) {
     private val settingsStore = AiSettingsStore(app)
     private val conversations = ConversationRepository(app)
-    private val tools = AgentToolExecutor(AppRepository(app))
+    private val automationStore = AutomationStore.get(app)
+    private val tools = AppAgentTools(app, AppRepository(app))
     private val keyStore = AiApiKeyStore(app)
     private val backend = GapGPTProvider(app, settingsStore)
     private val direct = DirectGapGptProvider(settingsStore::load, keyStore)
     private val provider = AiProviderRouter({ settingsStore.load().mode }, backend, direct)
     private val orchestrator = AgentOrchestrator(provider, tools, settingsStore)
-    private val local = LocalAssistant(tools)
+    private val local = LocalAssistant(tools, dialogue = LocalDialogueEngine(rules = { automationStore.rules.value }))
+
+    var localContext by mutableStateOf(LocalDialogueContext())
+        private set
+    var automations by mutableStateOf<List<AutomationRule>>(automationStore.rules.value)
+        private set
+    val automationStorageError: Boolean get() = automationStore.storageError
+    var navigation by mutableStateOf<AgentSection?>(null)
+        private set
+    fun consumeNavigation() { navigation = null }
 
     var settings by mutableStateOf(settingsStore.load())
         private set
@@ -69,12 +83,13 @@ class AiAssistantViewModel(app: Application) : AndroidViewModel(app) {
     private var keyRevision = 0
 
     val activeModel: String get() = when (settings.mode) {
-        AiMode.LOCAL -> "داخلی — بدون API"
+        AiMode.LOCAL -> "ایجنت داخلی · بدون API هوش مصنوعی"
         AiMode.ONLINE -> settings.model.ifBlank { serverModel }
         AiMode.GAPGPT_DIRECT -> "GapGPT مستقیم · ${GapGptDirectContract.selectedModel(settings)}"
     }
 
     init {
+        viewModelScope.launch { automationStore.rules.collect { automations = it } }
         viewModelScope.launch {
             val revision = keyRevision
             val storedKey = withContext(Dispatchers.IO) {
@@ -121,7 +136,7 @@ class AiAssistantViewModel(app: Application) : AndroidViewModel(app) {
     fun testConnection() {
         testJob?.cancel()
         if (settings.mode == AiMode.LOCAL) {
-            testMessage = "حالت داخلی آماده است؛ بدون اینترنت، سرور، کلید API و هزینهٔ توکن کار می‌کند. برای آزمایش «گزارش این ماه» بفرستید. این حالت مدل زبانی عمومی نیست."
+            testMessage = "حالت داخلی آماده است؛ بدون اینترنت، سرور، کلید API و هزینهٔ توکن کار می‌کند. برای آزمایش «روزای کاری هزینه قهوه‌مو ثبت کن» بفرستید؛ جزئیات را مرحله‌به‌مرحله می‌پرسم. ترافیک زنده جداگانه اینترنت و کلید نشان می‌خواهد. این حالت مدل زبانی عمومی نیست."
             refreshStatus()
             return
         }
@@ -231,7 +246,7 @@ class AiAssistantViewModel(app: Application) : AndroidViewModel(app) {
         }
         val modeChanged = new.mode != settings.mode
         if (modeChanged || targetChanged || forceNewConsent) newChat()
-        else if (!new.enabled) { stop(); pending = null }
+        else if (!new.enabled) { stop(); pending = null; local.dialogue.reset(); localContext = local.dialogue.context }
         statusJob?.cancel()
         testJob?.cancel()
         settingsStore.save(new.copy(
@@ -281,7 +296,25 @@ class AiAssistantViewModel(app: Application) : AndroidViewModel(app) {
 
     fun send(raw: String) {
         val text = raw.trim()
-        if (text.isEmpty() || busy || savingSettings || pending != null || !settings.enabled || text.length > AiLimits.MAX_USER_CHARS) return
+        if (text.isEmpty() || busy || savingSettings || !settings.enabled || text.length > AiLimits.MAX_USER_CHARS) return
+        if (pending != null) {
+            if (settings.mode != AiMode.LOCAL) return
+            messages.add(ChatEntry(UUID.randomUUID().toString(), ChatRole.USER, text, System.currentTimeMillis()))
+            persist()
+            when (LocalApprovalInput.classify(text, pending!!.destructive)) {
+                LocalApprovalInput.Decision.CONFIRM -> { confirmPending(); return }
+                LocalApprovalInput.Decision.CANCEL -> { cancelPending(); return }
+                LocalApprovalInput.Decision.REQUIRE_BUTTON -> {
+                    add(ChatRole.ASSISTANT, "حذف فقط با دکمهٔ قرمز همین خلاصه تأیید می‌شود؛ برای انصراف «لغو» بگو.")
+                    return
+                }
+                LocalApprovalInput.Decision.REVISE -> Unit
+            }
+            // A correction invalidates the old approval card BEFORE it is parsed.
+            pending = null
+            runAgent()
+            return
+        }
         if (settings.mode != AiMode.LOCAL && !settings.consented) {
             queuedText = text
             needsConsent = true
@@ -310,10 +343,14 @@ class AiAssistantViewModel(app: Application) : AndroidViewModel(app) {
                 val step = if (mode == AiMode.LOCAL) local.run(snapshot.last().text) else orchestrator.run(snapshot)
                 coroutineContext.ensureActive()
                 if (run != generation) return@launch
+                if (mode == AiMode.LOCAL) localContext = local.dialogue.context
                 if (mode == AiMode.GAPGPT_DIRECT && step !is AgentStep.Failure) connection = ConnectionState.ONLINE
                 when (step) {
                     is AgentStep.Reply -> add(ChatRole.ASSISTANT, step.text)
-                    is AgentStep.Result -> add(ChatRole.RESULT, (if (step.outcome.ok) "" else "⚠️ ") + step.outcome.text)
+                    is AgentStep.Result -> {
+                        add(ChatRole.RESULT, (if (step.outcome.ok) "" else "⚠️ ") + step.outcome.text)
+                        if (step.outcome.ok) navigation = step.outcome.section
+                    }
                     is AgentStep.Confirm -> {
                         if (step.pending.lead.isNotBlank()) add(ChatRole.ASSISTANT, step.pending.lead)
                         pending = step.pending
@@ -340,7 +377,7 @@ class AiAssistantViewModel(app: Application) : AndroidViewModel(app) {
 
     fun confirmPending() {
         val p = pending ?: return
-        if (busy || savingSettings || !settings.enabled) return
+        if (busy || savingSettings || (!settings.enabled && p.call.spec.name !in setOf("set_automation_enabled", "remove_automation_rule"))) return
         pending = null
         busy = true
         executingAction = true
@@ -348,6 +385,14 @@ class AiAssistantViewModel(app: Application) : AndroidViewModel(app) {
             try {
                 val out = tools.execute(p.call)
                 add(ChatRole.RESULT, (if (out.ok) "✅ " else "⚠️ ") + out.text)
+                local.dialogue.completed(p.call, out.ok)
+                localContext = local.dialogue.context
+                if (out.ok) navigation = out.section else pending = p
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                pending = p
+                add(ChatRole.ERROR, "نتیجهٔ عملیات تأیید نشد؛ خلاصه را بررسی کنید. موفقیت فرضی نمایش داده نمی‌شود.")
             } finally {
                 busy = false
                 executingAction = false
@@ -358,6 +403,8 @@ class AiAssistantViewModel(app: Application) : AndroidViewModel(app) {
     fun cancelPending() {
         if (pending == null) return
         pending = null
+        local.dialogue.discardDraft()
+        localContext = local.dialogue.context
         add(ChatRole.RESULT, "عملیات لغو شد. هیچ اطلاعاتی تغییر نکرد.")
     }
 
@@ -384,12 +431,44 @@ class AiAssistantViewModel(app: Application) : AndroidViewModel(app) {
     fun newChat() {
         if (executingAction) return
         stop()
+        local.dialogue.reset()
+        localContext = local.dialogue.context
+        navigation = null
         pending = null
         failure = null
         declineConsent()
         messages.clear()
         conversationId = UUID.randomUUID().toString()
         createdAt = System.currentTimeMillis()
+    }
+
+    /** Device-local management UI: no model/network round-trip, still uses the approval gate. */
+    fun setAutomation(id: String, enabled: Boolean) = prepareAutomation("set_automation_enabled", JSONObject().put("id", id).put("state", if (enabled) "on" else "off"))
+    fun removeAutomation(id: String) = prepareAutomation("remove_automation_rule", JSONObject().put("id", id))
+
+    private fun prepareAutomation(name: String, args: JSONObject) {
+        if (busy || savingSettings || pending != null) return
+        busy = true
+        val run = ++generation
+        job = viewModelScope.launch {
+            try {
+                val validation = AgentActionValidator.validate(name, args)
+                if (validation is ValidationResult.Ok) {
+                    val step = AgentApprovalGate(tools).prepare(validation.call)
+                    if (run == generation) when (step) {
+                        is AgentStep.Confirm -> pending = step.pending
+                        is AgentStep.Reply -> add(ChatRole.ASSISTANT, step.text)
+                        else -> Unit
+                    }
+                }
+            } finally { if (run == generation) busy = false }
+        }
+    }
+
+    fun editAutomation(id: String) {
+        if (busy || pending != null) return
+        if (settings.mode != AiMode.LOCAL) useLocalMode()
+        send("مبلغ قانون ${id.take(8)} را تغییر بده")
     }
 
     fun loadHistory() {

@@ -27,58 +27,22 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
+import com.khodroyar.app.traffic.TrafficRepository
+import com.khodroyar.app.traffic.TrafficLevel
+import com.khodroyar.app.traffic.RouteStatus
 import com.khodroyar.app.data.repo.AppRepository
 import com.khodroyar.app.notifications.TrafficCheckScheduler
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.async
-import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
-import org.json.JSONObject
-import java.net.HttpURLConnection
-import java.net.URL
 import java.util.concurrent.TimeUnit
 
-private data class Corridor(
-    val id: String,
-    val title: String,
-    val originLat: Double,
-    val originLng: Double,
-    val destLat: Double,
-    val destLng: Double,
-    val referenceSec: Double,
-)
-
-// مبدأ: مبارکه / مقصد: اصفهان — سه کریدور ثابت
-private val CORRIDORS = listOf(
-    Corridor(
-        id = "shiraz",
-        title = "اتوبان اصفهان–شیراز (مبارکه ← اصفهان)",
-        originLat = 32.3100, originLng = 51.5600,
-        destLat = 32.6200, destLng = 51.6600,
-        referenceSec = 45.0 * 60,
-    ),
-    Corridor(
-        id = "zobahan",
-        title = "اتوبان ذوب‌آهن (مبارکه ← اصفهان)",
-        originLat = 32.3461, originLng = 51.5211,
-        destLat = 32.6539, destLng = 51.6660,
-        referenceSec = 50.0 * 60,
-    ),
-    Corridor(
-        id = "kharrazi",
-        title = "اتوبان شهید خرازی (ابتدا ← انتها)",
-        originLat = 32.6150, originLng = 51.5750,
-        destLat = 32.6550, destLng = 51.7450,
-        referenceSec = 25.0 * 60,
-    ),
-)
+private val CORRIDORS = TrafficRepository.CORRIDORS
 
 @Composable
 fun TrafficAssistantScreen(repository: AppRepository) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val traffic = remember { TrafficRepository() }
     val settings by repository.settings.collectAsState(initial = repository.settingsNow)
 
     var apiKeyDraft by remember(settings.neshanApiKey) { mutableStateOf(settings.neshanApiKey) }
@@ -101,17 +65,12 @@ fun TrafficAssistantScreen(repository: AppRepository) {
             loading = true
             error = null
             try {
-                val result = coroutineScope {
-                    CORRIDORS.associate { c ->
-                        c.id to async {
-                            fetchRouteStatus(key, c.originLat, c.originLng, c.destLat, c.destLng, c.referenceSec)
-                        }
-                    }.mapValues { it.value.await() }
-                }
-                statuses = result
+                statuses = traffic.fetch(key).statuses
                 lastUpdated = java.text.SimpleDateFormat("HH:mm", java.util.Locale("fa")).format(java.util.Date())
-            } catch (e: Exception) {
-                error = e.message ?: "خطا در دریافت وضعیت"
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                error = "دریافت وضعیت معتبر مسیر انجام نشد؛ اینترنت و کلید نشان را بررسی کنید."
             } finally {
                 loading = false
             }
@@ -282,60 +241,5 @@ private fun RouteStatusCard(title: String, status: RouteStatus?, loading: Boolea
                 else -> Text("هنوز بررسی نشده", color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
-    }
-}
-
-private enum class TrafficLevel { SMOOTH, MODERATE, HEAVY }
-private data class RouteStatus(val level: TrafficLevel, val labelFa: String, val detail: String? = null)
-
-private suspend fun fetchRouteStatus(
-    apiKey: String,
-    originLat: Double,
-    originLng: Double,
-    destLat: Double,
-    destLng: Double,
-    referenceSec: Double,
-): RouteStatus = withContext(Dispatchers.IO) {
-    val url = URL(
-        "https://api.neshan.org/v4/direction?type=car" +
-            "&origin=$originLat,$originLng&destination=$destLat,$destLng"
-    )
-    val conn = (url.openConnection() as HttpURLConnection).apply {
-        requestMethod = "GET"
-        setRequestProperty("Api-Key", apiKey)
-        connectTimeout = 12_000
-        readTimeout = 12_000
-    }
-    try {
-        val code = conn.responseCode
-        if (code == 401 || code == 403 || code == 480) throw Exception("کلید API نامعتبر است یا دسترسی ندارید")
-        if (code == 481) throw Exception("سقف استفاده از API پر شده است")
-        if (code == 482) throw Exception("تعداد درخواست در دقیقه بیش از حد مجاز است")
-        if (code != 200) throw Exception("پاسخ سرویس: $code")
-        val body = conn.inputStream.bufferedReader().use { it.readText() }
-        val json = JSONObject(body)
-        val routes = json.optJSONArray("routes") ?: throw Exception("مسیر یافت نشد")
-        if (routes.length() == 0) throw Exception("مسیر یافت نشد")
-        val route = routes.getJSONObject(0)
-        val legs = route.optJSONArray("legs") ?: throw Exception("جزئیات مسیر یافت نشد")
-        var durationSec = 0.0
-        var distanceM = 0.0
-        for (i in 0 until legs.length()) {
-            val leg = legs.getJSONObject(i)
-            durationSec += leg.optJSONObject("duration")?.optDouble("value", 0.0) ?: 0.0
-            distanceM += leg.optJSONObject("distance")?.optDouble("value", 0.0) ?: 0.0
-        }
-        if (durationSec <= 0) throw Exception("زمان سفر نامعتبر")
-        val minutes = (durationSec / 60).toInt()
-        val kmText = if (distanceM >= 1000) String.format("%.1f کیلومتر", distanceM / 1000.0) else "${distanceM.toInt()} متر"
-        val ratio = durationSec / referenceSec
-        val detail = "حدود $minutes دقیقه · $kmText"
-        when {
-            ratio < 1.25 -> RouteStatus(TrafficLevel.SMOOTH, "روان", detail)
-            ratio < 1.7 -> RouteStatus(TrafficLevel.MODERATE, "نیمه‌سنگین", detail)
-            else -> RouteStatus(TrafficLevel.HEAVY, "سنگین", detail)
-        }
-    } finally {
-        conn.disconnect()
     }
 }

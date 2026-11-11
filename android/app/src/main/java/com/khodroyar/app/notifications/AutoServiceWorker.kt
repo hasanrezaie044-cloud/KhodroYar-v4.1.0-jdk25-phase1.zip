@@ -1,6 +1,9 @@
 package com.khodroyar.app.notifications
 
 import android.content.Context
+import com.khodroyar.app.automation.AutomationStore
+import com.khodroyar.app.automation.RuleKind
+import kotlinx.coroutines.CancellationException
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
 import com.khodroyar.app.core.holidays.WorkCalendar
@@ -26,7 +29,19 @@ import com.khodroyar.app.data.repo.AppRepository
  */
 class AutoServiceWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
 
-    override suspend fun doWork(): Result {
+    override suspend fun doWork(): Result = try {
+        AutomationStore.get(applicationContext).inspectLocked { rules ->
+            val today = Jalali.todayString()
+            // Both workers share this gate, including the legacy last-run check below.
+            if (rules.any { it.enabled && it.kind == RuleKind.SERVICE &&
+                    today >= it.schedule.startDate && (it.schedule.endDate.isBlank() || today <= it.schedule.endDate) }) {
+                Result.success()
+            } else registerLegacyService()
+        }
+    } catch (e: CancellationException) { throw e }
+    catch (_: Exception) { Result.retry() }
+
+    private suspend fun registerLegacyService(): Result {
         val ctx = applicationContext
         val store = SettingsStore.get(ctx)
         val settings = store.current
@@ -76,6 +91,8 @@ class AutoServiceWorker(context: Context, params: WorkerParameters) : CoroutineW
                 )
             }
             Result.success()
+        } catch (e: CancellationException) {
+            throw e
         } catch (_: Exception) {
             // Same contract as ReminderWorker: never lose the schedule, let WorkManager
             // retry with backoff instead of silently skipping the day.

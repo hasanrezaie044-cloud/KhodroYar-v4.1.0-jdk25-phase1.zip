@@ -1,13 +1,14 @@
 package com.khodroyar.app.ai
 
-/** No AIProvider reference: local commands cannot accidentally fall through to the internet. */
+/** No AIProvider reference. Only an explicitly requested data tool (traffic) may use its own network source. */
 class LocalAssistant(
     private val tools: AgentToolRunner,
-    private val parser: LocalIntentParser = LocalIntentParser(),
+    parser: LocalIntentParser = LocalIntentParser(),
+    val dialogue: LocalDialogueEngine = LocalDialogueEngine(legacy = parser),
 ) {
     private val approval = AgentApprovalGate(tools)
 
-    suspend fun run(text: String): AgentStep = when (val intent = parser.parse(text)) {
+    suspend fun run(text: String): AgentStep = when (val intent = dialogue.parse(text)) {
         is LocalIntent.Reply -> AgentStep.Reply(intent.text)
         is LocalIntent.Tool -> when (val validated = AgentActionValidator.validate(intent.name, intent.args)) {
             is ValidationResult.Invalid -> AgentStep.Reply("درخواست انجام نشد: ${validated.reason}\nلطفاً اطلاعات را دقیق‌تر بنویسید.")

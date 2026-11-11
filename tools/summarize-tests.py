@@ -17,6 +17,13 @@ def main():
         print(f"{suite.get('name', path.name)}: {values}")
         for key, value in values.items():
             counts[key] += value
+        for case in suite.iter("testcase"):
+            for tag in ("failure", "error"):
+                failure = case.find(tag)
+                if failure is not None:
+                    message = (failure.get("message") or failure.text or "failed")[:1200]
+                    message = message.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+                    print(f"::error title=JUnit {case.get('classname', '')}.{case.get('name', '')}::{message}")
     summary = ", ".join(f"{key}={value}" for key, value in counts.items())
     print(f"::notice title=Android JVM tests::{summary}; suites={len(reports)}")
     if counts["tests"] == 0 or counts["failures"] or counts["errors"]:

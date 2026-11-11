@@ -60,6 +60,7 @@ object Notifications {
     private const val CHANNEL_REMINDER_LEGACY = "car_reminder"
 
     // stable ids so a re-fired reminder replaces the previous one instead of stacking
+    const val ID_AGENT = 1013
     const val ID_DAILY = 1001
     const val ID_WEEKLY = 1002
     const val ID_MONTHLY = 1003
@@ -173,6 +174,7 @@ object Notifications {
     const val TARGET_SETTINGS = "settings"
     const val TARGET_CALENDAR = "calendar"
     const val TARGET_HOME = "home"
+    const val TARGET_AGENT = "agent"
     const val TARGET_TRAFFIC = "traffic"
     const val TARGET_SERVICES = "services"
     const val TARGET_BACKUP = "backup"
@@ -192,6 +194,7 @@ object Notifications {
     )
 
     private fun lookFor(id: Int): Look = when (id) {
+        ID_AGENT -> Look("✨", 0xFF5B4BDB.toInt(), "کارهای خودکار دستیار", TARGET_AGENT)
         ID_DAILY, ID_WEEKLY, ID_MONTHLY -> Look("📊", 0xFF2F9E8F.toInt(), "خلاصه عملکرد", TARGET_HOME)
         ID_INSTALLMENT -> Look("💳", 0xFFE8590C.toInt(), "اقساط", TARGET_FINANCE)
         ID_OIL -> Look("🛢️", 0xFFF08C00.toInt(), "نگهداری خودرو", TARGET_MAINTENANCE)

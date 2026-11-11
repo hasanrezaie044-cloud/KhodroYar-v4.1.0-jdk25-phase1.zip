@@ -1,0 +1,17 @@
+# Local tooling, build outputs and private runtime configuration
+.gradle/
+android/.gradle/
+**/build/
+node_modules/
+**/__pycache__/
+*.py[cod]
+android/local.properties
+.idea/
+*.apk
+*.aab
+*.jks
+*.keystore
+.env
+.env.*
+!.env.example
+.DS_Store

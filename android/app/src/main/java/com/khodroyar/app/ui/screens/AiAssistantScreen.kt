@@ -81,6 +81,8 @@ import com.khodroyar.app.ai.ConnectionState
 import com.khodroyar.app.ai.Conversation
 import com.khodroyar.app.ai.GapGptDirectContract
 import com.khodroyar.app.ai.PendingAction
+import com.khodroyar.app.ai.AgentSection
+import com.khodroyar.app.ai.LocalDialogueEngine
 import com.khodroyar.app.ui.components.ConfirmDialog
 import com.khodroyar.app.ui.components.FieldShape
 import com.khodroyar.app.ui.components.LocalToast
@@ -91,13 +93,16 @@ import com.khodroyar.app.ui.components.fieldColors
  * the app shell (RTL by default), so nothing here hard-codes a direction.
  */
 @Composable
-fun AiAssistantScreen(vm: AiAssistantViewModel = viewModel()) {
+fun AiAssistantScreen(vm: AiAssistantViewModel = viewModel(), onNavigate: (AgentSection) -> Unit = {}) {
     val context = LocalContext.current
     val toast = LocalToast.current
     val settings = vm.settings
     var input by remember { mutableStateOf("") }
     var showSettings by remember { mutableStateOf(false) }
     var showHistory by remember { mutableStateOf(false) }
+    var showTasks by remember { mutableStateOf(false) }
+    var showSections by remember { mutableStateOf(false) }
+    LaunchedEffect(vm.navigation) { vm.navigation?.let { vm.consumeNavigation(); onNavigate(it) } }
     var confirmNew by remember { mutableStateOf(false) }
     var confirmClear by remember { mutableStateOf(false) }
     val listState = rememberLazyListState()
@@ -125,10 +130,12 @@ fun AiAssistantScreen(vm: AiAssistantViewModel = viewModel()) {
             onSettings = { showSettings = true },
         )
         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+        AgentWorkspaceBar(vm.automations.count { it.enabled }, onTasks = { showTasks = true }, onSections = { showSections = true })
+        if (settings.mode == AiMode.LOCAL) AgentDraftBar(vm.localContext, onCancel = { if (vm.pending != null) vm.cancelPending() else vm.send("لغو") })
 
         Box(Modifier.weight(1f).fillMaxWidth()) {
             when {
-                !settings.enabled -> DisabledCard(onEnable = { vm.saveSettings(settings.copy(enabled = true)) })
+                !settings.enabled && vm.pending == null -> DisabledCard(onEnable = { vm.saveSettings(settings.copy(enabled = true)) })
                 vm.messages.isEmpty() && !vm.busy -> EmptyState(vm.connection, settings.mode, onSettings = { showSettings = true }, onExample = vm::send)
                 else -> LazyColumn(
                     state = listState,
@@ -158,15 +165,29 @@ fun AiAssistantScreen(vm: AiAssistantViewModel = viewModel()) {
             }
         }
 
+        if (settings.mode == AiMode.LOCAL) AgentSuggestions(vm.localContext.suggestions,
+            enabled = settings.enabled && !vm.busy && !vm.savingSettings, onPick = vm::send)
         InputBar(
             value = input,
             onChange = { input = it.take(AiLimits.MAX_USER_CHARS) },
-            enabled = settings.enabled && vm.pending == null && !vm.savingSettings,
+            enabled = settings.enabled && (vm.pending == null || settings.mode == AiMode.LOCAL) && !vm.savingSettings,
             busy = vm.busy,
-            placeholder = if (vm.pending != null) "ابتدا عملیات بالا را تأیید یا لغو کنید" else "پیام خود را بنویسید…",
+            placeholder = if (settings.mode == AiMode.LOCAL) "راحت بنویس؛ مثلاً «نه، از فردا»" else if (vm.pending != null) "ابتدا عملیات بالا را تأیید یا لغو کنید" else "پیام خود را بنویسید…",
             onSend = { vm.send(input); if (settings.mode == AiMode.LOCAL || settings.consented) input = "" },
         )
     }
+
+    if (showTasks) AutomationManagerSheet(vm.automations, vm.automationStorageError,
+        onToggle = { showTasks = false; vm.setAutomation(it.id, !it.enabled) },
+        onEdit = { showTasks = false; vm.editAutomation(it.id) },
+        onRemove = { showTasks = false; vm.removeAutomation(it.id) },
+        onCreate = { showTasks = false; if (settings.mode != AiMode.LOCAL) vm.useLocalMode(); vm.send("روزای کاری هزینه قهوه‌مو ثبت کن") },
+        onDismiss = { showTasks = false })
+    if (showSections) AgentSectionsSheet(onPick = { section ->
+        showSections = false
+        // Explicit user navigation, never a model-produced arbitrary Intent.
+        onNavigate(section)
+    }, onDismiss = { showSections = false })
 
     if (vm.needsConsent) ConsentDialog(mode = settings.mode, onAccept = { vm.acceptConsent(); input = "" }, onDecline = vm::declineConsent)
 
@@ -383,7 +404,7 @@ private fun EmptyState(state: ConnectionState, mode: AiMode, onSettings: () -> U
         Spacer(Modifier.height(6.dp))
         Text(
             when (mode) {
-                AiMode.LOCAL -> "بدون اینترنت، API یا سرور کار می‌کند. گزارش، هزینه، تعمیر، سوخت و یادآور را با دستورهای مشخص مدیریت کنید. این حالت مدل زبانی عمومی نیست و چیزی به اینترنت نمی‌فرستد."
+                AiMode.LOCAL -> "ایجنت تخصصی داخل گوشی؛ کوتاه و راحت بگو، جزئیات ناقص را می‌پرسم. هزینه و سرویس تکراری، گزارش و ثبت‌های روزمره بدون API هوش مصنوعی انجام می‌شوند. فقط ترافیک تازه از سرویس آنلاین همان تب می‌آید. مدل چت عمومی نیست."
                 AiMode.ONLINE -> "اتصال از طریق بک‌اند خودرویار؛ آدرس مستقیم GapGPT را در این حالت وارد نکنید. برای اتصال مستقیم، گزینهٔ جداگانهٔ GapGPT در تنظیمات است."
                 AiMode.GAPGPT_DIRECT -> "اتصال مستقیم به Chat Completions گپ‌جی‌پی‌تی؛ به کلید واقعی، اینترنت و اعتبار حساب نیاز دارد. کلید فقط با رمزنگاری گوشی نگهداری می‌شود. ارسال اطلاعات و ثبت/حذف همچنان با رضایت و تأیید شماست."
             },
@@ -391,7 +412,7 @@ private fun EmptyState(state: ConnectionState, mode: AiMode, onSettings: () -> U
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         Spacer(Modifier.height(8.dp))
-        listOf("گزارش این ماه", "وضعیت خودرو", "راهنما").forEach { example ->
+        (if (mode == AiMode.LOCAL) LocalDialogueEngine.STARTERS + "گزارش این ماه" else listOf("گزارش این ماه", "وضعیت خودرو", "راهنما")).forEach { example ->
             OutlinedButton(onClick = { onExample(example) }, modifier = Modifier.fillMaxWidth()) { Text(example) }
         }
         if (state == ConnectionState.NOT_CONFIGURED) {
@@ -405,7 +426,7 @@ private fun DisabledCard(onEnable: () -> Unit) {
     Column(Modifier.fillMaxSize().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
         Text("دستیار هوشمند غیرفعال است", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
         Spacer(Modifier.height(6.dp))
-        Text("حالت داخلی بدون اینترنت و API کار می‌کند؛ فعال‌کردن آن باعث ارسال داده به سرور نمی‌شود.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text("گفتگو خاموش است؛ قوانین قبلاً تأییدشده مستقل‌اند. برای توقفشان از «کارهای خودکار» استفاده کنید. محاسبات داخلی API هوش مصنوعی نمی‌خواهد.", color = MaterialTheme.colorScheme.onSurfaceVariant)
         Spacer(Modifier.height(14.dp))
         Button(onClick = onEnable) { Text("فعال کردن دستیار") }
     }
@@ -524,9 +545,10 @@ private fun SettingsDialog(
         text = {
             Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("فعال بودن دستیار", Modifier.weight(1f))
+                    Text("فعال بودن گفتگوی دستیار", Modifier.weight(1f))
                     Switch(checked = enabled, onCheckedChange = { enabled = it }, enabled = !saving)
                 }
+                Text("قوانین تأییدشده مستقل از گفتگو اجرا می‌شوند؛ برای توقف یا حذفشان از کارهای خودکار استفاده کنید.", style = MaterialTheme.typography.labelMedium)
                 listOf(
                     AiMode.LOCAL to "داخلی — بدون API",
                     AiMode.GAPGPT_DIRECT to "اتصال مستقیم GapGPT",
@@ -539,7 +561,7 @@ private fun SettingsDialog(
                 }
                 when (mode) {
                     AiMode.LOCAL -> Text(
-                        "به اینترنت، کلید، اعتبار یا دانلود مدل نیاز ندارد. این دستیار دستورمحور است، نه مدل زبانی عمومی؛ برای نمونه‌ها «راهنما» بفرستید. ثبت فقط با تأیید شماست.",
+                        "محاسبات، هزینه و سرویس بدون API هوش مصنوعی یا دانلود مدل انجام می‌شوند. گفتگوی مرحله‌ای دارد، ولی مدل زبانی عمومی نیست. فقط دریافت ترافیک تازه به اینترنت و کلید نشان نیاز دارد. فعال‌سازی هر قانون تأیید می‌خواهد.",
                         style = MaterialTheme.typography.bodyMedium,
                     )
                     AiMode.GAPGPT_DIRECT -> {

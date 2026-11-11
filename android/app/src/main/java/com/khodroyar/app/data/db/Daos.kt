@@ -69,6 +69,7 @@ interface ServiceDao {
     @Query("SELECT MAX(km) FROM services")
     suspend fun maxKm(): Double?
 
+    @Insert(onConflict = OnConflictStrategy.IGNORE) suspend fun insertIfAbsent(item: ServiceEntity): Long
     @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun insert(item: ServiceEntity)
     @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun insertAll(items: List<ServiceEntity>)
     @Update suspend fun update(item: ServiceEntity)
@@ -156,6 +157,8 @@ interface PersonalExpenseDao {
     @Query("SELECT * FROM personal_expenses ORDER BY date") suspend fun allOnce(): List<PersonalExpenseEntity>
     @Query("SELECT COALESCE(SUM(amount),0) FROM personal_expenses WHERE date LIKE :prefix || '%'")
     fun observeTotal(prefix: String): Flow<Double>
+    @Query("SELECT * FROM personal_expenses WHERE id = :id") suspend fun byId(id: String): PersonalExpenseEntity?
+    @Insert(onConflict = OnConflictStrategy.IGNORE) suspend fun insertIfAbsent(item: PersonalExpenseEntity): Long
     @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun insert(item: PersonalExpenseEntity)
     @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun insertAll(items: List<PersonalExpenseEntity>)
     @Query("DELETE FROM personal_expenses WHERE id = :id") suspend fun deleteById(id: String)

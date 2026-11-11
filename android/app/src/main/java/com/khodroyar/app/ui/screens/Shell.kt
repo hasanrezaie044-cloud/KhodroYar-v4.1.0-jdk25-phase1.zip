@@ -45,6 +45,10 @@ import com.khodroyar.app.data.db.PersonnelEntity
 import com.khodroyar.app.data.db.ServiceEntity
 import com.khodroyar.app.data.prefs.AppSettings
 import com.khodroyar.app.data.repo.AppRepository
+import com.khodroyar.app.ai.AgentSection
+import com.khodroyar.app.automation.AutomationStore
+import com.khodroyar.app.notifications.AgentAutomationScheduler
+import com.khodroyar.app.notifications.TrafficCheckScheduler
 import com.khodroyar.app.notifications.AutoBackupScheduler
 import com.khodroyar.app.notifications.AutoServiceScheduler
 import com.khodroyar.app.notifications.Notifications
@@ -83,6 +87,10 @@ fun CarManagerRoot(
     val scope = rememberCoroutineScope()
     val settings by repository.settings.collectAsState(initial = repository.settingsNow)
 
+    val agentRules by remember { AutomationStore.get(context) }.rules.collectAsState()
+    LaunchedEffect(agentRules.any { it.enabled }) { AgentAutomationScheduler.sync(context) }
+    LaunchedEffect(Unit) { AgentAutomationScheduler.checkNow(context); TrafficCheckScheduler.sync(context) }
+    var agentReturn by remember { mutableStateOf(false) }
     var destination by remember { mutableStateOf(AppDestination.HOME) }
     var tool by remember { mutableStateOf<ToolDestination?>(null) }
     var overlay by remember { mutableStateOf<Overlay?>(null) }
@@ -96,6 +104,7 @@ fun CarManagerRoot(
         overlay = null
         quick = null
         when (target) {
+            Notifications.TARGET_AGENT -> tool = ToolDestination.AI_ASSISTANT
             Notifications.TARGET_MAINTENANCE -> tool = ToolDestination.MAINTENANCE
             Notifications.TARGET_FINANCE -> tool = ToolDestination.FINANCE
             Notifications.TARGET_INSURANCE -> tool = ToolDestination.INSURANCE
@@ -176,6 +185,7 @@ fun CarManagerRoot(
                 ToolsDrawer(
                     active = tool,
                     onPick = { picked ->
+                        agentReturn = false
                         quick = null
                         tool = picked
                         overlay = null
@@ -209,6 +219,7 @@ fun CarManagerRoot(
                         selected = destination,
                         toolActive = tool != null,
                         onSelect = { picked ->
+                            agentReturn = false
                             destination = picked
                             tool = null
                             overlay = null
@@ -231,8 +242,8 @@ fun CarManagerRoot(
                         title = title,
                         subtitle = subtitle,
                         privacyMode = settings.privacyMode,
-                        showBack = overlay != null || tool != null,
-                        onBack = { if (overlay != null) overlay = null else tool = null },
+                        showBack = overlay != null || tool != null || agentReturn,
+                        onBack = { if (agentReturn) { overlay = null; tool = ToolDestination.AI_ASSISTANT; agentReturn = false } else if (overlay != null) overlay = null else tool = null },
                         onOpenTools = { scope.launch { drawerState.open() } },
                         onSearch = { overlay = Overlay.Search },
                     )
@@ -285,7 +296,25 @@ fun CarManagerRoot(
                             ToolDestination.RATES -> RatesScreen(repository)
                             ToolDestination.INSURANCE -> InsuranceScreen(repository)
                             ToolDestination.TRAFFIC -> TrafficAssistantScreen(repository)
-                            ToolDestination.AI_ASSISTANT -> AiAssistantScreen()
+                            ToolDestination.AI_ASSISTANT -> AiAssistantScreen(onNavigate = { section ->
+                                overlay = null
+                                quick = null
+                                agentReturn = true
+                                when (section) {
+                                    AgentSection.HOME -> { tool = null; destination = AppDestination.HOME }
+                                    AgentSection.SERVICES -> { tool = null; destination = AppDestination.SERVICES }
+                                    AgentSection.CALENDAR -> { tool = null; destination = AppDestination.CALENDAR }
+                                    AgentSection.REPORTS -> { tool = null; destination = AppDestination.REPORTS }
+                                    AgentSection.SETTINGS -> { tool = null; destination = AppDestination.SETTINGS }
+                                    AgentSection.FINANCE -> tool = ToolDestination.FINANCE
+                                    AgentSection.FUEL -> tool = ToolDestination.FUEL
+                                    AgentSection.MAINTENANCE -> tool = ToolDestination.MAINTENANCE
+                                    AgentSection.INSURANCE -> tool = ToolDestination.INSURANCE
+                                    AgentSection.RATES -> tool = ToolDestination.RATES
+                                    AgentSection.TRAFFIC -> tool = ToolDestination.TRAFFIC
+                                    AgentSection.SEARCH -> overlay = Overlay.Search
+                                }
+                            })
 
                             /* ----------------------------------------------- tabs */
                             AppDestination.HOME -> DashboardScreen(
@@ -335,6 +364,7 @@ fun CarManagerRoot(
         BackHandler {
             when {
                 drawerState.isOpen -> scope.launch { drawerState.close() }
+                agentReturn -> { overlay = null; tool = ToolDestination.AI_ASSISTANT; agentReturn = false }
                 overlay != null -> overlay = null
                 tool != null -> tool = null
                 destination != AppDestination.HOME -> destination = AppDestination.HOME

@@ -111,8 +111,13 @@ jobs:
         run: |
           chmod +x ./gradlew
           STATIC_ONLY=1 bash ../tools/check-permissions.sh
-          ./gradlew testDebugUnitTest --stacktrace
+          set +e
+          ./gradlew testDebugUnitTest --stacktrace 2>&1 | tee "$RUNNER_TEMP/khodroyar-tests.log"
+          TEST_EXIT=${PIPESTATUS[0]}
+          set -e
+          python3 ../tools/annotate-build-errors.py "$RUNNER_TEMP/khodroyar-tests.log"
           python3 ../tools/summarize-tests.py app/build/test-results/testDebugUnitTest
+          test "$TEST_EXIT" -eq 0
 
       - name: Upload Android unit test reports
         if: always()
@@ -132,9 +137,21 @@ jobs:
           ANDROID_KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
           chmod +x ./gradlew
-          ./gradlew clean assembleRelease --stacktrace
+          set +e
+          ./gradlew clean assembleRelease --stacktrace 2>&1 | tee "$RUNNER_TEMP/khodroyar-release.log"
+          BUILD_EXIT=${PIPESTATUS[0]}
+          set -e
+          python3 ../tools/annotate-build-errors.py "$RUNNER_TEMP/khodroyar-release.log"
+          test "$BUILD_EXIT" -eq 0
           test -f "app/build/outputs/apk/release/app-release.apk"
           test -s "app/build/outputs/apk/release/app-release.apk"
+
+      - name: Enforce total APK size below 100 MB
+        run: |
+          APK="android/app/build/outputs/apk/release/app-release.apk"
+          BYTES=$(stat -c %s "$APK")
+          test "$BYTES" -lt 100000000 || { echo "APK exceeds the 100 MB product budget"; exit 1; }
+          echo "::notice title=Signed APK size::$BYTES bytes; limit 100000000 bytes"
 
       - name: Extract version
         id: version

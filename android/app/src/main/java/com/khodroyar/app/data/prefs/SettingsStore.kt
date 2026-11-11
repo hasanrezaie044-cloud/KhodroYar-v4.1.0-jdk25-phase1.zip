@@ -283,7 +283,21 @@ class SettingsStore private constructor(context: Context) {
         _state.value = s
     }
 
+    @Synchronized
     fun update(transform: (AppSettings) -> AppSettings) = write(transform(_state.value))
+
+    /** Commit odometer + dedup marker together; safe to replay after Room has committed. */
+    @Synchronized
+    fun applyScheduledMileageOnce(id: String, km: Double) {
+        require(km.isFinite() && km in 0.0..3000.0)
+        val key = "agent_mileage_occurrences"
+        val applied = (prefs.getString(key, "") ?: "").split(',').filter { it.isNotBlank() }
+        if (id in applied) return
+        val value = (_state.value.vehicleCurrentKm + km).toFloat()
+        check(prefs.edit().putFloat(K_VEHICLE_KM, value)
+            .putString(key, (applied.takeLast(2047) + id).joinToString(",")).commit())
+        _state.value = _state.value.copy(vehicleCurrentKm = value.toDouble())
+    }
 
     fun markBackupDone() = update { it.copy(lastBackupAt = System.currentTimeMillis()) }
 

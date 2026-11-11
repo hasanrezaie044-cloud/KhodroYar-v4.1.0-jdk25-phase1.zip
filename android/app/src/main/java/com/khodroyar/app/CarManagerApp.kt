@@ -2,6 +2,7 @@ package com.khodroyar.app
 
 import android.app.Application
 import androidx.work.Configuration
+import com.khodroyar.app.notifications.AgentAutomationScheduler
 import com.khodroyar.app.notifications.AutoBackupScheduler
 import com.khodroyar.app.notifications.TrafficCheckScheduler
 import com.khodroyar.app.notifications.AutoServiceScheduler
@@ -35,5 +36,6 @@ class CarManagerApp : Application(), Configuration.Provider {
         runCatching { AutoServiceScheduler.sync(this) }
         runCatching { AutoBackupScheduler.sync(this) }
         runCatching { TrafficCheckScheduler.sync(this) }
+        runCatching { AgentAutomationScheduler.sync(this) }
     }
 }
