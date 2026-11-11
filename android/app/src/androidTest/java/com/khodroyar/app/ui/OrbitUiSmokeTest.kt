@@ -246,7 +246,9 @@ class OrbitUiSmokeTest {
         // UiAutomation screenshot can still contain the frame before a chart tap.
         compose.mainClock.advanceTimeBy(500)
         compose.waitForIdle()
-        val node = if (name == "19-home-dark-320-large-text") compose.onNodeWithTag("compact-app") else compose.onRoot()
+        // ModalBottomSheet/Dialog adds another root; capture the topmost visible
+        // surface rather than asking onRoot() to match exactly one window.
+        val node = if (name == "19-home-dark-320-large-text") compose.onNodeWithTag("compact-app") else compose.onAllNodes(isRoot()).onLast()
         val bitmap = node.captureToImage().asAndroidBitmap()
         // UTP uninstalls the tested APK after a run, removing its app-specific external files.
         // Publish synthetic screenshots to shared Downloads so CI can collect them afterwards.
