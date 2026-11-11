@@ -66,6 +66,10 @@ interface ServiceDao {
     """)
     fun observeDailyTotals(prefix: String): Flow<List<DailyTotals>>
 
+    @Query("""SELECT COALESCE(SUM(km),0) FROM services WHERE type NOT IN ('fixed-salary','leave')
+        AND (:date IS NULL OR date > :date OR (date = :date AND timestamp > :timestamp))""")
+    suspend fun drivenSince(date: String?, timestamp: String): Double
+
     @Query("SELECT MAX(km) FROM services")
     suspend fun maxKm(): Double?
 
@@ -113,6 +117,7 @@ interface FuelDao {
     fun observeTotalCost(prefix: String): Flow<Double>
     @Query("SELECT COALESCE(SUM(liters),0) FROM fuels WHERE date LIKE :prefix || '%'")
     fun observeTotalLiters(prefix: String): Flow<Double>
+    @Insert(onConflict = OnConflictStrategy.IGNORE) suspend fun insertIfAbsent(item: FuelEntity): Long
     @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun insert(item: FuelEntity)
     @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun insertAll(items: List<FuelEntity>)
     @Query("DELETE FROM fuels WHERE id = :id") suspend fun deleteById(id: String)
@@ -131,6 +136,7 @@ interface MaintenanceDao {
     fun observeTotalCost(prefix: String): Flow<Double>
     @Query("SELECT * FROM maintenances WHERE type = :type ORDER BY km DESC LIMIT 1")
     suspend fun latestByType(type: String): MaintenanceEntity?
+    @Insert(onConflict = OnConflictStrategy.IGNORE) suspend fun insertIfAbsent(item: MaintenanceEntity): Long
     @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun insert(item: MaintenanceEntity)
     @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun insertAll(items: List<MaintenanceEntity>)
     @Query("DELETE FROM maintenances WHERE id = :id") suspend fun deleteById(id: String)

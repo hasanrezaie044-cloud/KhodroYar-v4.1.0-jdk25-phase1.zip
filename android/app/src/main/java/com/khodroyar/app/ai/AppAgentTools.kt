@@ -2,7 +2,10 @@ package com.khodroyar.app.ai
 
 import android.content.Context
 import com.khodroyar.app.automation.*
-import com.khodroyar.app.core.analytics.Analytics
+import com.khodroyar.app.core.analytics.*
+import com.khodroyar.app.core.finance.PurchaseCategory
+import com.khodroyar.app.data.repo.QuickDraft
+import kotlinx.coroutines.flow.first
 import com.khodroyar.app.core.jalali.Jalali
 import com.khodroyar.app.data.repo.AppRepository
 import com.khodroyar.app.notifications.AgentAutomationScheduler
@@ -22,7 +25,7 @@ class AppAgentTools(context: Context, private val repo: AppRepository) : AgentTo
     private val app = context.applicationContext
     private val records = AgentToolExecutor(repo)
     private val store = AutomationStore.get(app)
-    private val extraNames = AutomationToolSpecs.tools.map { it.name }.toSet()
+    private val extraNames = (AutomationToolSpecs.tools + DailyToolSpecs.tools).map { it.name }.toSet()
 
     private fun template(): ServiceTemplate {
         val s = repo.settingsNow
@@ -35,6 +38,24 @@ class AppAgentTools(context: Context, private val repo: AppRepository) : AgentTo
     override suspend fun prepare(call: ValidatedCall): ValidatedCall {
         if (call.spec.name !in extraNames) return records.prepare(call)
         val args = call.args.toMutableMap()
+        if (call.spec.name == "repeat_expense") {
+            val sourceDate = requireNotNull(call.str("source_date"))
+            val title = call.str("title")?.let(LocalDialogueEngine::normalize)
+            val dayRows = repo.insights.expensesOn(sourceDate)
+            userCheck(dayRows.size <= 20, "ثبت‌های آن روز زیاد است؛ برای انتخاب دقیق هزینه از تب مالی استفاده کن. چیزی ثبت نشد.")
+            val candidates = dayRows.filter { row ->
+                title == null || LocalDialogueEngine.normalize(row.title).contains(title) ||
+                    LocalDialogueEngine.normalize(PurchaseCategory.fromWire(row.category).label) == title
+            }
+            userCheck(candidates.isNotEmpty(), "برای آن روز هزینه‌ای با این عنوان پیدا نشد؛ چیزی ثبت نمی‌کنم.")
+            userCheck(candidates.size == 1, "برای آن روز چند هزینه هست؛ عنوان را مشخص کن، مثلاً «قهوهٔ دیروز را برای امروز تکرار کن».")
+            val source = candidates.single()
+            args["source_id"] = source.id
+            args["source_fingerprint"] = source.toString()
+            args["source_title"] = source.title
+            args["source_amount"] = source.amount
+            args["operation_id"] = UUID.randomUUID().toString()
+        }
         if (call.spec.name in setOf("create_expense_rule", "create_service_rule", "create_traffic_rule", "add_service_from_preset")) {
             args["operation_id"] = UUID.randomUUID().toString()
         }
@@ -61,6 +82,7 @@ class AppAgentTools(context: Context, private val repo: AppRepository) : AgentTo
     }
 
     override fun describe(call: ValidatedCall): String = when (call.spec.name) {
+        "repeat_expense" -> "تکرار هزینهٔ «${call.str("source_title") }» از ${call.str("source_date")} برای ${call.str("date")}\nمبلغ: ${Analytics.formatNumber(call.dbl("source_amount") ?: 0.0)} تومان\nیک ثبت جدید؛ سابقهٔ قبلی تغییر نمی‌کند."
         "create_expense_rule", "create_service_rule", "create_traffic_rule" -> ruleSummary(ruleFrom(call)) +
             (if (call.spec.name == "create_traffic_rule") "\n\nاجازهٔ دریافت آنلاین و اعلان ترافیک در زمان‌های همین قانون؛ مصرف سهمیهٔ نشان محتمل است، نه API هوش مصنوعی." else "\n\nاجازهٔ ثبت خودکار واقعی برای همین قانون؛ تا توقف یا پایان آن.") +
             " اجرای پس‌زمینه تقریبی است، فقط همان روز؛ روزهای ازدست‌رفته جبران نمی‌شوند."
@@ -92,7 +114,49 @@ class AppAgentTools(context: Context, private val repo: AppRepository) : AgentTo
         }
     }
 
+    private suspend fun periodComparison(period: String): ToolOutcome {
+        val today = Jalali.todayString()
+        val windows = if (period == "week") {
+            val start = Jalali.weekRange(today).first
+            ReportWindow(start, today).let { it to it.previous() }
+        } else ReportWindow.monthToDate(today)
+        val data = repo.comparison(windows.first, windows.second).first()
+        fun n(value: Double) = Analytics.formatNumber(value)
+        fun group(key: String): String = when (key) { "fuel" -> "سوخت"; "maintenance" -> "نگهداری"; else -> PurchaseCategory.fromWire(key.removePrefix("personal:")).label }
+        if (!data.current.hasData && !data.previous.hasData) return ToolOutcome(true, "برای این دو بازه ثبتی وجود ندارد؛ نتیجه‌ای حدس نمی‌زنم.")
+        return ToolOutcome(true, buildString {
+            append("مقایسهٔ ${windows.first.days} روز هم‌طول\n")
+            append("این بازه: ${windows.first.start} تا ${windows.first.end}\n")
+            append("بازهٔ قبل: ${windows.second.start} تا ${windows.second.end}\n")
+            append("درآمد: ${n(data.current.income)} · هزینه: ${n(data.current.expense)} · خالص: ${n(data.current.net)} تومان\n")
+            if (data.previous.hasData) {
+                append("خالص بازهٔ قبل: ${n(data.previous.net)} تومان\n")
+                if (data.current.hasData) append("تفاوت خالص: ${n(data.current.net - data.previous.net)} تومان\n")
+            } else append("برای بازهٔ قبل سابقه‌ای نداریم؛ درصد رشد نمی‌سازم.\n")
+            append("خالص خودرو/کیلومتر: ${data.current.vehicleNetPerKm?.let(::n) ?: "—"} تومان\n")
+            append("خالص خودرو/ساعت: ${data.current.vehicleNetPerHour?.let(::n) ?: "—"} تومان\n")
+            append("خالص خودرو = درآمد سرویس منهای سوخت و نگهداری؛ فقط ثبت‌های موجود.\n")
+            data.increases.forEach { append("افزایش ${group(it.key)}: ${n(it.increase)} تومان\n") }
+        }.trim())
+    }
+
     private suspend fun executeExtra(c: ValidatedCall): ToolOutcome = when (c.spec.name) {
+        "repeat_expense" -> {
+            val source = repo.insights.expense(requireNotNull(c.str("source_id")))
+            userCheck(source != null && source.toString() == c.str("source_fingerprint"), "هزینهٔ مبنا بعد از خلاصه تغییر کرده یا حذف شده؛ دوباره درخواست بده. چیزی ثبت نشد.")
+            val saved = repo.quickEntries.save(QuickDraft.from(requireNotNull(source), requireNotNull(c.str("date"))), requireNotNull(c.str("operation_id")))
+            ToolOutcome(true, "تکرار هزینه در پایگاه‌داده تأیید شد: ${saved.draft.title} · ${Analytics.formatNumber(saved.draft.amount)} تومان · ${saved.draft.date}")
+        }
+        "get_period_comparison" -> periodComparison(c.str("period") ?: "month")
+        "get_automation_health" -> {
+            val holidays = repo.manualHolidayDatesOnce()
+            val now = java.time.Instant.now()
+            val rows = store.rules.value
+            ToolOutcome(!store.storageError, if (store.storageError) "فایل کارهای خودکار قابل خواندن نیست؛ موفقیت فرضی اعلام نمی‌کنم."
+                else if (rows.isEmpty()) "هنوز کار خودکاری تعریف نشده است."
+                else rows.joinToString("\n\n") { rule -> "${rule.title}: ${rule.health(now, holidays).label}\nآخرین ثبت تأییدشده: ${rule.lastDate.ifBlank { "ندارد" }}\nآخرین نتیجه: ${rule.lastMessage}" } +
+                    "\nزمان‌بندی اندروید تقریبی است؛ منتظر بودن به‌معنای خطای قطعی نیست. روزهای ازدست‌رفته خودکار جبران نمی‌شوند.")
+        }
         "open_app_section" -> AgentSection.fromWire(c.str("section"))?.let { ToolOutcome(true, "بازکردن بخش ${it.label}", it) }
             ?: ToolOutcome(false, "بخش مجاز پیدا نشد.")
         "list_automations" -> ToolOutcome(!store.storageError, if (store.storageError) "فایل قوانین قابل خواندن نیست؛ هیچ قانون مخفیانه فعال نمی‌شود."

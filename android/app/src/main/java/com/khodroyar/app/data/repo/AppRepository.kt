@@ -43,6 +43,22 @@ class AppRepository(context: Context) {
     private val db = AppDatabase.get(context)
     private val io = Dispatchers.IO
     private val settingsStore = SettingsStore.get(context)
+    val insights: InsightsDao get() = db.insights()
+    val quickEntries by lazy { QuickEntries(db, settingsStore, ::ratesFor) }
+
+    fun comparison(window: com.khodroyar.app.core.analytics.ReportWindow,
+        previous: com.khodroyar.app.core.analytics.ReportWindow = window.previous()
+    ): Flow<com.khodroyar.app.core.analytics.PeriodComparison> = combine(
+        insights.financial(window.start, window.end), insights.financial(previous.start, previous.end),
+        insights.expenses(window.start, window.end), insights.expenses(previous.start, previous.end),
+    ) { current, before, costs, oldCosts ->
+        com.khodroyar.app.core.analytics.PeriodComparison(window, previous, current, before,
+            com.khodroyar.app.core.analytics.PeriodInsights.increases(costs, oldCosts))
+    }
+
+    fun drivingPace(today: String = Jalali.todayString()): Flow<com.khodroyar.app.core.analytics.DrivingPace?> =
+        insights.mileageDays(Jalali.addDays(today, -55), today).map { com.khodroyar.app.core.analytics.MaintenanceForecast.pace(it, today) }
+
 
     // ----------------------------------------------------------- app settings
 
@@ -312,19 +328,7 @@ class AppRepository(context: Context) {
      */
     suspend fun drivenKmSinceMaintenance(typeWire: String): Double = withContext(io) {
         val last = db.maintenances().latestByType(typeWire)
-        val all = db.services().allOnce()
-        if (last == null) {
-            all.sumOf { it.km }
-        } else {
-            // Prefer date comparison; fall back to timestamp if dates equal/blank
-            all.filter { s ->
-                when {
-                    s.date > last.date -> true
-                    s.date < last.date -> false
-                    else -> s.timestamp > last.timestamp
-                }
-            }.sumOf { it.km }
-        }
+        db.services().drivenSince(last?.date, last?.timestamp.orEmpty())
     }
 
     /** Convenience: build ServiceDue for a tracked maintenance type using driven-km logic. */
@@ -338,6 +342,9 @@ class AppRepository(context: Context) {
     ): com.khodroyar.app.core.analytics.Analytics.ServiceDue {
         val last = latestMaintenance(typeWire)
         val driven = drivenKmSinceMaintenance(typeWire)
+        val base = baseCurrentKm.takeIf { it > 0 } ?: last?.km?.takeIf { it > 0 } ?: 0.0
+        if (base <= 0 && nextKmOverride <= 0) return com.khodroyar.app.core.analytics.Analytics.ServiceDue(
+            label, last?.km, interval, currentOdometer, null, false, false, driven)
         return com.khodroyar.app.core.analytics.Analytics.dueFromDriven(
             label = label,
             lastKm = last?.km,
@@ -345,7 +352,7 @@ class AppRepository(context: Context) {
             drivenSinceLast = driven,
             nextKmOverride = nextKmOverride,
             currentOdometer = currentOdometer,
-            baseCurrentKm = baseCurrentKm,
+            baseCurrentKm = base,
         )
     }
 
@@ -637,6 +644,7 @@ class AppRepository(context: Context) {
         try {
             // Never let a restored/rolled-back dataset silently receive old unattended rules.
             AutomationStore.get(appContext).pauseAll()
+            QuickEntries.invalidate()
             db.runInTransaction {
                 // Room's runInTransaction needs blocking calls; DAO suspend functions
                 // are invoked through runBlocking on the already-IO thread.

@@ -22,14 +22,14 @@ import com.khodroyar.app.ui.screens.findActivity
 /** Shared small primitives; no bitmaps, blur layers or continuously running animations. */
 @Composable
 fun IconBadge(icon: ImageVector, modifier: Modifier = Modifier, tint: Color = MaterialTheme.colorScheme.primary, size: Dp = 40.dp) {
-    Box(modifier.size(size).clip(RoundedCornerShape(12.dp)).background(tint.copy(alpha = 0.10f)), contentAlignment = Alignment.Center) {
+    Box(modifier.size(size).clip(RoundedCornerShape(topStart = 16.dp, topEnd = 10.dp, bottomEnd = 16.dp, bottomStart = 10.dp)).background(tint.copy(alpha = 0.12f)), contentAlignment = Alignment.Center) {
         Icon(icon, null, tint = tint, modifier = Modifier.size(size * 0.5f))
     }
 }
 
 @Composable
 fun StatusPill(text: String, modifier: Modifier = Modifier, color: Color = MaterialTheme.colorScheme.primary) {
-    Surface(modifier, color = color.copy(alpha = 0.10f), contentColor = color, shape = RoundedCornerShape(8.dp)) {
+    Surface(modifier, color = color.copy(alpha = 0.10f), contentColor = color, shape = RoundedCornerShape(50)) {
         Text(text, Modifier.padding(horizontal = 10.dp, vertical = 4.dp), style = MaterialTheme.typography.labelSmall,
             maxLines = 1, overflow = TextOverflow.Ellipsis)
     }

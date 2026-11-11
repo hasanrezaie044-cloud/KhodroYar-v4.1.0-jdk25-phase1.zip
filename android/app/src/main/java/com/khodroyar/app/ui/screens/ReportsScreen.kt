@@ -69,12 +69,12 @@ fun ReportsScreen(repository: AppRepository, onOpenService: (ServiceEntity) -> U
     var annualExpanded by rememberSaveable { mutableStateOf(false) }
     var recentExpanded by rememberSaveable { mutableStateOf(false) }
 
-    val allServices by repository.services().collectAsState(initial = emptyList())
-    val allFuels by repository.fuels().collectAsState(initial = emptyList())
-    val allMaintenance by repository.maintenances().collectAsState(initial = emptyList())
-    val allPersonalExpenses by repository.personalExpenses().collectAsState(initial = emptyList())
-    val allPersonalIncomes by repository.personalIncomes().collectAsState(initial = emptyList())
-    val recent = remember(allServices) { allServices.take(5) }
+    val allServices by remember(from, to) { repository.insights.serviceRecords(from, to) }.collectAsState(initial = emptyList())
+    val allFuels by remember(from, to) { repository.insights.fuelRecords(from, to) }.collectAsState(initial = emptyList())
+    val allMaintenance by remember(from, to) { repository.insights.maintenanceRecords(from, to) }.collectAsState(initial = emptyList())
+    val allPersonalExpenses by remember(from, to) { repository.insights.expenseRecords(from, to) }.collectAsState(initial = emptyList())
+    val allPersonalIncomes by remember(from, to) { repository.insights.incomeRecords(from, to) }.collectAsState(initial = emptyList())
+    val recent by remember { repository.insights.latestServices() }.collectAsState(initial = emptyList())
 
     val services = remember(allServices, from, to, typeFilter) {
         allServices
@@ -367,6 +367,8 @@ fun ReportsScreen(repository: AppRepository, onOpenService: (ServiceEntity) -> U
                 }
             }
         }
+
+        item { FinancialComparisonSection(repository, from, to, today) }
 
         item {
             CollapsibleSectionTitle("آمار سال ${ymd.year}", icon = Icons.Outlined.CalendarToday,

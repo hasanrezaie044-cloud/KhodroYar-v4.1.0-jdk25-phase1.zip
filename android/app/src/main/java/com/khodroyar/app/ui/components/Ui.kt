@@ -1,6 +1,9 @@
 package com.khodroyar.app.ui.components
 
 import androidx.compose.animation.animateContentSize
+import androidx.compose.foundation.Canvas
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -105,9 +108,9 @@ fun groupDigits(raw: String): String {
     return sb.toString()
 }
 
-val CardShape = RoundedCornerShape(24.dp)
-val FieldShape = RoundedCornerShape(14.dp)
-val TileShape = RoundedCornerShape(18.dp)
+val CardShape = RoundedCornerShape(28.dp)
+val FieldShape = RoundedCornerShape(18.dp)
+val TileShape = RoundedCornerShape(24.dp)
 
 /**
  * Filled resting fields with a clear focus outline. Input, validation and numeric contracts stay native.
@@ -213,7 +216,18 @@ fun GradientCard(
         color = Color.Transparent,
         shadowElevation = 0.dp,
     ) {
-        Column(Modifier.background(brush).padding(contentPadding), content = content)
+        Box(Modifier.background(brush)) {
+            // Static vector atmosphere, not a bitmap/blur/animation or a second composition tree.
+            Canvas(Modifier.matchParentSize()) {
+                val center = Offset(size.width * 0.94f, size.height * 0.05f)
+                repeat(3) { ring ->
+                    drawCircle(Color.White.copy(alpha = 0.045f), radius = size.width * (0.24f + ring * 0.16f),
+                        center = center, style = Stroke(width = 1.2.dp.toPx()))
+                }
+                drawCircle(Color(0xFF81E1CC).copy(alpha = 0.09f), size.width * 0.23f, Offset(size.width * 0.96f, size.height * 0.08f))
+            }
+            Column(Modifier.padding(contentPadding), content = content)
+        }
     }
 }
 
@@ -287,8 +301,8 @@ fun MetricCard(
     val tint = accent ?: MaterialTheme.colorScheme.primary
     val base = modifier.defaultMinSize(minHeight = if (compact) AppDimens.tileCompactMinHeight else AppDimens.tileMinHeight)
     Surface(modifier = if (onClick == null) base else base.clip(TileShape).clickable(onClick = onClick),
-        shape = TileShape, color = MaterialTheme.colorScheme.surfaceContainerLowest,
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.65f))) {
+        shape = TileShape, color = androidx.compose.ui.graphics.lerp(MaterialTheme.colorScheme.surfaceContainerLowest, tint, 0.045f),
+        border = BorderStroke(1.dp, tint.copy(alpha = 0.12f))) {
         Column(Modifier.padding(if (compact) 12.dp else 16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 Icon(icon, null, tint = tint, modifier = Modifier.size(17.dp))

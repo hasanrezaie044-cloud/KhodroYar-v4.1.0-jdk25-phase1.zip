@@ -289,6 +289,7 @@ fun SettingsScreen(repository: AppRepository, settings: AppSettings, onToggleThe
 
         item { CollapsibleSectionTitle("یادآورها و اعلان‌ها", icon = Icons.Outlined.NotificationsActive, expanded = "reminders" in sectionOpen.value, onToggle = { toggleSection("reminders") }, englishTitle = "Reminders & Notifications") }
         if ("reminders" in sectionOpen.value) {
+        item { BackgroundExecutionCard() }
         item {
             NotificationHealthCard(
                 status = notificationStatus,

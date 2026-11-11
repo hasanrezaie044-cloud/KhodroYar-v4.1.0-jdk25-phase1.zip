@@ -26,6 +26,10 @@ import com.khodroyar.app.ai.AppAgentTools
 import com.khodroyar.app.ai.LocalDialogueContext
 import com.khodroyar.app.automation.AutomationRule
 import com.khodroyar.app.automation.RuleKind
+import com.khodroyar.app.automation.health
+import com.khodroyar.app.automation.AutomationHealth
+import com.khodroyar.app.ui.components.StatusPill
+import com.khodroyar.app.ui.components.tr
 import com.khodroyar.app.data.repo.AppRepository
 import com.khodroyar.app.notifications.Notifications
 import java.time.Instant
@@ -89,8 +93,7 @@ internal fun AutomationManagerSheet(
         Column(Modifier.fillMaxWidth().fillMaxHeight(0.88f).verticalScroll(rememberScrollState()).padding(horizontal = 20.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp)) {
             Text("کارهای خودکار من", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-            Text("قانون را یک‌بار تأیید می‌کنی؛ برنامه در پس‌زمینه انجامش می‌دهد. زمان اجرا تقریبی است و در حالت خاموش یا توقف اجباری تضمین نمی‌شود.",
-                style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            BackgroundExecutionCard()
             if (storageError) Text("فایل قانون‌ها قابل خواندن نیست؛ برای ایمنی چیزی فعال نمی‌شود. اطلاعات مالی دست‌نخورده است.", color = MaterialTheme.colorScheme.error)
             if (!canNotify) {
                 Surface(color = MaterialTheme.colorScheme.errorContainer, shape = RoundedCornerShape(14.dp)) {
@@ -112,17 +115,20 @@ internal fun AutomationManagerSheet(
                     Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Text(rule.title, modifier = Modifier.weight(1f), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                            Surface(shape = RoundedCornerShape(8.dp), color = if (rule.enabled) MaterialTheme.colorScheme.tertiaryContainer else MaterialTheme.colorScheme.surfaceContainerHigh) {
-                                Text(if (rule.enabled) "فعال" else "متوقف", Modifier.padding(horizontal = 10.dp, vertical = 4.dp), style = MaterialTheme.typography.labelMedium)
-                            }
+                            val health = rule.health(Instant.now(), holidays)
+                            StatusPill(if (calendarLoaded) health.label else "…", color = when (health) {
+                                AutomationHealth.FAILED -> MaterialTheme.colorScheme.error
+                                AutomationHealth.WAITING -> MaterialTheme.colorScheme.tertiary
+                                else -> MaterialTheme.colorScheme.primary
+                            })
                         }
                         Text(AppAgentTools.ruleSummary(rule), style = MaterialTheme.typography.bodyMedium)
                         HorizontalDivider()
                         Text("آخرین نتیجه: ${rule.lastMessage}", style = MaterialTheme.typography.bodySmall)
                         if (rule.enabled && calendarLoaded) Text("اجرای بعدی: ${rule.schedule.nextRun(Instant.now(), holidays, rule.lastDate) ?: "بازه تمام شده یا روزی در محدوده نیست"}", style = MaterialTheme.typography.bodySmall)
                         Text("شناسه: ${rule.id.take(8)} · ${if (rule.kind == RuleKind.TRAFFIC) "نیاز به اینترنت و نشان" else "بدون اینترنت و API هوش مصنوعی"}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            OutlinedButton(onClick = { onToggle(rule) }, modifier = Modifier.weight(1f)) { Text(if (rule.enabled) "توقف قانون" else "فعال‌سازی دوباره") }
+                        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            OutlinedButton(onClick = { onToggle(rule) }, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text(if (rule.enabled) "توقف قانون" else "فعال‌سازی دوباره") }
                             if (rule.kind == RuleKind.EXPENSE) TextButton(onClick = { onEdit(rule) }) { Text("تغییر مبلغ") }
                             TextButton(onClick = { onRemove(rule) }, colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)) { Text("حذف قانون") }
                         }

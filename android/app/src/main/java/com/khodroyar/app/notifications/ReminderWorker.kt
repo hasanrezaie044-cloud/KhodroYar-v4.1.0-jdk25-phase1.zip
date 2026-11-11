@@ -4,6 +4,8 @@ import android.content.Context
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
 import com.khodroyar.app.core.analytics.Analytics
+import com.khodroyar.app.core.analytics.MaintenanceForecast
+import kotlinx.coroutines.flow.first
 import com.khodroyar.app.core.finance.LoanCalculator
 import com.khodroyar.app.core.jalali.Jalali
 import com.khodroyar.app.data.prefs.SettingsStore
@@ -131,6 +133,8 @@ class ReminderWorker(context: Context, params: WorkerParameters) : CoroutineWork
         )
         val overdue = mutableListOf<String>()
         val soon = mutableListOf<String>()
+        val today = Jalali.todayString()
+        val pace = repo.drivingPace(today).first()
         for ((wire, label, interval) in tracked) {
             if (interval <= 0 && settings.nextKmFor(wire) <= 0) continue
             val due = repo.maintenanceDue(
@@ -141,7 +145,10 @@ class ReminderWorker(context: Context, params: WorkerParameters) : CoroutineWork
             val remaining = due.remainingKm ?: continue
             when {
                 due.isOverdue -> overdue += "$label: از حد مجاز ${Analytics.formatNumber(-remaining)} کیلومتر گذشته است"
-                due.isDueSoon -> soon += "$label: ${Analytics.formatNumber(remaining)} کیلومتر تا موعد باقی مانده"
+                due.isDueSoon -> {
+                    val eta = MaintenanceForecast.eta(remaining, pace, today, due.nextKm > 0 && (due.baseCurrentKm > 0 || settings.nextKmFor(wire) > 0))
+                    soon += "$label: ${Analytics.formatNumber(remaining)} کیلومتر تا موعد" + (eta?.let { " · حدود ${it.days} روز" } ?: "")
+                }
             }
         }
         if (overdue.isEmpty() && soon.isEmpty()) return

@@ -118,7 +118,7 @@ private fun accents(p: AppPalette, dark: Boolean) = AppAccents(
         else listOf(p.light, Color(0xFF4776A8), Color(0xFFA96C23), Color(0xFF9365A3), Color(0xFFB35759), Color(0xFF62805A)),
     positive = if (dark) Color(0xFF86DABD) else Color(0xFF14765B), negative = if (dark) Color(0xFFFFAAA8) else Color(0xFFAE3D42),
     headerGradient = listOf(p.deep, p.deep),
-    heroGradient = listOf(Color(0xFF142E35), mix(Color(0xFF163B3B), p.deep, 0.35f)),
+    heroGradient = listOf(Color(0xFF112C38), mix(Color(0xFF124A44), p.deep, 0.45f), Color(0xFF102A31)),
 )
 val LocalAppAccents = staticCompositionLocalOf { accents(AppPalette.ORBIT, false) }
 val LocalAppPalette = staticCompositionLocalOf { AppPalette.ORBIT }

@@ -18,6 +18,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.LayoutDirection
 import com.khodroyar.app.core.analytics.Analytics
+import com.khodroyar.app.core.analytics.DailyTrends
+import com.khodroyar.app.core.finance.MaintenanceType
+import com.khodroyar.app.data.repo.EntryReceipt
 import com.khodroyar.app.core.holidays.IranHolidays
 import com.khodroyar.app.core.jalali.Jalali
 import com.khodroyar.app.core.rates.RatesByYear
@@ -41,21 +44,28 @@ fun DashboardScreen(
     onOpenTraffic: () -> Unit = {},
     onAddService: () -> Unit = {},
     onOpenAssistant: () -> Unit = {},
+    recentEntry: EntryReceipt? = null,
+    onEditQuick: () -> Unit = {},
+    onUndoQuick: () -> Unit = {},
+    onRecordMaintenance: (MaintenanceType) -> Unit = {},
+    onOpenMaintenance: () -> Unit = {},
 ) {
     var personnelExpanded by remember { mutableStateOf(false) }
     val today = remember { Jalali.todayString() }
     val ymd = remember(today) { Jalali.parse(today) ?: Jalali.today() }
     val monthPrefix = "${ymd.year}/${ymd.month.toString().padStart(2, '0')}"
-    val allServices by repository.services().collectAsState(initial = emptyList())
+    val dailyTrendRows by remember(ymd.year) {
+        repository.insights.trendDays(Jalali.format(ymd.year - 3, 1, 1), Jalali.format(ymd.year, 12, Jalali.monthLength(ymd.year, 12)))
+    }.collectAsState(initial = emptyList())
     val monthTotals by repository.serviceTotals(monthPrefix).collectAsState(initial = ServiceTotals())
     val personnel by repository.personnel().collectAsState(initial = emptyList())
     val maintenanceRecords by repository.maintenances().collectAsState(initial = emptyList())
     val ratesByYear by repository.ratesByYear.collectAsState(initial = RatesByYear.empty())
-    val todaySummary = remember(allServices, today) { Analytics.daySummary(allServices, today) }
+    val todaySummary by remember(today) { repository.serviceTotals(today) }.collectAsState(initial = ServiceTotals())
     val holidayTitle = remember(today) { IranHolidays.titleFor(today) }
 
     // Maintenance due statuses based on driven km from registered services.
-    val maintenanceStates = produceState<List<Analytics.ServiceDue>>(initialValue = emptyList(), allServices, maintenanceRecords, ratesByYear, settings) {
+    val maintenanceStates = produceState<List<Analytics.ServiceDue>>(initialValue = emptyList(), dailyTrendRows, maintenanceRecords, ratesByYear, settings) {
         val rates = ratesByYear.forYear(ymd.year)
         val odo = settings.vehicleCurrentKm
         value = listOf(
@@ -67,6 +77,7 @@ fun DashboardScreen(
         )
     }
 
+    val pace by remember(today) { repository.drivingPace(today) }.collectAsState(initial = null)
     val goal = settings.monthlyIncomeGoal
     val goalProgress = if (goal > 0) (monthTotals.totalIncome / goal).coerceIn(0.0, 1.0) else 0.0
 
@@ -116,12 +127,20 @@ fun DashboardScreen(
             }
         }
         item {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                DashboardAction(tr("ثبت سرویس", "Add service"), Icons.Outlined.Add, Modifier.weight(1f), onAddService)
-                DashboardAction(tr("دستیار داخلی", "Assistant"), Icons.Outlined.AutoAwesome, Modifier.weight(1f), onOpenAssistant)
-                DashboardAction(tr("ترافیک مسیر", "Traffic"), Icons.Outlined.DirectionsCar, Modifier.weight(1f), onOpenTraffic)
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Button(onClick = onAddService, modifier = Modifier.fillMaxWidth().heightIn(min = 58.dp).testTag("home-quick-add"), shape = CardShape,
+                    contentPadding = PaddingValues(horizontal = 20.dp, vertical = 12.dp)) {
+                    Icon(Icons.Outlined.Bolt, null, Modifier.size(24.dp))
+                    Spacer(Modifier.width(12.dp)); Text(tr("ثبت سریع", "Quick add"), Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
+                    Icon(Icons.Outlined.Add, null)
+                }
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    DashboardAction(tr("دستیار داخلی", "Assistant"), Icons.Outlined.AutoAwesome, Modifier.weight(1f), onOpenAssistant)
+                    DashboardAction(tr("ترافیک مسیر", "Traffic"), Icons.Outlined.DirectionsCar, Modifier.weight(1f), onOpenTraffic)
+                }
             }
         }
+        recentEntry?.let { entry -> item { RecentQuickEntryCard(entry, onEditQuick, onUndoQuick) } }
         if (goal > 0 && !settings.privacyMode) {
             item {
                 SurfaceCard {
@@ -143,7 +162,7 @@ fun DashboardScreen(
 
         if (!settings.privacyMode) {
             item {
-                TrendSection(allServices = allServices, today = today, onOpenReports = onOpenReports)
+                TrendSection(dailyRows = dailyTrendRows, today = today, onOpenReports = onOpenReports)
             }
         }
 
@@ -166,62 +185,12 @@ fun DashboardScreen(
                     initiallyExpanded = overdueCount > 0,
                 ) {
                     Column(verticalArrangement = Arrangement.spacedBy(AppDimens.tightGap)) {
-                        dues.forEach { due ->
-                            Surface(
-                                shape = FieldShape,
-                                color = MaterialTheme.colorScheme.surface,
-                                border = androidx.compose.foundation.BorderStroke(
-                                    1.dp,
-                                    if (due.isOverdue) MaterialTheme.colorScheme.error.copy(alpha = 0.45f)
-                                    else MaterialTheme.colorScheme.outlineVariant,
-                                ),
-                                modifier = Modifier.fillMaxWidth(),
-                            ) {
-                                Row(
-                                    Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                ) {
-                                    Icon(
-                                        when (due.label) {
-                                            "تعویض روغن" -> Icons.Outlined.OilBarrel
-                                            "تسمه تایم" -> Icons.Outlined.Settings
-                                            "شمع" -> Icons.Outlined.Bolt
-                                            "لنت ترمز" -> Icons.Outlined.Warning
-                                            else -> Icons.Outlined.FilterAlt
-                                        },
-                                        null,
-                                        tint = when {
-                                            due.isOverdue -> MaterialTheme.colorScheme.error
-                                            due.isDueSoon -> MaterialTheme.colorScheme.tertiary
-                                            else -> MaterialTheme.colorScheme.primary
-                                        },
-                                    )
-                                    Column(Modifier.weight(1f).padding(horizontal = 12.dp)) {
-                                        Text(due.label, style = MaterialTheme.typography.titleSmall, maxLines = 2)
-                                        Text(
-                                            buildString {
-                                                if (due.baseCurrentKm > 0 || due.nextKm > 0) {
-                                                    append("فعلی ${if (due.baseCurrentKm > 0) money(due.baseCurrentKm) else "—"}")
-                                                    append(" · بعدی ${if (due.nextKm > 0) money(due.nextKm) else "—"} · ")
-                                                }
-                                                append(
-                                                    when {
-                                                        due.remainingKm == null && due.nextKm <= 0 -> "کیلومتر را تنظیم کنید"
-                                                        due.isOverdue -> "از موعد ${money(-(due.remainingKm ?: 0.0))} گذشته"
-                                                        else -> "باقی ${money(due.remainingKm ?: 0.0)}"
-                                                    },
-                                                )
-                                            },
-                                            color = if (due.isOverdue) MaterialTheme.colorScheme.error
-                                            else MaterialTheme.colorScheme.onSurfaceVariant,
-                                            style = MaterialTheme.typography.bodySmall,
-                                            maxLines = 2,
-                                            overflow = TextOverflow.Ellipsis,
-                                        )
-                                    }
-                                    Text("هر ${money(due.intervalKm)}", style = MaterialTheme.typography.labelMedium, maxLines = 1)
-                                }
-                            }
+                        val types = MaintenanceType.TRACKED
+                        dues.forEachIndexed { index, due ->
+                            val mt = types[index]
+                            val configured = settings.nextKmFor(mt.wire) > 0 || settings.currentKmFor(mt.wire) > 0 || (due.lastKm ?: 0.0) > 0
+                            if (configured) MaintenanceForecastCard(mt, due, pace, today, configured,
+                                onRecord = { onRecordMaintenance(mt) }, onSettings = onOpenMaintenance)
                         }
                     }
                 }
@@ -267,10 +236,10 @@ private fun PrivacyToggle(enabled: Boolean, onToggle: () -> Unit) {
 private fun DashboardAction(label: String, icon: androidx.compose.ui.graphics.vector.ImageVector, modifier: Modifier, onClick: () -> Unit) {
     Surface(onClick = onClick, modifier = modifier, color = MaterialTheme.colorScheme.surfaceContainerLowest,
         shape = RoundedCornerShape(18.dp), border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) {
-        Column(Modifier.padding(horizontal = 6.dp, vertical = 12.dp), horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Icon(icon, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(24.dp))
-            Text(label, style = MaterialTheme.typography.labelSmall, maxLines = 2, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+        Row(Modifier.heightIn(min = 64.dp).padding(horizontal = 12.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            IconBadge(icon, size = 32.dp)
+            Text(label, Modifier.weight(1f), style = MaterialTheme.typography.labelMedium, maxLines = 2)
         }
     }
 }
@@ -281,16 +250,14 @@ private fun DashboardAction(label: String, icon: androidx.compose.ui.graphics.ve
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun TrendSection(
-    allServices: List<com.khodroyar.app.data.db.ServiceEntity>,
+    dailyRows: List<com.khodroyar.app.data.db.DailyTotals>,
     today: String,
     onOpenReports: () -> Unit,
 ) {
     var scale by rememberSaveable { mutableStateOf(Analytics.TrendScale.MONTH) }
     var metric by rememberSaveable { mutableStateOf(TrendMetric.INCOME) }
     var barView by rememberSaveable { mutableStateOf(false) }
-    val points = remember(allServices, scale, today) {
-        Analytics.trend(allServices, scale, if (scale == Analytics.TrendScale.YEAR) 4 else 6, today)
-    }
+    val points = remember(dailyRows, scale, today) { DailyTrends.points(dailyRows, scale, today) }
     val periodLabels = mapOf(
         Analytics.TrendScale.WEEK to tr("هفتگی", "Weekly"),
         Analytics.TrendScale.MONTH to tr("ماهانه", "Monthly"),

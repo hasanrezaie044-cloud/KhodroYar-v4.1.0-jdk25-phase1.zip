@@ -48,6 +48,8 @@ import com.khodroyar.app.data.db.PersonnelEntity
 import com.khodroyar.app.data.db.ServiceEntity
 import com.khodroyar.app.data.prefs.AppSettings
 import com.khodroyar.app.data.repo.AppRepository
+import com.khodroyar.app.data.repo.EntryReceipt
+import com.khodroyar.app.data.repo.QuickKind
 import com.khodroyar.app.ai.AgentSection
 import com.khodroyar.app.automation.AutomationStore
 import com.khodroyar.app.notifications.AgentAutomationScheduler
@@ -85,6 +87,9 @@ fun CarManagerRoot(
     var destination by remember { mutableStateOf(AppDestination.HOME) }
     var tool by remember { mutableStateOf<ToolDestination?>(null) }
     var overlay by remember { mutableStateOf<Overlay?>(null) }
+    val recentEntry by repository.quickEntries.receipt.collectAsState()
+    var pendingUndo by remember { mutableStateOf<EntryReceipt?>(null) }
+    var undoBusy by remember { mutableStateOf(false) }
     // Calendar quick links (fuel / repairs / expense for a given day): the tool opens
     // straight on its entry form with that date, and returns to the calendar afterwards.
     var quick by remember { mutableStateOf<QuickEntry?>(null) }
@@ -188,7 +193,7 @@ fun CarManagerRoot(
                     }
                 },
                 bottomBar = {
-                    if (!keyboardVisible) AppBottomBar(
+                    if (!keyboardVisible && overlay == null) AppBottomBar(
                         selected = destination,
                         toolActive = tool != null,
                         onSelect = { picked ->
@@ -214,6 +219,7 @@ fun CarManagerRoot(
                         onBack = { if (agentReturn) { overlay = null; tool = ToolDestination.AI_ASSISTANT; agentReturn = false } else if (overlay != null) overlay = null else tool = null },
                         onOpenTools = { scope.launch { drawerState.open() } },
                         onSearch = { overlay = Overlay.Search },
+                        onQuick = { overlay = Overlay.FastEntry() },
                     )
                     AnimatedContent(
                         targetState = (overlay ?: tool ?: destination) as Any,
@@ -223,6 +229,10 @@ fun CarManagerRoot(
                     ) { target ->
                         when (target) {
                             /* ------------------------------------------- overlays */
+                            is Overlay.FastEntry -> QuickEntryScreen(repository, initialKind = target.kind,
+                                initialMaintenanceType = target.maintenanceType, editing = target.editing,
+                                onFullService = { date -> overlay = Overlay.NewServiceOn(date) },
+                                onDone = { overlay = null })
                             is Overlay.EditService -> ServiceFormScreen(
                                 repository = repository,
                                 initialDate = target.service.date,
@@ -295,7 +305,12 @@ fun CarManagerRoot(
                                     repository.updateSettings { it.copy(privacyMode = !it.privacyMode) }
                                 },
                                 onOpenTraffic = { tool = ToolDestination.TRAFFIC },
-                                onAddService = { destination = AppDestination.SERVICES; tool = null },
+                                onAddService = { overlay = Overlay.FastEntry() },
+                                recentEntry = recentEntry,
+                                onEditQuick = { recentEntry?.let { overlay = Overlay.FastEntry(it.draft.kind, editing = it) } },
+                                onUndoQuick = { pendingUndo = recentEntry },
+                                onRecordMaintenance = { type -> overlay = Overlay.FastEntry(QuickKind.MAINTENANCE, type.wire) },
+                                onOpenMaintenance = { tool = ToolDestination.MAINTENANCE },
                                 onOpenAssistant = { agentReturn = false; tool = ToolDestination.AI_ASSISTANT },
                             )
                             AppDestination.SERVICES -> ServicesScreen(repository)
@@ -319,7 +334,12 @@ fun CarManagerRoot(
                                     repository.updateSettings { it.copy(privacyMode = !it.privacyMode) }
                                 },
                                 onOpenTraffic = { tool = ToolDestination.TRAFFIC },
-                                onAddService = { destination = AppDestination.SERVICES; tool = null },
+                                onAddService = { overlay = Overlay.FastEntry() },
+                                recentEntry = recentEntry,
+                                onEditQuick = { recentEntry?.let { overlay = Overlay.FastEntry(it.draft.kind, editing = it) } },
+                                onUndoQuick = { pendingUndo = recentEntry },
+                                onRecordMaintenance = { type -> overlay = Overlay.FastEntry(QuickKind.MAINTENANCE, type.wire) },
+                                onOpenMaintenance = { tool = ToolDestination.MAINTENANCE },
                                 onOpenAssistant = { agentReturn = false; tool = ToolDestination.AI_ASSISTANT },
                             )
                         }
@@ -344,6 +364,24 @@ fun CarManagerRoot(
             }
         }
 
+        pendingUndo?.let { receipt ->
+            val undoError = tr("ثبت یا کیلومتر بعداً تغییر کرده؛ برای ایمنی چیزی برگردانده نشد. از فهرست اصلی ویرایش کن.", "Entry or mileage changed; nothing was undone. Edit it from the ledger.")
+            val undoSuccess = tr("ثبت سریع برگردانده شد", "Quick entry undone")
+            AlertDialog(onDismissRequest = { if (!undoBusy) pendingUndo = null },
+                icon = { Icon(Icons.Outlined.Close, null) },
+                title = { Text(tr("برگرداندن ثبت سریع؟", "Undo quick entry?")) },
+                text = { Text("${receipt.draft.title.ifBlank { receipt.draft.kind.label }} · ${receipt.draft.date}\n" +
+                    tr("فقط همین ثبت حذف می‌شود؛ تغییر مرتبط کیلومتر هم برمی‌گردد. قانون‌های خودکار تغییر نمی‌کنند.", "Only this entry and its associated mileage change are removed. Automation rules are unchanged.")) },
+                confirmButton = { TextButton(enabled = !undoBusy, onClick = {
+                    undoBusy = true
+                    scope.launch {
+                        try { toast.show(if (repository.quickEntries.undo(receipt)) undoSuccess else undoError); pendingUndo = null }
+                        finally { undoBusy = false }
+                    }
+                }, colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error), modifier = Modifier.testTag("confirm-quick-undo")) { Text(tr("تأیید برگرداندن", "Confirm undo")) } },
+                dismissButton = { TextButton(enabled = !undoBusy, onClick = { pendingUndo = null }) { Text(tr("انصراف", "Cancel")) } })
+        }
+
         if (showExitDialog) {
             ConfirmDialog(
                 title = "خروج از برنامه",
@@ -364,6 +402,10 @@ fun CarManagerRoot(
 /** Full-screen panels that sit above the tab content. */
 sealed interface Overlay {
     val title: String
+
+    data class FastEntry(val kind: QuickKind = QuickKind.EXPENSE, val maintenanceType: String? = null, val editing: EntryReceipt? = null) : Overlay {
+        override val title: String get() = "ثبت سریع"
+    }
 
     data class EditService(val service: ServiceEntity) : Overlay {
         override val title: String get() = "ویرایش سرویس"
@@ -397,7 +439,7 @@ private fun todayLabel(): String {
 @Composable
 private fun AppTopBar(
     title: String, subtitle: String, privacyMode: Boolean, showBack: Boolean,
-    onBack: () -> Unit, onOpenTools: () -> Unit, onSearch: (() -> Unit)? = null,
+    onBack: () -> Unit, onOpenTools: () -> Unit, onSearch: (() -> Unit)? = null, onQuick: (() -> Unit)? = null,
 ) {
     Surface(color = MaterialTheme.colorScheme.background) {
         Row(Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 12.dp, vertical = 4.dp),
@@ -416,6 +458,9 @@ private fun AppTopBar(
             }
             if (privacyMode) Icon(Icons.Outlined.VisibilityOff, tr("حالت حریم خصوصی", "Privacy mode"),
                 tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
+            if (onQuick != null && !showBack) FilledTonalIconButton(onClick = onQuick, modifier = Modifier.testTag("toolbar-quick-add")) {
+                Icon(Icons.Outlined.Add, tr("ثبت سریع", "Quick add"))
+            }
             if (onSearch != null && !showBack) IconButton(onClick = onSearch) {
                 Icon(Icons.Outlined.Search, tr("جستجو", "Search"), modifier = Modifier.size(23.dp))
             }
@@ -427,10 +472,10 @@ private fun AppTopBar(
 /** Material's native navigation handles touch targets, selection, and gesture/three-button insets. */
 @Composable
 private fun AppBottomBar(selected: AppDestination, toolActive: Boolean, onSelect: (AppDestination) -> Unit) {
-    Surface(color = MaterialTheme.colorScheme.surfaceContainerLowest) {
-        Column {
-            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.7f))
-            NavigationBar(containerColor = MaterialTheme.colorScheme.surfaceContainerLowest, tonalElevation = 0.dp) {
+    Box(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.background).navigationBarsPadding().padding(horizontal = 10.dp, vertical = 6.dp)) {
+        Surface(color = MaterialTheme.colorScheme.surfaceContainerLowest, shape = RoundedCornerShape(28.dp),
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)), shadowElevation = 2.dp) {
+            NavigationBar(containerColor = Color.Transparent, tonalElevation = 0.dp, windowInsets = WindowInsets(0, 0, 0, 0)) {
                 AppDestination.entries.forEach { item ->
                     val active = !toolActive && selected == item
                     val label = when {
@@ -441,11 +486,12 @@ private fun AppBottomBar(selected: AppDestination, toolActive: Boolean, onSelect
                     NavigationBarItem(selected = active, onClick = { onSelect(item) },
                         modifier = Modifier.testTag("nav-${item.name}"),
                         icon = { Icon(if (item == AppDestination.SERVICES) Icons.Outlined.Add else if (active) item.selectedIcon else item.icon, null) },
-                        label = { Text(label, style = MaterialTheme.typography.labelSmall, maxLines = 2,
+                        label = { Text(label, style = MaterialTheme.typography.labelSmall,
+                            fontWeight = if (active) FontWeight.Bold else FontWeight.Medium, maxLines = 2,
                             textAlign = androidx.compose.ui.text.style.TextAlign.Center, overflow = TextOverflow.Ellipsis) },
                         colors = NavigationBarItemDefaults.colors(
-                            indicatorColor = MaterialTheme.colorScheme.primaryContainer,
-                            selectedIconColor = MaterialTheme.colorScheme.primary, selectedTextColor = MaterialTheme.colorScheme.primary,
+                            indicatorColor = MaterialTheme.colorScheme.primary,
+                            selectedIconColor = MaterialTheme.colorScheme.onPrimary, selectedTextColor = MaterialTheme.colorScheme.primary,
                             unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant, unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant))
                 }
             }
