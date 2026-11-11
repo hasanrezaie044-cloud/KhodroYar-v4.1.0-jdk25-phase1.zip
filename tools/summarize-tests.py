@@ -25,7 +25,8 @@ def main():
                     message = message.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
                     print(f"::error title=JUnit {case.get('classname', '')}.{case.get('name', '')}::{message}")
     summary = ", ".join(f"{key}={value}" for key, value in counts.items())
-    print(f"::notice title=Android JVM tests::{summary}; suites={len(reports)}")
+    title = sys.argv[2] if len(sys.argv) > 2 else "Android JVM tests"
+    print(f"::notice title={title}::{summary}; suites={len(reports)}")
     if counts["tests"] == 0 or counts["failures"] or counts["errors"]:
         raise SystemExit("Android unit tests failed or no tests executed")
 

@@ -10,6 +10,9 @@ set +e
 RESULT=${PIPESTATUS[0]}
 set -e
 python3 "$ROOT/tools/annotate-build-errors.py" "${RUNNER_TEMP:-/tmp}/khodroyar-ui-tests.log"
+if ! python3 "$ROOT/tools/summarize-tests.py" "$ROOT/android/app/build/outputs/androidTest-results/connected" "Android emulator UI tests"; then
+    RESULT=1
+fi
 if ! adb pull /sdcard/Android/data/com.khodroyar.app/files/orbit-ui/. "$SCREENSHOTS/"; then
     RESULT=1
 fi
