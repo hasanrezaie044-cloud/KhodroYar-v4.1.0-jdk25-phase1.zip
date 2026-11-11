@@ -21,8 +21,8 @@ android {
         applicationId 'com.khodroyar.app'
         minSdk 24
         targetSdk 35
-        versionCode 61
-        versionName '5.5.0'
+        versionCode 62
+        versionName '5.5.1'
         testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
         vectorDrawables.useSupportLibrary = true
         // Retain older ARM phones; x86_64 is also used by the native parity tests.

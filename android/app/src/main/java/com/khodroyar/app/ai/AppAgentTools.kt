@@ -27,12 +27,14 @@ class AppAgentTools(context: Context, private val repo: AppRepository) : AgentTo
     private val store = AutomationStore.get(app)
     private val extraNames = (AutomationToolSpecs.tools + DailyToolSpecs.tools).map { it.name }.toSet()
 
-    private fun template(): ServiceTemplate {
+    private fun template(requestedType: String? = null): ServiceTemplate {
         val s = repo.settingsNow
-        userCheck(s.autoServicePresetSaved, "ابتدا در تب «ثبت سرویس»، مسیر و مشخصات همیشگی را به‌عنوان الگو ذخیره کن. بعد برگرد و بگو «الگو را ذخیره کردم»؛ هنوز چیزی فعال نشده است.")
-        return ServiceTemplate(s.autoServiceType, s.autoServiceCarType, s.autoServiceOrigin, s.autoServiceDestination,
+        val understood = requestedType?.let { "سرویس ${com.khodroyar.app.core.rates.ServiceType.fromWireOrNull(it)?.label.orEmpty()} برای همین درخواست در نظر گرفته شد. " }.orEmpty()
+        userCheck(s.autoServicePresetSaved, understood + "برای تکمیل مسیر و کیلومتر/ساعت واقعی، در تب «ثبت سرویس» مشخصات را به‌عنوان الگو ذخیره کن. بعد برگرد و بگو «الگو را ذخیره کردم»؛ هنوز چیزی ثبت یا فعال نشده است.")
+        val saved = ServiceTemplate(s.autoServiceType, s.autoServiceCarType, s.autoServiceOrigin, s.autoServiceDestination,
             s.autoServiceKm, s.autoServiceHours, s.autoServiceStartTime, s.autoServiceEndTime,
-            s.autoServiceTollCount, s.autoServicePassengers).also { userCheck(it.valid(), "الگوی سرویس کامل نیست؛ مسیر، نوع، خودرو و کیلومتر/ساعت آن را در تب ثبت سرویس بررسی کن.") }
+            s.autoServiceTollCount, s.autoServicePassengers)
+        return ServicePresetRevision.apply(saved, requestedType)
     }
 
     override suspend fun prepare(call: ValidatedCall): ValidatedCall {
@@ -60,7 +62,7 @@ class AppAgentTools(context: Context, private val repo: AppRepository) : AgentTo
             args["operation_id"] = UUID.randomUUID().toString()
         }
         if (call.spec.name in setOf("create_service_rule", "add_service_from_preset")) {
-            args["service_snapshot"] = AutomationCodec.templateJson(template()).toString()
+            args["service_snapshot"] = AutomationCodec.templateJson(template(call.str("service_type"))).toString()
         }
         if (call.spec.name in setOf("set_automation_enabled", "update_expense_rule", "remove_automation_rule")) {
             val rule = find(call.str("id"))

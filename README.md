@@ -1,6 +1,16 @@
 # مدیریت خودرو — Native Android
 
-## Current release: 5.5.0 (versionCode 61)
+## Current release: 5.5.1 (versionCode 62)
+
+**Service-dialogue correction:** a follow-up such as `ن سرویس شب بود` now revises the
+current service's explicit category and rebuilds its approval instead of being rejected
+as unrelated. Tonight/last night are dates, not tariff guesses; a 9pm schedule is not
+a NIGHT-category correction. Only the requested category changes in an app-owned
+preset snapshot; route/km/hours still require real saved fields and fresh approval.
+The original preset, rates, database and financial/export calculations are unchanged.
+The ALBERT header now distinguishes not-loaded, loaded and lightweight fallback states;
+loaded is not a claim that its suggestion decided every message.
+See [5.5.1 fixes and limits](CHANGES_5.5.1.md).
 
 **Real offline Persian ALBERT + optional Cafe Bazaar update warning.** The pinned
 `HooshvareLab/albert-fa-zwnj-base-v2` encoder now runs on-device with a trained,

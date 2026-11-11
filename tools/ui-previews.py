@@ -13,7 +13,7 @@ import sys
 from PIL import Image
 
 root = Path(sys.argv[1])
-for name in ("01-home-light-fa", "20-home-line-timeline-right", "18-dashboard-bars", "19-home-dark-320-large-text", "21-reports-annual-statistics", "22-reports-recent-services", "23-report-table-320-large-text", "25-quick-entry-320-large-text", "26-quick-entry-review", "28-quick-fuel-dark-review", "29-maintenance-forecast", "31-financial-comparison", "32-automation-health", "34-bazaar-update-rtl-320", "35-bazaar-update-settings", "36-bazaar-not-installed", "37-offline-albert-approval", "debug-quick-edit-state"):
+for name in ("01-home-light-fa", "20-home-line-timeline-right", "18-dashboard-bars", "19-home-dark-320-large-text", "21-reports-annual-statistics", "22-reports-recent-services", "23-report-table-320-large-text", "25-quick-entry-320-large-text", "26-quick-entry-review", "28-quick-fuel-dark-review", "29-maintenance-forecast", "31-financial-comparison", "32-automation-health", "34-bazaar-update-rtl-320", "35-bazaar-update-settings", "36-bazaar-not-installed", "37-offline-albert-approval", "38-night-service-correction", "debug-quick-edit-state"):
     if len(sys.argv) > 2 and sys.argv[2] != name:
         continue
     path = next(root.rglob(f"{name}.png"), None)
@@ -23,9 +23,9 @@ for name in ("01-home-light-fa", "20-home-line-timeline-right", "18-dashboard-ba
         image = image.convert("RGB")
         image.thumbnail((480, 1000))
         encoded = ""
-        # The dense real ALBERT approval panel has its own four-image review job;
-        # permit ten small chunks there without exhausting the 50-notice limit.
-        limit = 30_000 if name == "37-offline-albert-approval" else 18_000
+        # The two dense approval panels have their own five-image review job;
+        # allow ten chunks each, plus at most six for each of the other three.
+        limit = 30_000 if name in ("37-offline-albert-approval", "38-night-service-correction") else 18_000
         for quality in (76, 65, 50, 35):
             buffer = BytesIO()
             image.save(buffer, "WEBP", quality=quality, method=6)

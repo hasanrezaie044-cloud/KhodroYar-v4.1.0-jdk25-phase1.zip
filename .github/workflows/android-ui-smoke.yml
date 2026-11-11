@@ -197,3 +197,5 @@ jobs:
         run: '"$RUNNER_TEMP/offline-preview-env/bin/python" tools/ui-previews.py "$RUNNER_TEMP/offline-feature-review" 36-bazaar-not-installed'
       - name: Actual offline ALBERT request awaiting approval
         run: '"$RUNNER_TEMP/offline-preview-env/bin/python" tools/ui-previews.py "$RUNNER_TEMP/offline-feature-review" 37-offline-albert-approval'
+      - name: Reported night-service conversation with a fresh corrected approval
+        run: '"$RUNNER_TEMP/offline-preview-env/bin/python" tools/ui-previews.py "$RUNNER_TEMP/offline-feature-review" 38-night-service-correction'

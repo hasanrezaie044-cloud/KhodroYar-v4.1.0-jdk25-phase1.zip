@@ -1,4 +1,4 @@
-# Offline Persian ALBERT · 5.5.0 / code 61
+# Offline Persian ALBERT · 5.5.1 / code 62
 
 ## What is actually integrated
 

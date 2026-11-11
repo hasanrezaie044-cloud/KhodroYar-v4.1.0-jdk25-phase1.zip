@@ -715,6 +715,67 @@ class OrbitUiSmokeTest {
         assertEquals(before, runBlocking { AppDatabase.get(context).personalExpenses().allOnce().size })
     }
 
+    @Test fun reportedNightServiceCorrectionRebuildsTheCardAndOnlyApprovalWritesTheReviewedType() {
+        saveAgentServicePreset()
+        lateinit var vm: AiAssistantViewModel
+        render {
+            val current: AiAssistantViewModel = androidx.lifecycle.viewmodel.compose.viewModel()
+            SideEffect { vm = current }
+            Box(Modifier.width(320.dp).fillMaxHeight().testTag("offline-agent-workspace")) { AiAssistantScreen(current) }
+        }
+        compose.waitUntil(20_000) { vm.connection == ConnectionState.LOCAL }
+        assertEquals(com.khodroyar.app.ai.albert.PersianAlbertEngine.Status.NOT_LOADED, vm.localModelStatus)
+        assertTrue(vm.activeModel.contains("هنوز بارگذاری نشده"))
+        val before = runBlocking { AppDatabase.get(context).services().allOnce() }
+        compose.runOnIdle { vm.send("امشب ی سرویس رفتم ثبت کن") }
+        compose.waitUntil(60_000) { !vm.busy && vm.pending != null }
+        val initial = vm.pending!!.call
+        assertEquals("request", AutomationCodec.templateFromJson(org.json.JSONObject(initial.str("service_snapshot")!!)).type)
+        compose.runOnIdle { vm.send("ن سرویس شب بود") }
+        compose.waitUntil(20_000) { !vm.busy && vm.pending?.call?.str("service_type") == "night" }
+        val revised = vm.pending!!.call
+        assertEquals(com.khodroyar.app.ai.albert.PersianAlbertEngine.Status.READY, vm.localModelStatus)
+        assertTrue(vm.activeModel.contains("بارگذاری‌شده"))
+        assertNotEquals(initial.str("operation_id"), revised.str("operation_id"))
+        assertEquals(Jalali.todayString(), revised.str("date"))
+        val snapshot = AutomationCodec.templateFromJson(org.json.JSONObject(revised.str("service_snapshot")!!))
+        assertEquals("night", snapshot.type); assertEquals(80.0, snapshot.km, 0.0)
+        assertEquals("request", repository.settingsNow.autoServiceType)
+        assertEquals(before.size, runBlocking { AppDatabase.get(context).services().allOnce().size })
+        compose.onNodeWithTag("agent-confirm").performScrollTo().assertIsDisplayed()
+        shot("38-night-service-correction")
+        compose.onNodeWithTag("agent-confirm").performClick()
+        compose.waitUntil(20_000) { !vm.busy && vm.pending == null }
+        val after = runBlocking { AppDatabase.get(context).services().allOnce() }
+        assertEquals(before.size + 1, after.size)
+        val saved = after.single { row -> before.none { it.id == row.id } }
+        assertEquals("night", saved.type); assertEquals(revised.str("date"), saved.date)
+        assertEquals(snapshot.km, saved.km, 0.0); assertEquals(snapshot.hours, saved.hours, 0.0)
+        assertEquals(snapshot.origin, saved.origin); assertEquals(snapshot.destination, saved.destination)
+        assertEquals(80.0, repository.settingsNow.vehicleCurrentKm, 0.0)
+        assertEquals("request", repository.settingsNow.autoServiceType)
+    }
+
+    @Test fun missingServicePresetKeepsTheNightCorrectionAndAsksForRealFieldsWithoutWriting() = runBlocking {
+        val assistant = LocalAssistant(AppAgentTools(context, repository))
+        val before = AppDatabase.get(context).services().allOnce().size
+        assertTrue(assistant.run("امشب ی سرویس رفتم ثبت کن") is AgentStep.Reply)
+        val correction = assistant.run("ن سرویس شب بود") as AgentStep.Reply
+        assertTrue(correction.text.contains("سرویس شب")); assertTrue(correction.text.contains("کیلومتر"))
+        assertFalse(correction.text.contains("ربط ندادم"))
+        assertEquals(before, AppDatabase.get(context).services().allOnce().size)
+        saveAgentServicePreset()
+        val review = assistant.run("الگو را ذخیره کردم") as AgentStep.Confirm
+        assertEquals("night", AutomationCodec.templateFromJson(org.json.JSONObject(review.pending.call.str("service_snapshot")!!)).type)
+        assertEquals(before, AppDatabase.get(context).services().allOnce().size)
+    }
+
+    private fun saveAgentServicePreset() {
+        repository.updateSettings { it.copy(autoServicePresetSaved = true, autoServiceType = "request", autoServiceCarType = "soren",
+            autoServiceOrigin = "مبارکه", autoServiceDestination = "اصفهان", autoServiceKm = 80.0, autoServiceHours = 2.0,
+            autoServiceStartTime = "20:00", autoServiceEndTime = "22:00", autoServiceTollCount = 1) }
+    }
+
     @Test fun newerBazaarVersionHasDismissibleCompactRtlWarningAndManualRecheck() {
         context.getSharedPreferences("bazaar_update_notice", 0).edit().clear().commit()
         var checks = 0
@@ -800,7 +861,7 @@ class OrbitUiSmokeTest {
         val node = when {
             name == "32-automation-health" -> compose.onNodeWithTag("automation-sheet-content")
             name == "34-bazaar-update-rtl-320" -> compose.onNodeWithTag("bazaar-update-dialog")
-            name == "37-offline-albert-approval" -> compose.onNodeWithTag("offline-agent-workspace")
+            name in setOf("37-offline-albert-approval", "38-night-service-correction") -> compose.onNodeWithTag("offline-agent-workspace")
             name in setOf("19-home-dark-320-large-text", "23-report-table-320-large-text", "24-report-table-scrolled-amount", "25-quick-entry-320-large-text", "26-quick-entry-review", "27-recent-entry-edit-undo") -> compose.onNodeWithTag("compact-app")
             else -> compose.onAllNodes(isRoot()).onLast()
         }

@@ -89,7 +89,8 @@ class AiAssistantViewModel(app: Application) : AndroidViewModel(app) {
         AiMode.LOCAL -> when (localModelStatus) {
             com.khodroyar.app.ai.albert.PersianAlbertEngine.Status.MEMORY_LIMITED -> "حالت سبک · حافظهٔ آزاد کم است"
             com.khodroyar.app.ai.albert.PersianAlbertEngine.Status.UNAVAILABLE -> "حالت سبک · ALBERT در دسترس نیست"
-            else -> "ALBERT فارسی · آفلاین و بدون API"
+            com.khodroyar.app.ai.albert.PersianAlbertEngine.Status.NOT_LOADED -> "ALBERT فارسی · هنوز بارگذاری نشده"
+            com.khodroyar.app.ai.albert.PersianAlbertEngine.Status.READY -> "ALBERT فارسی · بارگذاری‌شده، آفلاین"
         }
         AiMode.ONLINE -> settings.model.ifBlank { serverModel }
         AiMode.GAPGPT_DIRECT -> "GapGPT مستقیم · ${GapGptDirectContract.selectedModel(settings)}"

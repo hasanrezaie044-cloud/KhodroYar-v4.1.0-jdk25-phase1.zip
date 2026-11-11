@@ -6,6 +6,7 @@ import com.khodroyar.app.automation.RuleKind
 import com.khodroyar.app.automation.validDate
 import com.khodroyar.app.automation.validTime
 import com.khodroyar.app.core.jalali.Jalali
+import com.khodroyar.app.core.rates.ServiceType
 import com.khodroyar.app.ai.albert.PersianIntent
 import com.khodroyar.app.ai.albert.PersianIntentPrediction
 import com.khodroyar.app.ai.albert.PersianHintSafety
@@ -35,6 +36,8 @@ class LocalDialogueEngine(
         var km: Double? = null,
         var maintenanceType: String = "repair",
         var fuelType: String = "gov",
+        // This is the app's tariff/category, NOT the time of day or a guessed price.
+        var serviceType: String? = null,
         var recurring: Boolean = false,
         var frequency: RepeatFrequency? = null,
         var weekdays: Set<Int> = emptySet(),
@@ -171,15 +174,38 @@ class LocalDialogueEngine(
             return reply("هنوز ${label(d)} را کامل نکرده‌ایم. اگر کار دیگری می‌خواهی، اول «لغو» بگو تا این دو درخواست قاطی نشوند.", listOf("لغو"))
         }
         val before = d.copy()
-        update(d, t)?.let { return it }
-        if (existingDraft != null && before == d && incoming == null && !has(t, "فردا", "امروز", "دیروز", "روزهای کاری", "هر روز", "ساعت", "الگو", "ذخیره کردم", "تومان", "لیتر")) {
+        val serviceCategory = if (d.kind == Kind.SERVICE) serviceCategoryInput(t) else null
+        update(d, t, serviceCategory)?.let { return it }
+        if (existingDraft != null && before == d && incoming == null && serviceCategory == null && !has(t, "فردا", "امروز", "امشب", "دیشب", "دیروز", "روزهای کاری", "هر روز", "ساعت", "الگو", "ذخیره کردم", "تومان", "لیتر")) {
             return reply("این پاسخ را به درخواست فعلی ربط ندادم. جواب سؤال آخر را کوتاه بگو، یا برای شروع کار دیگری «لغو» بنویس؛ چیزی تغییر نکرد.", context.suggestions)
         }
         return ready(d)
     }
 
-    private fun update(d: Draft, t: String): LocalIntent.Reply? {
+    private data class ServiceCategoryInput(val type: String? = null, val clarification: String? = null)
+
+    /** Only explicit category fields/bare slot answers; a clock's 'night' is not a tariff. */
+    private fun serviceCategoryInput(t: String): ServiceCategoryInput? {
+        val withoutClock = t.replace(Regex("(?:ساعت\\s*)?\\d{1,2}:\\d{2}\\s*(?:شب|صبح|عصر)?|ساعت\\s*\\d{1,2}(?:\\s*(?:و نیم|نیم))?\\s*(?:شب|صبح|عصر)?"), " ")
+        val clean = withoutClock.replace(Regex("^(?:نه|ن|خیر)[،,:\\s]+"), "").trim()
+        val introduced = Regex("(?<![\\p{L}])(?:نوع(?:\\s+سرویس)?ش?|سرویس(?:م)?|سفر(?:م)?)\\s+(?:از نوع\\s+)?(.+)").find(clean)
+        val bare = clean.replace(Regex("\\s+(?:بود|بوده|است|باشه|نبود|نیست)$"), "").trim()
+        val bareCategory = serviceCategories.any { (_, names) -> bare in names }
+        val field = introduced?.groupValues?.get(1) ?: if (bareCategory || waiting == "service_type") clean else return null
+        val choices = serviceCategories.filter { (_, names) -> names.any { name ->
+            Regex("(?<![\\p{L}])${Regex.escape(name)}(?![\\p{L}])").containsMatchIn(field)
+        } }
+        if (choices.isEmpty() && waiting != "service_type" && !has(clean, "نوع", "سرویس روز", "سفر روز", "حقوق", "مرخصی")) return null
+        if (choices.size != 1 || has(field, "نبود", "نیست", "نیس", "حقوق", "مرخصی")) {
+            return ServiceCategoryInput(clarification = "نوع سرویس کدام است: شب، تعطیل، درخواستی، در اختیار، ثابت یا مأموریت؟ بقیهٔ درخواست حفظ شده؛ هنوز چیزی ثبت نشده.")
+        }
+        return ServiceCategoryInput(type = choices.single().first)
+    }
+
+    private fun update(d: Draft, t: String, serviceCategory: ServiceCategoryInput? = null): LocalIntent.Reply? {
+        serviceCategory?.clarification?.let { return question(d, it, "service_type", listOf("سرویس شب", "سرویس درخواستی", "لغو")) }
         if (has(t, "تقریبا", "حدودا", "شاید", "حداکثر", "حداقل", "یا ") && !has(t, "ساعت")) return question(d, "مبلغ و برنامه را قطعی مشخص کنیم؛ مقدار دقیق چقدر است؟", "amount")
+        serviceCategory?.type?.let { d.serviceType = it; if (waiting == "service_type") waiting = "" }
         if (isRecurring(t)) d.recurring = true
         if (has(t, "فقط امروز", "فقط یک بار", "فقط یه بار", "یکبار", "یه بار")) { d.recurring = false; d.frequency = null; d.weekdays = emptySet() }
         when {
@@ -204,7 +230,7 @@ class LocalDialogueEngine(
             val value = "$h".padStart(2, '0') + ":" + "$minute".padStart(2, '0')
             if (!validTime(value)) return question(d, "زمان معتبر نیست؛ مثلاً ۲۱:۰۰ یا ساعت ۹ شب بنویس.", "time", listOf("ساعت ۸ صبح", "ساعت ۹ شب"))
             d.time = value
-        } else if (has(t, "صبح", "عصر", "شب") && d.recurring && !has(t, "سرویس شب")) {
+        } else if (has(t, "صبح", "عصر", "شب") && d.recurring && serviceCategory?.type == null && !has(t, "سرویس شب")) {
             return question(d, "چه ساعتی؟ مثلاً «ساعت ۸ صبح». اجرای پس‌زمینه ممکن است با تأخیر باشد.", "time", listOf("ساعت ۸ صبح", "ساعت ۹ شب"))
         }
         if (d.kind == Kind.EXPENSE) {
@@ -266,13 +292,13 @@ class LocalDialogueEngine(
             if (before.endsWith("تا") || before.endsWith("تا تاریخ")) d.endDate = value else { d.date = value; d.dateSpecified = true }
         }
         if (matches.isEmpty()) {
-            if (has(t, "فردا", "امروز", "دیروز", "پریروز")) d.dateSpecified = true
+            if (has(t, "فردا", "امروز", "امشب", "دیشب", "دیروز", "پریروز")) d.dateSpecified = true
             when {
                 has(t, "پس فردا", "پسفردا") -> d.date = Jalali.addDays(today(), 2)
                 has(t, "فردا") -> d.date = Jalali.addDays(today(), 1)
                 has(t, "پریروز") -> d.date = Jalali.addDays(today(), -2)
-                has(t, "دیروز") -> d.date = Jalali.addDays(today(), -1)
-                has(t, "امروز") -> d.date = today()
+                has(t, "دیروز", "دیشب") -> d.date = Jalali.addDays(today(), -1)
+                has(t, "امروز", "امشب") -> d.date = today()
                 has(t, "از هفته", "از ماه", "آخر ماه", "اول ماه") -> return question(d, "برای شروع، تاریخ دقیق را بگو یا «از فردا» بنویس.", "date", listOf("از امروز", "از فردا"))
             }
         }
@@ -281,6 +307,9 @@ class LocalDialogueEngine(
     }
 
     private fun ready(d: Draft): LocalIntent {
+        if (d.kind == Kind.SERVICE && waiting == "service_type") return question(d,
+            "کدام نوع سرویس؟ مثلاً «سرویس شب» یا «سرویس درخواستی». تا نوع روشن نشود خلاصهٔ تازه نمی‌سازم.",
+            "service_type", listOf("سرویس شب", "سرویس درخواستی", "لغو"))
         if (d.kind == Kind.EDIT_RULE) {
             if (d.amount == null) return question(d, "مبلغ جدید این قانون چند تومان باشد؟ ثبت‌های قبلی تغییر نمی‌کنند.", "amount", listOf("۶۰ هزار تومان", "لغو"))
             return prepared(d, "update_expense_rule", JSONObject().put("id", d.ruleId).put("amount", d.amount).also {
@@ -300,6 +329,7 @@ class LocalDialogueEngine(
             if (d.kind !in setOf(Kind.EXPENSE, Kind.SERVICE, Kind.TRAFFIC)) return reply("ثبت خودکار برای هزینهٔ ثابت، سرویس رفت‌وآمد و گزارش ترافیک است. سوخت یا تعمیر انجام‌نشده را تکراری ثبت نمی‌کنم؛ می‌توانم یک یادآور بسازم.")
             if (d.frequency == null) return question(d, "هر روز انجام شود یا فقط روزهای کاری؟", "frequency", listOf("هر روز", "روزهای کاری", "فقط شنبه و دوشنبه"))
             val args = scheduleArgs(d, JSONObject())
+            if (d.kind == Kind.SERVICE) d.serviceType?.let { args.put("service_type", it) }
             val name = when (d.kind) {
                 Kind.EXPENSE -> { args.put("title", d.title).put("amount", d.amount).put("category", d.category); "create_expense_rule" }
                 Kind.SERVICE -> "create_service_rule"
@@ -316,7 +346,7 @@ class LocalDialogueEngine(
                 d.km?.let { args.put("km", it) }
                 if (d.maintenanceType == "repair") prepared(d, "add_repair", args) else prepared(d, "add_car_service", args.put("service_type", d.maintenanceType))
             }
-            Kind.SERVICE -> prepared(d, "add_service_from_preset", args)
+            Kind.SERVICE -> prepared(d, "add_service_from_preset", args.also { d.serviceType?.let { type -> it.put("service_type", type) } })
             Kind.TRAFFIC -> tool("get_traffic_status")
         }
     }
@@ -418,7 +448,9 @@ class LocalDialogueEngine(
 
     private fun label(d: Draft): String = when (d.kind) {
         Kind.EXPENSE -> "هزینهٔ ${d.title}"; Kind.FUEL -> "سوخت"; Kind.MAINTENANCE -> "نگهداری خودرو"
-        Kind.REMINDER -> "یادآور"; Kind.SERVICE -> "سرویس رفت‌وآمد"; Kind.TRAFFIC -> "ترافیک"; Kind.EDIT_RULE -> "قانون ${d.title}"
+        Kind.REMINDER -> "یادآور"
+        Kind.SERVICE -> d.serviceType?.let { "سرویس ${ServiceType.fromWireOrNull(it)!!.label}" } ?: "سرویس رفت‌وآمد"
+        Kind.TRAFFIC -> "ترافیک"; Kind.EDIT_RULE -> "قانون ${d.title}"
     }
     private fun question(d: Draft, text: String, field: String, suggestions: List<String> = listOf("لغو")): LocalIntent.Reply {
         waiting = field
@@ -458,6 +490,11 @@ class LocalDialogueEngine(
             .replace("هر شب", "هر روز شب").replace("هر صبح", "هر روز صبح")
             .replace("تومن", "تومان").replace("بذار", "ثبت کن").replace("کنسلش کن", "لغو")
             .replace(Regex("\\s+"), " ").trim()
+        private val serviceCategories = listOf(
+            "night" to listOf("شب"), "holiday" to listOf("تعطیل", "تعطیلی"),
+            "request" to listOf("درخواستی"), "available" to listOf("در اختیار", "آماده باش", "اماده باش"),
+            "fixed" to listOf("ثابت"), "mission" to listOf("ماموریت", "مأموریت"),
+        )
         private val datePattern = Regex("(?<!\\d)\\d{4}[/.-]\\d{1,2}[/.-]\\d{1,2}(?!\\d)")
         private val dayNames = listOf("شنبه", "یکشنبه", "دوشنبه", "سه شنبه", "چهارشنبه", "پنجشنبه", "جمعه")
         private val categories = listOf(

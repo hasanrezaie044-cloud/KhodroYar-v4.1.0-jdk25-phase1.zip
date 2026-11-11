@@ -11,6 +11,9 @@ object AutomationToolSpecs {
         ToolParam("weekdays", ParamType.TEXT, desc = "اعداد 0 تا 6 با کاما؛ شنبه=0، فقط برای weekdays"),
     )
     private val id = ToolParam("id", ParamType.ID, true)
+    private val serviceType = ToolParam("service_type", ParamType.ENUM,
+        desc = "نوع صریح همین سرویس؛ بقیهٔ مشخصات از الگوی ذخیره‌شده، با خلاصه و تأیید تازه",
+        options = ServicePresetRevision.allowedTypes)
     val tools = listOf(
         ToolSpec("open_app_section", ToolKind.READ, "بازکردن بخش مشخص برنامه؛ بدون تغییر اطلاعات",
             listOf(ToolParam("section", ParamType.ENUM, true, options = AgentSection.entries.map { it.wire }))),
@@ -23,9 +26,9 @@ object AutomationToolSpecs {
             listOf(ToolParam("title", ParamType.TEXT, true), ToolParam("amount", ParamType.NUMBER, true, min = 1.0, max = 1_000_000_000.0),
                 ToolParam("category", ParamType.ENUM, options = listOf("cigarette", "coffee", "restaurant", "clothing", "food", "transport", "health", "home", "entertainment", "education", "bills", "other"))) + schedule(true)),
         ToolSpec("create_traffic_rule", ToolKind.WRITE, "گزارش ترافیک در روزها/ساعت مشخص از نشان؛ نیاز به اینترنت، سهمیه سرویس و اجازهٔ اعلان", schedule(true)),
-        ToolSpec("create_service_rule", ToolKind.WRITE, "ثبت تکراری سرویس رفت‌وآمد با نسخهٔ ثابت الگوی ذخیره‌شده؛ مبلغ درآمد طبق نرخ‌های سال هر ثبت", schedule(true)),
+        ToolSpec("create_service_rule", ToolKind.WRITE, "ثبت تکراری سرویس رفت‌وآمد با نسخهٔ ثابت الگوی ذخیره‌شده؛ مبلغ درآمد طبق نرخ‌های سال هر ثبت", schedule(true) + serviceType),
         ToolSpec("add_service_from_preset", ToolKind.WRITE, "ثبت یک سرویس رفت‌وآمد با الگوی ذخیره‌شده و تأیید صریح",
-            listOf(ToolParam("date", ParamType.DATE))),
+            listOf(ToolParam("date", ParamType.DATE), serviceType)),
         ToolSpec("set_automation_enabled", ToolKind.WRITE, "توقف یا فعال‌سازی دوبارهٔ یک قانون؛ سوابق مالی قبلی حذف نمی‌شود",
             listOf(id, ToolParam("state", ParamType.ENUM, true, options = listOf("on", "off")))),
         ToolSpec("remove_automation_rule", ToolKind.DELETE, "حذف فقط قانون و توقف اجراهای آینده؛ هیچ رکورد مالی قبلی حذف نمی‌شود", listOf(id)),
