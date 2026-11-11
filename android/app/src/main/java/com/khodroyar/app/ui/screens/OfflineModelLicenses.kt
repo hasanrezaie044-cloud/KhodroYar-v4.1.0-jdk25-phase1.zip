@@ -1,6 +1,8 @@
 package com.khodroyar.app.ui.screens
 
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
@@ -35,22 +37,33 @@ internal fun OfflineModelLicenseLink() {
         Text(tr("مدل آفلاین و مجوزها", "Offline model & licences"))
     }
     if (open) {
-        val text by produceState<String?>(null, selected) {
+        val readFailure = tr("خواندن مجوز انجام نشد؛ دوباره تلاش کن.", "Could not read the licence. Try again.")
+        val asset = selected
+        val text by produceState<String?>(null, asset) {
             value = null
-            if (selected != null) value = withContext(Dispatchers.IO) {
-                runCatching { context.assets.open("licenses/$selected").bufferedReader().use { it.readText() } }.getOrNull()
+            if (asset != null) value = withContext(Dispatchers.IO) {
+                runCatching { context.assets.open("licenses/$asset").bufferedReader().use { it.readText() } }.getOrElse { readFailure }
             } else value = ""
         }
+        val paragraphs = remember(text) { text?.split(Regex("\\n\\s*\\n"))?.filter { it.isNotBlank() }.orEmpty() }
         AlertDialog(onDismissRequest = { open = false; selected = null },
             title = { Text(if (selected == null) tr("ALBERT فارسی · روی دستگاه", "Persian ALBERT · on device") else files.firstOrNull { it.first == selected }?.second.orEmpty()) },
             text = {
-                Column(Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    if (selected == null) {
+                if (selected == null) {
+                    Column(Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text(tr("تشخیص کارهای داخلی، نه چت عمومی. ثبت‌ها فقط پس از بررسی و تأیید تو انجام می‌شوند. روی دستگاه کم‌حافظه، حالت سبک قبلی فعال می‌ماند.",
                             "Internal task interpretation, not a general chatbot. Writes require your review and approval. Low-memory devices retain the lightweight mode."))
                         files.forEach { (file, title) -> TextButton(onClick = { selected = file }, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text(title) } }
-                    } else {
-                        SelectionContainer { Text(text ?: tr("در حال خواندن مجوز…", "Reading licence…"), style = MaterialTheme.typography.bodySmall.copy(textDirection = TextDirection.Ltr)) }
+                    }
+                } else if (text == null) {
+                    Text(tr("در حال خواندن مجوز…", "Reading licence…"))
+                } else {
+                    // Full notices are retained, but do not lay out 300 KB of third-party
+                    // legal text as a single giant Text on a weak phone.
+                    SelectionContainer {
+                        LazyColumn(Modifier.fillMaxWidth().heightIn(max = 420.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            items(paragraphs) { paragraph -> Text(paragraph, style = MaterialTheme.typography.bodySmall.copy(textDirection = TextDirection.Ltr)) }
+                        }
                     }
                 }
             },

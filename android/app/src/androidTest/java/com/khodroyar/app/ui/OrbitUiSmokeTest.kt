@@ -668,6 +668,18 @@ class OrbitUiSmokeTest {
         writeTextArtifact("performance-12000.json", """{"environment":"API35 x86_64 debug emulator; not a phone benchmark","records":12000,"aggregateQueryMs":$queryMs,"homeFirstDataMs":$renderMs,"mileageRows":${daily.size}}""")
     }
 
+    @Test fun offlineModelNoticeAndRuntimeLicenceOpenWithoutNetworkOrModelLoading() {
+        render { Column(Modifier.padding(16.dp)) { OfflineModelLicenseLink() } }
+        compose.onNodeWithText("مدل آفلاین و مجوزها").performClick()
+        compose.onNodeWithText("Model & modifications").performClick()
+        compose.waitUntil(10_000) { compose.onAllNodesWithText("KhodroYar 5.5 · Offline Persian task interpretation").fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithText("KhodroYar 5.5 · Offline Persian task interpretation").assertIsDisplayed()
+        compose.onNodeWithText("بازگشت").performClick()
+        compose.onNodeWithText("ONNX Runtime · MIT").performClick()
+        compose.waitUntil(10_000) { compose.onAllNodesWithText("MIT License").fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithText("MIT License").assertIsDisplayed()
+    }
+
     @Test fun realOfflineAlbertChatShowsReviewWithoutWritingAnyExpense() {
         lateinit var vm: AiAssistantViewModel
         render(fontScale = 1.2f) {

@@ -28,7 +28,12 @@ android {
         // Retain older ARM phones; x86_64 is also used by the native parity tests.
         ndk { abiFilters 'armeabi-v7a', 'arm64-v8a', 'x86_64' }
         externalNativeBuild {
-            cmake { cppFlags '-std=c++17 -fexceptions -frtti' }
+            cmake {
+                cppFlags '-std=c++17 -fexceptions -frtti'
+                // Only the processor JNI library: upstream CLI/trainer executables
+                // are neither needed nor linked/configured as Android app targets.
+                targets 'khodroyar_tokenizer'
+            }
         }
         // Public URL of the AI backend (NOT a secret). Set with -PaiBackendUrl=https://... or leave
         // empty and enter it in the assistant settings. No API key is ever placed here.

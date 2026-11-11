@@ -268,7 +268,8 @@ private fun AssistantHeader(
                 val (label, color) = connectionLook(state)
                 Text(label, color = color, style = MaterialTheme.typography.labelMedium, maxLines = 2)
                 Text(model.ifBlank { "دستیار خودرویار" }, style = MaterialTheme.typography.labelSmall.copy(textDirection = TextDirection.Content),
-                    color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
+                    color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2,
+                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
             }
             IconButton(onClick = onSettings) { Icon(Icons.Outlined.Settings, "تنظیمات دستیار") }
         }

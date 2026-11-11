@@ -64,6 +64,7 @@ internal fun BazaarUpdateSettingsCard(updates: BazaarUpdatesViewModel = viewMode
     val state by updates.state.collectAsState()
     val context = LocalContext.current
     val toast = LocalToast.current
+    val couldNotOpen = tr("صفحهٔ بازار باز نشد.", "Could not open Bazaar.")
     SurfaceCard {
         SectionTitle(tr("به‌روزرسانی برنامه", "App updates"))
         val message = when {
@@ -82,7 +83,7 @@ internal fun BazaarUpdateSettingsCard(updates: BazaarUpdatesViewModel = viewMode
             Text(tr("بررسی به‌روزرسانی", "Check for updates"))
         }
         TextButton(onClick = {
-            if (!BazaarListing.open(context)) toast.show(tr("صفحهٔ بازار باز نشد.", "Could not open Bazaar."))
+            if (!BazaarListing.open(context)) toast.show(couldNotOpen)
         }, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text(tr("صفحهٔ برنامه در بازار", "Open the Bazaar listing")) }
     }
 }
