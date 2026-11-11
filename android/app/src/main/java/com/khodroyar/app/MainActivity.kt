@@ -13,6 +13,7 @@ import com.khodroyar.app.data.repo.AppRepository
 import com.khodroyar.app.notifications.Notifications
 import com.khodroyar.app.security.PinStore
 import com.khodroyar.app.ui.screens.AuthGate
+import com.khodroyar.app.ui.screens.BazaarUpdateHost
 import com.khodroyar.app.ui.screens.CarManagerRoot
 import com.khodroyar.app.ui.theme.AppPalette
 import com.khodroyar.app.ui.theme.CarManagerTheme
@@ -65,6 +66,7 @@ class MainActivity : FragmentActivity() {
 
             CarManagerTheme(darkTheme = darkTheme, palette = palette) {
                 AuthGate(pinStore, settingsStore) {
+                    BazaarUpdateHost()
                     CarManagerRoot(
                         repository,
                         launchTarget = launchTarget,

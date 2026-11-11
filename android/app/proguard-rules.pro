@@ -1,3 +1,7 @@
+# Native tokenizer JNI method names and ONNX Runtime's native-bound Java API.
+-keep class com.khodroyar.app.ai.albert.SentencePieceBridge { *; }
+-keep class ai.onnxruntime.** { *; }
+
 # Room
 -keep class * extends androidx.room.RoomDatabase
 -dontwarn androidx.room.paging.**

@@ -6,6 +6,9 @@ import com.khodroyar.app.automation.RuleKind
 import com.khodroyar.app.automation.validDate
 import com.khodroyar.app.automation.validTime
 import com.khodroyar.app.core.jalali.Jalali
+import com.khodroyar.app.ai.albert.PersianIntent
+import com.khodroyar.app.ai.albert.PersianIntentPrediction
+import com.khodroyar.app.ai.albert.PersianHintSafety
 import org.json.JSONObject
 import java.time.ZoneId
 
@@ -59,9 +62,13 @@ class LocalDialogueEngine(
         }
     }
 
-    fun parse(raw: String): LocalIntent {
+    /** Short slot replies and revisions must not be re-classified as a new task. */
+    val acceptsModelHint: Boolean get() = draft == null && repeatDates == null && management == null
+
+    fun parse(raw: String, prediction: PersianIntentPrediction? = null): LocalIntent {
         if (raw.isBlank() || raw.length > AiLimits.MAX_USER_CHARS) return reply("یک پیام کوتاه بنویسید؛ اطلاعاتی تغییر نکرد.")
         val t = normalize(raw).trim(' ', '.', '!', '؟', '?')
+        val hint = if (acceptsModelHint) PersianHintSafety.allow(LocalIntentParser.normalize(raw), prediction) else null
         if (t in setOf("لغو", "لغوش کن", "بیخیال", "بی خیال", "کنسل", "ولش کن", "نه", "نه ممنون", "انصراف")) {
             discardDraft()
             return reply("باشه، درخواست در حال تنظیم لغو شد؛ قانون‌های قبلاً فعال‌شده تغییر نکردند.")
@@ -96,6 +103,20 @@ class LocalDialogueEngine(
             return repeatExpense(title)
         }
         navigation(t)?.let { return it }
+        // Only three fixed, read-only domains can be suggested by the classifier.
+        // All answers still come from the same grounded app tools, never model text.
+        when (hint) {
+            PersianIntent.VEHICLE_STATUS -> return tool("get_vehicle_status")
+            PersianIntent.AUTOMATION_HEALTH -> return tool("get_automation_health")
+            PersianIntent.COMPARISON -> {
+                if (has(t, "پارسال", "امسال", "سال قبل", "سال گذشته") || datePattern.containsMatchIn(t))
+                    return reply("مقایسهٔ این ماه یا این هفته با بازهٔ قبل را پشتیبانی می‌کنم؛ تاریخ دیگری را حدس نمی‌زنم.")
+                if (!has(t, "ماه", "هفته", "هر کیلومتر", "هر ساعت", "برای هر ساعت", "برای هر کیلومتر"))
+                    return reply("مقایسهٔ این ماه یا این هفته؟", listOf("مقایسه این ماه", "مقایسه این هفته"))
+                return tool("get_period_comparison", JSONObject().put("period", if (has(t, "هفته")) "week" else "month"))
+            }
+            else -> Unit
+        }
         if (has(t, "کارهای خودکار", "قانون هام", "قوانین", "قانون ها", "برنامه های خودکار", "کارای خودکار")) return tool("list_automations")
         if (has(t, "الگوی سرویس", "الگو سرویس", "الگوی همیشگی") && !has(t, "ثبت", "روز", "بزن")) return tool("get_service_preset")
 
@@ -131,7 +152,17 @@ class LocalDialogueEngine(
         }
         val existingDraft = draft
         if (draft == null) {
-            val kind = detectKind(t) ?: return legacy.parse(t)
+            // A model hint widens wording, not privileges. Existing explicit domain
+            // recognition wins; the model can only open a validated, unsaved draft.
+            val hintedKind = when (hint) {
+                PersianIntent.EXPENSE -> Kind.EXPENSE
+                PersianIntent.FUEL -> Kind.FUEL
+                PersianIntent.MAINTENANCE -> Kind.MAINTENANCE
+                PersianIntent.SERVICE -> Kind.SERVICE
+                else -> null
+            }
+            val hasEntryRequest = Regex("ثبت|بنویس|یادداشت|وارد|ذخیره|اضافه|بیار|بیفزا|نگه دار|دادم|زدم|انداختم|خریدم|عوض کردم|نو کردم|تعمیر کردم|پر کردم|گرفتم|انجام دادم").containsMatchIn(t) || isRecurring(t)
+            val kind = detectKind(t) ?: hintedKind?.takeIf { hasEntryRequest } ?: return legacy.parse(t)
             draft = Draft(kind, date = today(), recurring = isRecurring(t))
         }
         val d = requireNotNull(draft)

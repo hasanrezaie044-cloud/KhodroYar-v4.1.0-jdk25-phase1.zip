@@ -668,6 +668,58 @@ class OrbitUiSmokeTest {
         writeTextArtifact("performance-12000.json", """{"environment":"API35 x86_64 debug emulator; not a phone benchmark","records":12000,"aggregateQueryMs":$queryMs,"homeFirstDataMs":$renderMs,"mileageRows":${daily.size}}""")
     }
 
+    @Test fun newerBazaarVersionHasDismissibleCompactRtlWarningAndManualRecheck() {
+        context.getSharedPreferences("bazaar_update_notice", 0).edit().clear().commit()
+        var checks = 0
+        val updates = com.khodroyar.app.updates.BazaarUpdatesViewModel(context.applicationContext as android.app.Application,
+            com.khodroyar.app.updates.BazaarVersionSource { checks++; com.khodroyar.app.updates.BazaarVersionResult.Reported(com.khodroyar.app.BuildConfig.VERSION_CODE + 1L) })
+        render(fontScale = 1.35f) {
+            Column(Modifier.width(320.dp).padding(12.dp)) {
+                BazaarUpdateHost(updates)
+                BazaarUpdateSettingsCard(updates)
+            }
+        }
+        compose.waitUntil(10_000) { updates.state.value.showPrompt }
+        compose.onNodeWithTag("bazaar-update-open").assertIsDisplayed()
+        compose.onNodeWithTag("bazaar-update-later").assertIsDisplayed()
+        shot("34-bazaar-update-rtl-320")
+        compose.onNodeWithTag("bazaar-update-later").performClick()
+        compose.onNodeWithTag("bazaar-update-dialog").assertDoesNotExist()
+        compose.runOnIdle { updates.onForeground() }
+        assertEquals(1, checks)
+        shot("35-bazaar-update-settings")
+        compose.onNodeWithTag("bazaar-update-check").performClick()
+        compose.waitUntil(10_000) { updates.state.value.showPrompt }
+        assertEquals(2, checks)
+        compose.onNodeWithTag("bazaar-update-later").performClick()
+        context.getSharedPreferences("bazaar_update_notice", 0).edit().clear().commit()
+    }
+
+    @Test fun missingBazaarOrUnavailableVersionNeverDisplaysAFakeUpdateWarning() {
+        val updates = com.khodroyar.app.updates.BazaarUpdatesViewModel(context.applicationContext as android.app.Application,
+            com.khodroyar.app.updates.BazaarVersionSource { com.khodroyar.app.updates.BazaarVersionResult.Unavailable(com.khodroyar.app.updates.BazaarVersionResult.Reason.NOT_INSTALLED) })
+        render { Column(Modifier.padding(16.dp)) { BazaarUpdateHost(updates); BazaarUpdateSettingsCard(updates) } }
+        compose.waitUntil(10_000) { updates.state.value.outcome == com.khodroyar.app.updates.BazaarUpdatesViewModel.Outcome.BAZAAR_MISSING }
+        compose.onNodeWithTag("bazaar-update-dialog").assertDoesNotExist()
+        compose.onNodeWithText("برای بررسی خودکار، برنامهٔ کافه‌بازار باید نصب باشد.").assertIsDisplayed()
+        shot("36-bazaar-not-installed")
+        val actual = runBlocking { com.khodroyar.app.updates.BazaarVersionService(context).check() }
+        assertEquals(com.khodroyar.app.updates.BazaarVersionResult.Unavailable(com.khodroyar.app.updates.BazaarVersionResult.Reason.NOT_INSTALLED), actual)
+    }
+
+    @Test fun bazaarBrowserFallbackTargetsOnlyTheExistingAppPage() {
+        val attempts = mutableListOf<android.content.Intent>()
+        assertTrue(com.khodroyar.app.updates.BazaarListing.open { intent ->
+            attempts += intent
+            if (attempts.size == 1) throw android.content.ActivityNotFoundException("Bazaar absent")
+        })
+        assertEquals("com.farsitel.bazaar", attempts[0].`package`)
+        assertEquals("bazaar://details?id=com.khodroyar.app", attempts[0].data.toString())
+        assertNull(attempts[1].`package`)
+        assertEquals("https://cafebazaar.ir/app/com.khodroyar.app", attempts[1].data.toString())
+        assertFalse(com.khodroyar.app.updates.BazaarListing.open { throw android.content.ActivityNotFoundException("No browser") })
+    }
+
     private fun pressSystemBack() {
         // Use instrumentation's complete system-key event, not a dispatcher shortcut
         // (which would bypass the input method) or an un-sourced synthetic key pair.

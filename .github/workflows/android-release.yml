@@ -45,7 +45,7 @@ jobs:
       contents: read
     uses: ./.github/workflows/offline-albert.yml
     with:
-      ref: ${{ inputs.ref || github.ref }}
+      ref: ${{ inputs.ref || github.sha }}
 
   release:
     name: Signed APK Release (JDK 25)
@@ -61,7 +61,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.ref || github.ref }}
+          ref: ${{ inputs.ref || github.sha }}
 
       - name: Set up JDK 25
         uses: actions/setup-java@v4
@@ -72,7 +72,18 @@ jobs:
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
         with:
-          packages: 'platforms;android-${{ env.ANDROID_COMPILE_SDK }} build-tools;${{ env.ANDROID_BUILD_TOOLS }} platform-tools'
+          packages: 'platforms;android-${{ env.ANDROID_COMPILE_SDK }} build-tools;${{ env.ANDROID_BUILD_TOOLS }} platform-tools ndk;28.2.13676358 cmake;3.22.1'
+
+      - name: Read verified offline ALBERT assets from this run
+        uses: actions/download-artifact@v4
+        with:
+          name: khodroyar-offline-albert
+          path: android/.cache/offline-assets
+
+      - name: Verify model artifact and prepare pinned native SentencePiece source
+        run: |
+          python3 tools/offline-albert/verify_assets.py
+          python3 tools/offline-albert/prepare_sentencepiece.py
 
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
@@ -168,6 +179,8 @@ jobs:
           BYTES=$(stat -c %s "$APK")
           test "$BYTES" -lt 100000000 || { echo "APK exceeds the 100 MB product budget"; exit 1; }
           echo "::notice title=Signed APK size::$BYTES bytes; limit 100000000 bytes"
+          python3 tools/offline-albert/verify_apk.py "$APK" android/app/build/outputs/apk/release/albert-apk-verification.json
+          "$ANDROID_HOME/build-tools/${ANDROID_BUILD_TOOLS}/zipalign" -c -P 16 -v 4 "$APK"
 
       - name: Extract version
         id: version
@@ -217,7 +230,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: khodroyar-release-signed-${{ steps.version.outputs.version_name }}
-          path: android/app/build/outputs/apk/release/app-release.apk
+          path: |
+            android/app/build/outputs/apk/release/app-release.apk
+            android/app/build/outputs/apk/release/albert-apk-verification.json
           if-no-files-found: error
           retention-days: 30
 
@@ -238,4 +253,5 @@ jobs:
       contents: read
     uses: ./.github/workflows/android-ui-smoke.yml
     with:
-      ref: ${{ inputs.ref || github.ref }}
+      ref: ${{ inputs.ref || github.sha }}
+      prepared_model: true
