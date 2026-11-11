@@ -697,10 +697,20 @@ class OrbitUiSmokeTest {
         assertEquals(com.khodroyar.app.ai.albert.PersianAlbertEngine.Status.READY, vm.localModelStatus)
         assertEquals("add_expense", vm.pending!!.call.spec.name)
         assertEquals(50_000.0, vm.pending!!.call.dbl("amount")!!, 0.0)
-        compose.onNodeWithText("تأیید و انجام").assertIsDisplayed()
+        compose.onNodeWithTag("agent-confirm").assertIsDisplayed().assertIsEnabled()
+        compose.waitForIdle()
+        // assertIsDisplayed alone accepts a partly clipped button. Check the
+        // WHOLE action, without test-assisted scrolling, at 320 dp / 1.2x text.
+        val viewport = compose.onNodeWithTag("agent-message-list").getUnclippedBoundsInRoot()
+        for (tag in listOf("agent-confirm", "agent-cancel")) {
+            val action = compose.onNodeWithTag(tag).getUnclippedBoundsInRoot()
+            assertTrue("$tag must be fully above the input bar", action.top >= viewport.top && action.bottom <= viewport.bottom + 1.dp)
+        }
         assertEquals(before, runBlocking { AppDatabase.get(context).personalExpenses().allOnce().size })
         shot("37-offline-albert-approval")
-        compose.runOnIdle { vm.cancelPending(); vm.onWorkspaceHidden() }
+        compose.onNodeWithTag("agent-cancel").performClick()
+        compose.waitUntil(10_000) { vm.pending == null }
+        compose.runOnIdle { vm.onWorkspaceHidden() }
         compose.waitUntil(10_000) { vm.localModelStatus == com.khodroyar.app.ai.albert.PersianAlbertEngine.Status.NOT_LOADED }
         assertEquals(before, runBlocking { AppDatabase.get(context).personalExpenses().allOnce().size })
     }

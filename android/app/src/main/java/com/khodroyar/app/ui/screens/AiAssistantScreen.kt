@@ -9,6 +9,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -67,6 +68,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -123,7 +125,9 @@ fun AiAssistantScreen(vm: AiAssistantViewModel = viewModel(), onNavigate: (Agent
     val listState = rememberLazyListState()
 
     val extraRows = (if (vm.pending != null) 1 else 0) + (if (vm.busy) 1 else 0) + (if (vm.failure != null) 1 else 0)
-    LaunchedEffect(vm.messages.size, extraRows) {
+    // Busy -> approval keeps the SAME row count, but the new card is taller.
+    // Key the actual states so its actions are not left below the input bar.
+    LaunchedEffect(vm.messages.size, vm.pending, vm.busy, vm.failure) {
         val total = vm.messages.size + extraRows
         if (total > 0) listState.animateScrollToItem(total - 1)
     }
@@ -154,7 +158,7 @@ fun AiAssistantScreen(vm: AiAssistantViewModel = viewModel(), onNavigate: (Agent
                 vm.messages.isEmpty() && !vm.busy -> EmptyState(vm.connection, settings.mode, onSettings = { showSettings = true }, onExample = vm::send)
                 else -> LazyColumn(
                     state = listState,
-                    modifier = Modifier.fillMaxSize(),
+                    modifier = Modifier.fillMaxSize().testTag("agent-message-list"),
                     contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 14.dp, vertical = 12.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
@@ -274,14 +278,19 @@ private fun AssistantHeader(
             IconButton(onClick = onSettings) { Icon(Icons.Outlined.Settings, "تنظیمات دستیار") }
         }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-            TextButton(onClick = onNew, modifier = Modifier.weight(1f)) {
-                Icon(Icons.Outlined.Add, null, Modifier.size(17.dp)); Spacer(Modifier.width(4.dp)); Text("گفتگوی نو", style = MaterialTheme.typography.labelSmall)
+            // Keep the full touch targets, but do not split the final Persian
+            // letter onto another line on compact phones with enlarged text.
+            TextButton(onClick = onNew, modifier = Modifier.weight(1f), contentPadding = PaddingValues(horizontal = 4.dp)) {
+                Icon(Icons.Outlined.Add, null, Modifier.size(17.dp)); Spacer(Modifier.width(4.dp))
+                Text("گفتگوی نو", style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
             }
-            TextButton(onClick = onHistory, modifier = Modifier.weight(1f)) {
-                Icon(Icons.Outlined.History, null, Modifier.size(17.dp)); Spacer(Modifier.width(4.dp)); Text("تاریخچه", style = MaterialTheme.typography.labelSmall)
+            TextButton(onClick = onHistory, modifier = Modifier.weight(1f), contentPadding = PaddingValues(horizontal = 4.dp)) {
+                Icon(Icons.Outlined.History, null, Modifier.size(17.dp)); Spacer(Modifier.width(4.dp))
+                Text("تاریخچه", style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
             }
-            TextButton(onClick = onClear, enabled = canClear, modifier = Modifier.weight(1f)) {
-                Icon(Icons.Outlined.DeleteSweep, null, Modifier.size(17.dp)); Spacer(Modifier.width(4.dp)); Text("پاک‌سازی", style = MaterialTheme.typography.labelSmall)
+            TextButton(onClick = onClear, enabled = canClear, modifier = Modifier.weight(1f), contentPadding = PaddingValues(horizontal = 4.dp)) {
+                Icon(Icons.Outlined.DeleteSweep, null, Modifier.size(17.dp)); Spacer(Modifier.width(4.dp))
+                Text("پاک‌سازی", style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
             }
         }
     }
@@ -383,10 +392,10 @@ private fun ConfirmCard(p: PendingAction, onConfirm: () -> Unit, onCancel: () ->
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 Button(
                     onClick = onConfirm,
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier.weight(1f).testTag("agent-confirm"),
                     colors = if (danger) ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error, contentColor = MaterialTheme.colorScheme.onError) else ButtonDefaults.buttonColors(),
                 ) { Text(if (danger) "بله، حذف شود" else "تأیید و انجام") }
-                OutlinedButton(onClick = onCancel, modifier = Modifier.weight(1f)) { Text("لغو") }
+                OutlinedButton(onClick = onCancel, modifier = Modifier.weight(1f).testTag("agent-cancel")) { Text("لغو") }
             }
         }
     }
