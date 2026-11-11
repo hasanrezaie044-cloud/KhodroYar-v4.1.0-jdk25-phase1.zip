@@ -95,6 +95,15 @@ class LocalServiceDialogueTest {
         assertEquals("", e.context.title)
     }
 
+    @Test fun explicitServiceHistoryQuestionsRemainReadsNotCorrectionDrafts() {
+        for (text in listOf("لیست سرویس شب", "گزارش سرویس شب", "سوابق سرویس درخواستی")) {
+            val e = engine()
+            val result = tool(e, text)
+            assertEquals(ToolKind.READ, AgentToolRegistry.find(result.name)!!.kind)
+            assertEquals("", e.context.title)
+        }
+    }
+
     @Test fun fullNegationAndHypotheticalRemainNonWrites() {
         for (text in listOf("سرویس شب ثبت نکن", "اگر رفتم سرویس شب ثبت کن", "فرض کن سرویس شب رفتم")) reply(engine(), text)
         val e = engine()

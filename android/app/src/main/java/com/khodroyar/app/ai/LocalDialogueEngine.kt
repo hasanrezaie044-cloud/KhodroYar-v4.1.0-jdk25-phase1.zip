@@ -165,7 +165,11 @@ class LocalDialogueEngine(
                 else -> null
             }
             val hasEntryRequest = Regex("ثبت|بنویس|یادداشت|وارد|ذخیره|اضافه|بیار|بیفزا|نگه دار|دادم|زدم|انداختم|خریدم|عوض کردم|نو کردم|تعمیر کردم|پر کردم|گرفتم|انجام دادم").containsMatchIn(t) || isRecurring(t)
-            val kind = detectKind(t) ?: hintedKind?.takeIf { hasEntryRequest } ?: return legacy.parse(t)
+            val explicitKind = detectKind(t)
+            if (explicitKind == null && !hasEntryRequest && serviceCategoryInput(t) != null && !isReport(t)) {
+                return reply("درخواست فعالی برای اصلاح سرویس ندارم. برای ثبت تازه بگو «سرویس شب امروز را ثبت کن»؛ چیزی ثبت نشده.")
+            }
+            val kind = explicitKind ?: hintedKind?.takeIf { hasEntryRequest } ?: return legacy.parse(t)
             draft = Draft(kind, date = today(), recurring = isRecurring(t))
         }
         val d = requireNotNull(draft)
