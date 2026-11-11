@@ -10,6 +10,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createComposeRule
@@ -82,7 +83,9 @@ class OrbitUiSmokeTest {
                 LocalLayoutDirection provides if (rtl) LayoutDirection.Rtl else LayoutDirection.Ltr,
                 LocalLanguage provides if (rtl) "fa" else "en") {
                 CarManagerTheme(darkTheme = dark, palette = AppPalette.ORBIT) {
-                    Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) { content() }
+                    Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+                        Box(Modifier.fillMaxSize()) { content() }
+                    }
                 }
             }
         }
@@ -131,7 +134,7 @@ class OrbitUiSmokeTest {
 
     @Test fun rtlChartTapAndLargePersianTextUseRealSelectedValue() {
         render(fontScale = 1.35f) {
-            Column(Modifier.widthIn(max = 320.dp).padding(12.dp)) {
+            Column(Modifier.width(320.dp).testTag("compact-chart").padding(12.dp)) {
                 SurfaceCard {
                     Text("روند درآمد", style = MaterialTheme.typography.titleMedium)
                     SmoothLineChart(listOf("فروردین", "اردیبهشت", "خرداد", "تیر", "مرداد", "شهریور"),
@@ -140,6 +143,7 @@ class OrbitUiSmokeTest {
                 }
             }
         }
+        compose.onNodeWithTag("compact-chart").assertWidthIsEqualTo(320.dp)
         compose.onNodeWithText("750,000 تومان").assertIsDisplayed()
         compose.onNodeWithContentDescription("نمودار روند؛ برای جزئیات نقطه‌ای را لمس کنید")
             .performTouchInput { click(Offset(width - 4f, height / 2f)) }
@@ -221,9 +225,10 @@ class OrbitUiSmokeTest {
 
     @Test fun darkNavigationStaysUsableAt320DpAndEnlargedFont() {
         render(dark = true, fontScale = 1.35f) {
-            Box(Modifier.widthIn(max = 320.dp).fillMaxHeight()) { CarManagerRoot(repository) }
+            Box(Modifier.width(320.dp).testTag("compact-app").fillMaxHeight()) { CarManagerRoot(repository) }
         }
         compose.waitUntil(15_000) { compose.onAllNodesWithText("2,750,000").fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithTag("compact-app").assertWidthIsEqualTo(320.dp)
         listOf("HOME", "SERVICES", "CALENDAR", "REPORTS", "SETTINGS").forEach {
             compose.onNodeWithTag("nav-$it").assertIsDisplayed().assertHasClickAction()
         }
