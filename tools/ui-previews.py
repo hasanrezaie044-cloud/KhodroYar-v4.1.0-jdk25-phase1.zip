@@ -14,6 +14,8 @@ from PIL import Image
 
 root = Path(sys.argv[1])
 for name in ("01-home-light-fa", "06-report-donut", "13-chart-dark-en", "18-dashboard-bars", "19-home-dark-320-large-text"):
+    if len(sys.argv) > 2 and sys.argv[2] != name:
+        continue
     path = root / f"{name}.png"
     if not path.is_file():
         continue
@@ -25,7 +27,11 @@ for name in ("01-home-light-fa", "06-report-donut", "13-chart-dark-en", "18-dash
             buffer = BytesIO()
             image.save(buffer, "WEBP", quality=quality, method=6)
             encoded = b64encode(buffer.getvalue()).decode("ascii")
-            if len(encoded) < 56_000:
+            if len(encoded) <= 18_000:
                 break
-        if len(encoded) < 56_000:
-            print(f"::notice title=native-preview/{name}::ORB1:{encoded}")
+        if len(encoded) <= 18_000:
+            # Check annotations retain at most 4096 message characters. Keep each
+            # piece under 3100; at most six notices per image / thirty per job.
+            pieces = [encoded[i:i + 3000] for i in range(0, len(encoded), 3000)]
+            for index, piece in enumerate(pieces, 1):
+                print(f"::notice title=native-preview/{name}/{index}-of-{len(pieces)}::ORB2:{index}:{len(pieces)}:{piece}")

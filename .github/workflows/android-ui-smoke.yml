@@ -75,7 +75,21 @@ jobs:
         run: |
           python3 -m venv "$RUNNER_TEMP/ui-preview-env"
           "$RUNNER_TEMP/ui-preview-env/bin/pip" --disable-pip-version-check -q install Pillow==12.0.0
-          "$RUNNER_TEMP/ui-preview-env/bin/python" tools/ui-previews.py "$RUNNER_TEMP/orbit-ui-screenshots"
+      - name: Home preview
+        if: always() && github.event_name == 'workflow_dispatch'
+        run: '"$RUNNER_TEMP/ui-preview-env/bin/python" tools/ui-previews.py "$RUNNER_TEMP/orbit-ui-screenshots" 01-home-light-fa'
+      - name: Report preview
+        if: always() && github.event_name == 'workflow_dispatch'
+        run: '"$RUNNER_TEMP/ui-preview-env/bin/python" tools/ui-previews.py "$RUNNER_TEMP/orbit-ui-screenshots" 06-report-donut'
+      - name: Dark chart preview
+        if: always() && github.event_name == 'workflow_dispatch'
+        run: '"$RUNNER_TEMP/ui-preview-env/bin/python" tools/ui-previews.py "$RUNNER_TEMP/orbit-ui-screenshots" 13-chart-dark-en'
+      - name: Bar chart preview
+        if: always() && github.event_name == 'workflow_dispatch'
+        run: '"$RUNNER_TEMP/ui-preview-env/bin/python" tools/ui-previews.py "$RUNNER_TEMP/orbit-ui-screenshots" 18-dashboard-bars'
+      - name: Compact layout preview
+        if: always() && github.event_name == 'workflow_dispatch'
+        run: '"$RUNNER_TEMP/ui-preview-env/bin/python" tools/ui-previews.py "$RUNNER_TEMP/orbit-ui-screenshots" 19-home-dark-320-large-text'
       - name: Upload native screenshots and test reports
         if: always()
         uses: actions/upload-artifact@v4
