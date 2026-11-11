@@ -95,17 +95,18 @@ class OrbitUiSmokeTest {
         }
     }
 
-    private fun render(dark: Boolean = false, rtl: Boolean = true, fontScale: Float = 1f, content: @Composable () -> Unit) {
+    private fun render(dark: Boolean = false, rtl: Boolean = true, fontScale: Float = 1f, edgeToEdge: Boolean = false, content: @Composable () -> Unit) {
         compose.setContent {
             val density = LocalDensity.current
             val activity = LocalContext.current.hostActivity()
             val imeBottom = WindowInsets.ime.getBottom(density)
             SideEffect { imeVisible = imeBottom > 0 }
-            DisposableEffect(activity) {
+            DisposableEffect(activity, edgeToEdge) {
                 val previous = activity?.window?.attributes?.softInputMode
-                // Match BOTH MainActivity's edge-to-edge setup and manifest resize.
-                // A fitting-decor test host can consume IME insets before Compose.
-                (activity as? androidx.activity.ComponentActivity)?.enableEdgeToEdge()
+                // The IME regression opts into MainActivity's edge-to-edge setup
+                // so fitting decor cannot consume IME insets before Compose. Other
+                // isolated component fixtures retain their established viewport.
+                if (edgeToEdge) (activity as? androidx.activity.ComponentActivity)?.enableEdgeToEdge()
                 activity?.window?.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
                 onDispose { previous?.let { activity?.window?.setSoftInputMode(it) } }
             }
@@ -343,7 +344,7 @@ class OrbitUiSmokeTest {
     }
 
     @Test fun quickExpenseRequiresReviewSupportsCorrectionAndConfirmedUndoAtLargeFont() {
-        render(fontScale = 1.35f) {
+        render(fontScale = 1.35f, edgeToEdge = true) {
             Box(Modifier.width(320.dp).testTag("compact-app").fillMaxHeight()) { CarManagerRoot(repository) }
         }
         compose.onNodeWithTag("dashboard-list").performScrollToNode(hasTestTag("home-quick-add"))
