@@ -13,6 +13,16 @@ data class ReportWindow(val start: String, val end: String) {
     }
     fun previous(): ReportWindow = ReportWindow(Jalali.addDays(start, -days), Jalali.addDays(start, -1))
     companion object {
+        fun forRange(start: String, end: String, today: String): Pair<ReportWindow, ReportWindow> {
+            val date = requireNotNull(Jalali.parse(today))
+            if ((start to end) == Jalali.monthRange(date.year, date.month)) return monthToDate(today)
+            if ((start to end) == Jalali.weekRange(today)) return weekToDate(today)
+            return ReportWindow(start, minOf(end, today)).let { it to it.previous() }
+        }
+        fun weekToDate(today: String): Pair<ReportWindow, ReportWindow> {
+            val current = ReportWindow(Jalali.weekRange(today).first, today)
+            return current to ReportWindow(Jalali.addDays(current.start, -7), Jalali.addDays(current.end, -7))
+        }
         fun monthToDate(today: String): Pair<ReportWindow, ReportWindow> {
             val now = requireNotNull(Jalali.parse(today))
             val previous = requireNotNull(Jalali.parse(Jalali.addMonths(today, -1)))

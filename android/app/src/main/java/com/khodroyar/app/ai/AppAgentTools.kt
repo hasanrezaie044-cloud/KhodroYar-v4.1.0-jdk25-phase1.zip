@@ -116,10 +116,7 @@ class AppAgentTools(context: Context, private val repo: AppRepository) : AgentTo
 
     private suspend fun periodComparison(period: String): ToolOutcome {
         val today = Jalali.todayString()
-        val windows = if (period == "week") {
-            val start = Jalali.weekRange(today).first
-            ReportWindow(start, today).let { it to it.previous() }
-        } else ReportWindow.monthToDate(today)
+        val windows = if (period == "week") ReportWindow.weekToDate(today) else ReportWindow.monthToDate(today)
         val data = repo.comparison(windows.first, windows.second).first()
         fun n(value: Double) = Analytics.formatNumber(value)
         fun group(key: String): String = when (key) { "fuel" -> "سوخت"; "maintenance" -> "نگهداری"; else -> PurchaseCategory.fromWire(key.removePrefix("personal:")).label }
@@ -136,7 +133,7 @@ class AppAgentTools(context: Context, private val repo: AppRepository) : AgentTo
             append("خالص خودرو/کیلومتر: ${data.current.vehicleNetPerKm?.let(::n) ?: "—"} تومان\n")
             append("خالص خودرو/ساعت: ${data.current.vehicleNetPerHour?.let(::n) ?: "—"} تومان\n")
             append("خالص خودرو = درآمد سرویس منهای سوخت و نگهداری؛ فقط ثبت‌های موجود.\n")
-            data.increases.forEach { append("افزایش ${group(it.key)}: ${n(it.increase)} تومان\n") }
+            data.increases.forEach { append((if (data.previous.hasData) "افزایش" else "هزینهٔ ثبت‌شدهٔ") + " ${group(it.key)}: ${n(it.increase)} تومان\n") }
         }.trim())
     }
 

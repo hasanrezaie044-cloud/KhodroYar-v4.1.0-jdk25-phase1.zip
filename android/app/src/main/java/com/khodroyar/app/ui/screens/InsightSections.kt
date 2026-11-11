@@ -25,11 +25,12 @@ fun expenseGroupLabel(key: String): String = when (key) {
 @Composable
 internal fun FinancialComparisonSection(repository: AppRepository, from: String, to: String, today: String) {
     var expanded by remember { mutableStateOf(false) }
-    val window = remember(from, to, today) { runCatching { ReportWindow(from, minOf(to, today)).also { it.previous() } }.getOrNull() }
+    val windows = remember(from, to, today) { runCatching { ReportWindow.forRange(from, to, today) }.getOrNull() }
+    val window = windows?.first
     var comparison by remember { mutableStateOf<PeriodComparison?>(null) }
-    LaunchedEffect(window) {
+    LaunchedEffect(windows) {
         comparison = null
-        if (window != null) repository.comparison(window).collect { comparison = it }
+        if (windows != null) repository.comparison(windows.first, windows.second).collect { comparison = it }
     }
     SurfaceCard(modifier = Modifier.testTag("financial-comparison"), color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.55f)) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -73,7 +74,7 @@ internal fun FinancialComparisonSection(repository: AppRepository, from: String,
                     Spacer(Modifier.height(12.dp))
                     if (data.increases.isEmpty()) Text(tr("افزایش هزینه‌ای در ثبت‌های این دو بازه دیده نشد.", "No recorded expense increase."), style = MaterialTheme.typography.bodySmall)
                     else {
-                        Text(tr("بیشترین افزایش هزینه", "Largest expense increases"), style = MaterialTheme.typography.titleSmall)
+                        Text(if (data.previous.hasData) tr("بیشترین افزایش هزینه", "Largest expense increases") else tr("بیشترین هزینهٔ ثبت‌شده", "Largest recorded expenses"), style = MaterialTheme.typography.titleSmall)
                         data.increases.forEach { change ->
                             InfoRow(expenseGroupLabel(change.key), "+${amount(change.increase)} " + tr("تومان", "Toman"), valueColor = MaterialTheme.colorScheme.error)
                         }

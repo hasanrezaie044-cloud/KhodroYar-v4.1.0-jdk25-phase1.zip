@@ -286,6 +286,14 @@ class SettingsStore private constructor(context: Context) {
     @Synchronized
     fun update(transform: (AppSettings) -> AppSettings) = write(transform(_state.value))
 
+    /** Compare + transform under the same monitor; undo must not overwrite a concurrent manual correction. */
+    @Synchronized
+    fun updateIf(predicate: (AppSettings) -> Boolean, transform: (AppSettings) -> AppSettings): Boolean {
+        if (!predicate(_state.value)) return false
+        write(transform(_state.value))
+        return true
+    }
+
     /** Commit odometer + dedup marker together; safe to replay after Room has committed. */
     @Synchronized
     fun applyScheduledMileageOnce(id: String, km: Double) {

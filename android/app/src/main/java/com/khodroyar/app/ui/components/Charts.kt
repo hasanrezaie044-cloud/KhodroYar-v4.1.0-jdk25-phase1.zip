@@ -5,6 +5,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -165,6 +166,17 @@ private fun SeriesChart(
                 val inset = if (bars) 14.dp.toPx() else 0f
                 ChartGeometry.nearestIndex((tap.x - left - inset) / (right - left - 2 * inset).coerceAtLeast(1f), data.size, rtl)?.let { selected = it }
             }
+        }.pointerInput(data, rtl, axisGutter, bars) {
+            fun selectAt(x: Float) {
+                val axis = axisGutter.toPx()
+                val left = if (rtl) 10.dp.toPx() else axis
+                val right = size.width - if (rtl) axis else 10.dp.toPx()
+                val inset = if (bars) 14.dp.toPx() else 0f
+                ChartGeometry.nearestIndex((x - left - inset) / (right - left - 2 * inset).coerceAtLeast(1f), data.size, rtl)?.let { selected = it }
+            }
+            detectHorizontalDragGestures(onDragStart = { selectAt(it.x) }) { change, _ ->
+                change.consume(); selectAt(change.position.x)
+            }
         }) {
             val axis = axisGutter.toPx()
             val left = if (rtl) 10.dp.toPx() else axis
@@ -193,8 +205,9 @@ private fun SeriesChart(
                 val width = min(28.dp.toPx(), plotW / (data.size + 1) * 0.58f)
                 data.forEachIndexed { i, v ->
                     val y = py(v)
-                    drawRoundRect(if (i == index) lineColor else lineColor.copy(alpha = 0.24f),
-                        Offset(px(i) - width / 2, min(y, zeroY)), Size(width, abs(y - zeroY).coerceAtLeast(2.dp.toPx())), CornerRadius(5.dp.toPx()))
+                    val alpha = if (i == index) 1f else 0.30f
+                    drawRoundRect(Brush.verticalGradient(listOf(lineColor.copy(alpha = alpha), lineColor.copy(alpha = alpha * 0.55f)), top, bottom),
+                        Offset(px(i) - width / 2, min(y, zeroY)), Size(width, abs(y - zeroY).coerceAtLeast(2.dp.toPx())), CornerRadius(8.dp.toPx()))
                 }
             } else {
                 val points = data.indices.map { Offset(px(it), py(data[it])) }
@@ -209,6 +222,7 @@ private fun SeriesChart(
                     addPath(line); lineTo(points.last().x, zeroY); lineTo(points.first().x, zeroY); close()
                 }
                 drawPath(area, Brush.verticalGradient(listOf(lineColor.copy(alpha = 0.18f * reveal.value), lineColor.copy(alpha = 0.015f)), top, bottom))
+                drawPath(line, lineColor.copy(alpha = 0.09f * reveal.value), style = Stroke(8.dp.toPx(), cap = StrokeCap.Round))
                 drawPath(line, lineColor.copy(alpha = reveal.value), style = Stroke(3.dp.toPx(), cap = StrokeCap.Round))
                 points.forEachIndexed { i, p ->
                     val color = if (i in markers) markerColor else lineColor

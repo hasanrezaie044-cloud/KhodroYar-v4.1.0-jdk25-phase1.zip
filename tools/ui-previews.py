@@ -13,7 +13,7 @@ import sys
 from PIL import Image
 
 root = Path(sys.argv[1])
-for name in ("01-home-light-fa", "20-home-line-timeline-right", "18-dashboard-bars", "19-home-dark-320-large-text", "21-reports-annual-statistics", "22-reports-recent-services", "23-report-table-320-large-text"):
+for name in ("01-home-light-fa", "20-home-line-timeline-right", "18-dashboard-bars", "19-home-dark-320-large-text", "21-reports-annual-statistics", "22-reports-recent-services", "23-report-table-320-large-text", "25-quick-entry-320-large-text", "26-quick-entry-review", "28-quick-fuel-dark-review", "29-maintenance-forecast", "31-financial-comparison", "32-automation-health"):
     if len(sys.argv) > 2 and sys.argv[2] != name:
         continue
     path = root / f"{name}.png"
@@ -31,7 +31,7 @@ for name in ("01-home-light-fa", "20-home-line-timeline-right", "18-dashboard-ba
                 break
         if len(encoded) <= 18_000:
             # Check annotations retain at most 4096 message characters. Keep each
-            # piece under 3100; at most six notices per image / forty-two per job.
+            # piece under 3100; at most six notices per image / seventy-eight per job.
             pieces = [encoded[i:i + 3000] for i in range(0, len(encoded), 3000)]
             for index, piece in enumerate(pieces, 1):
                 print(f"::notice title=native-preview/{name}/{index}-of-{len(pieces)}::ORB2:{index}:{len(pieces)}:{piece}")

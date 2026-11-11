@@ -29,6 +29,7 @@ internal fun MaintenanceForecastCard(
         Spacer(Modifier.height(12.dp))
         Text(when {
             !configured -> tr("موعد تنظیم نشده", "Target not configured")
+            due.remainingKm == null -> tr("کیلومتر خودرو مشخص نیست", "Current odometer is missing")
             due.isOverdue -> "${money(kotlin.math.abs(due.remainingKm ?: 0.0))} " + tr("کیلومتر از موعد گذشته", "km overdue")
             else -> "${money(due.remainingKm ?: 0.0)} " + tr("کیلومتر تا موعد", "km remaining")
         }, style = MaterialTheme.typography.titleMedium, color = color)

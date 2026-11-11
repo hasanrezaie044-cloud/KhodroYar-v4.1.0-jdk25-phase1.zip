@@ -376,6 +376,8 @@ fun CarManagerRoot(
                     undoBusy = true
                     scope.launch {
                         try { toast.show(if (repository.quickEntries.undo(receipt)) undoSuccess else undoError); pendingUndo = null }
+                        catch (e: kotlinx.coroutines.CancellationException) { throw e }
+                        catch (_: Exception) { toast.show(undoError); pendingUndo = null }
                         finally { undoBusy = false }
                     }
                 }, colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error), modifier = Modifier.testTag("confirm-quick-undo")) { Text(tr("تأیید برگرداندن", "Confirm undo")) } },

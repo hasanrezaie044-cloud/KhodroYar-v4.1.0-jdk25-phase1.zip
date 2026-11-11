@@ -12,7 +12,7 @@ object MaintenanceForecast {
     const val LOOKBACK_DAYS = 56
     fun pace(rows: List<MileageDay>, today: String): DrivingPace? {
         val start = Jalali.addDays(today, -(LOOKBACK_DAYS - 1))
-        val usable = rows.filter { it.date in start..today && it.km.isFinite() && it.km > 0 }
+        val usable = rows.filter { it.date in start..today && Jalali.parse(it.date)?.let { d -> Jalali.isValid(d.year, d.month, d.day) } == true && it.km.isFinite() && it.km > 0 }
             .groupBy { it.date }.map { (date, trips) -> MileageDay(date, trips.sumOf { it.km }) }.sortedBy { it.date }
         if (usable.size < 4) return null
         val days = Jalali.daysBetween(usable.first().date, today) + 1

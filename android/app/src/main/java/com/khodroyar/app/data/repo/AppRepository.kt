@@ -29,6 +29,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.sync.withLock
 
 /**
  * Single write/read surface over Room. All suspend functions hop to the IO
@@ -66,7 +67,11 @@ class AppRepository(context: Context) {
     val settings: Flow<AppSettings> = settingsStore.state
     val settingsNow: AppSettings get() = settingsStore.current
 
-    fun updateSettings(transform: (AppSettings) -> AppSettings) = settingsStore.update(transform)
+    fun updateSettings(transform: (AppSettings) -> AppSettings) = settingsStore.update { before ->
+        val after = transform(before)
+        QuickEntries.invalidateSettingsChange(before, after)
+        after
+    }
     fun markBackupDone() = settingsStore.markBackupDone()
 
     // ------------------------------------------------------------------ rates
@@ -130,6 +135,7 @@ class AppRepository(context: Context) {
         missionFood: Double, missionToll: Double, missionFine: Double,
         attachmentPath: String = "",
     ): String = withContext(io) {
+        RecordMutations.mutex.withLock {
         val year = Jalali.parse(date)?.year ?: Jalali.currentYear()
         val rates = ratesFor(year)
         val income = IncomeCalculator.calculate(
@@ -161,10 +167,13 @@ class AppRepository(context: Context) {
             settingsStore.update { s -> s.copy(vehicleCurrentKm = s.vehicleCurrentKm + km) }
         }
         id
+
+        }
     }
 
     /** Atomic INSERT IGNORE + readback: retries/overlapping workers never overwrite an edited occurrence. */
     suspend fun recordAutomation(rule: AutomationRule, date: String, id: String) = withContext(io) {
+        RecordMutations.mutex.withLock {
         require(rule.valid() && id == rule.occurrenceId(date))
         when (rule.kind) {
             RuleKind.TRAFFIC -> error("Traffic is not a database write")
@@ -191,9 +200,12 @@ class AppRepository(context: Context) {
                 }
             }
         }
+
+        }
     }
 
     suspend fun updateService(entity: ServiceEntity, recomputeIncome: Boolean = true) = withContext(io) {
+        RecordMutations.mutex.withLock {
         val previous = db.services().byId(entity.id)
         val row = if (!recomputeIncome) entity else {
             val year = Jalali.parse(entity.date)?.year ?: Jalali.currentYear()
@@ -216,6 +228,8 @@ class AppRepository(context: Context) {
             settingsStore.update { s ->
                 s.copy(vehicleCurrentKm = (s.vehicleCurrentKm + delta).coerceAtLeast(0.0))
             }
+        }
+
         }
     }
 
@@ -240,6 +254,7 @@ class AppRepository(context: Context) {
     suspend fun loansOnce(): List<LoanEntity> = withContext(io) { db.loans().allOnce() }
 
     suspend fun deleteService(id: String) = withContext(io) {
+        RecordMutations.mutex.withLock {
         val existing = db.services().byId(id)
         db.services().deleteById(id)
         // The photo belongs to the record; don't leave an orphan in app storage.
@@ -250,6 +265,8 @@ class AppRepository(context: Context) {
             settingsStore.update { s ->
                 s.copy(vehicleCurrentKm = (s.vehicleCurrentKm - existing.km).coerceAtLeast(0.0))
             }
+        }
+
         }
     }
     suspend fun service(id: String): ServiceEntity? = withContext(io) { db.services().byId(id) }
@@ -263,6 +280,7 @@ class AppRepository(context: Context) {
 
     /** Re-prices the services of ONE year with that year's rates. */
     suspend fun recalculateYear(year: Int): Int = withContext(io) {
+        RecordMutations.mutex.withLock {
         val rates = ratesFor(year)
         val rows = db.services().byDatePrefixOnce("$year/")
         val updated = rows.map { s ->
@@ -276,6 +294,8 @@ class AppRepository(context: Context) {
         }
         db.services().insertAll(updated)
         updated.size
+
+        }
     }
 
     // ------------------------------------------------------- fuels / upkeep
@@ -287,16 +307,25 @@ class AppRepository(context: Context) {
 
     suspend fun addFuel(date: String, type: String, liters: Double, total: Double, carType: String) =
         withContext(io) {
+        RecordMutations.mutex.withLock {
             db.fuels().insert(FuelEntity(
                 java.util.UUID.randomUUID().toString(), date, type, liters, total, carType,
                 java.time.Instant.now().toString(),
             ))
-        }
 
-    suspend fun deleteFuel(id: String) = withContext(io) { db.fuels().deleteById(id) }
+        }
+    }
+
+    suspend fun deleteFuel(id: String) = withContext(io) {
+        RecordMutations.mutex.withLock { db.fuels().deleteById(id)
+        }
+    }
 
     /** Upsert by primary key (used by the assistant's confirmed edit; existing screens are unaffected). */
-    suspend fun updateFuel(entity: FuelEntity) = withContext(io) { db.fuels().insert(entity) }
+    suspend fun updateFuel(entity: FuelEntity) = withContext(io) {
+        RecordMutations.mutex.withLock { db.fuels().insert(entity)
+        }
+    }
 
     fun maintenances(): Flow<List<MaintenanceEntity>> = db.maintenances().observeAll()
     fun maintenances(prefix: String): Flow<List<MaintenanceEntity>> =
@@ -308,16 +337,25 @@ class AppRepository(context: Context) {
         cost: Double, km: Double, carType: String, description: String,
         attachmentPath: String = "",
     ) = withContext(io) {
+        RecordMutations.mutex.withLock {
         db.maintenances().insert(MaintenanceEntity(
             java.util.UUID.randomUUID().toString(), date, type, typeText,
             cost, km, carType, description, java.time.Instant.now().toString(),
             attachmentPath,
         ))
+
+        }
     }
 
-    suspend fun deleteMaintenance(id: String) = withContext(io) { db.maintenances().deleteById(id) }
+    suspend fun deleteMaintenance(id: String) = withContext(io) {
+        RecordMutations.mutex.withLock { db.maintenances().deleteById(id)
+        }
+    }
     suspend fun updateMaintenance(entity: MaintenanceEntity) = withContext(io) {
+        RecordMutations.mutex.withLock {
         db.maintenances().insert(entity) // upsert via primary key
+
+        }
     }
     suspend fun latestMaintenance(type: String) = withContext(io) { db.maintenances().latestByType(type) }
     suspend fun highestKm(): Double = withContext(io) { db.services().maxKm() ?: 0.0 }
@@ -343,8 +381,10 @@ class AppRepository(context: Context) {
         val last = latestMaintenance(typeWire)
         val driven = drivenKmSinceMaintenance(typeWire)
         val base = baseCurrentKm.takeIf { it > 0 } ?: last?.km?.takeIf { it > 0 } ?: 0.0
-        if (base <= 0 && nextKmOverride <= 0) return com.khodroyar.app.core.analytics.Analytics.ServiceDue(
-            label, last?.km, interval, currentOdometer, null, false, false, driven)
+        if (base <= 0 && nextKmOverride <= 0 || currentOdometer <= 0 && base > 0) return com.khodroyar.app.core.analytics.Analytics.ServiceDue(
+            label, last?.km, interval, currentOdometer, null, false, false, driven,
+            nextKm = nextKmOverride.takeIf { it > 0 } ?: if (base > 0 && interval > 0) base + interval else 0.0,
+            baseCurrentKm = base)
         return com.khodroyar.app.core.analytics.Analytics.dueFromDriven(
             label = label,
             lastKm = last?.km,
@@ -459,15 +499,24 @@ class AppRepository(context: Context) {
 
     suspend fun addPersonalExpense(date: String, category: String, title: String, amount: Double) =
         withContext(io) {
+        RecordMutations.mutex.withLock {
             db.personalExpenses().insert(PersonalExpenseEntity(
                 java.util.UUID.randomUUID().toString(), date, category, title, amount,
                 java.time.Instant.now().toString(),
             ))
-        }
 
-    suspend fun deletePersonalExpense(id: String) = withContext(io) { db.personalExpenses().deleteById(id) }
+        }
+    }
+
+    suspend fun deletePersonalExpense(id: String) = withContext(io) {
+        RecordMutations.mutex.withLock { db.personalExpenses().deleteById(id)
+        }
+    }
     suspend fun updatePersonalExpense(entity: com.khodroyar.app.data.db.PersonalExpenseEntity) = withContext(io) {
+        RecordMutations.mutex.withLock {
         db.personalExpenses().insert(entity)
+
+        }
     }
 
     suspend fun addPersonalIncome(date: String, category: String, title: String, amount: Double) =
@@ -645,6 +694,7 @@ class AppRepository(context: Context) {
             // Never let a restored/rolled-back dataset silently receive old unattended rules.
             AutomationStore.get(appContext).pauseAll()
             QuickEntries.invalidate()
+            RecordMutations.mutex.withLock {
             db.runInTransaction {
                 // Room's runInTransaction needs blocking calls; DAO suspend functions
                 // are invoked through runBlocking on the already-IO thread.
@@ -667,6 +717,7 @@ class AppRepository(context: Context) {
                 }
             }
             applySettingsFrom(json)
+            }
             Result.success(payload.counts)
         } catch (e: Exception) {
             Result.failure(e)

@@ -28,6 +28,15 @@ class PeriodInsightsTest {
         val (now, before) = ReportWindow.monthToDate("1405/01/31")
         assertEquals(now.days, before.days); assertTrue(now.days in 29..30)
     }
+    @Test fun reportPresetsAndAssistantUseIdenticalWindows() {
+        val today="1405/08/20"; val month=Jalali.monthRange(1405,8);val week=Jalali.weekRange(today)
+        assertEquals(ReportWindow.monthToDate(today),ReportWindow.forRange(month.first,month.second,today))
+        assertEquals(ReportWindow.weekToDate(today),ReportWindow.forRange(week.first,week.second,today))
+    }
+    @Test fun weeklyComparisonUsesTheSameWeekdaysNotTheLastFewDays() {
+        val (now,before)=ReportWindow.weekToDate("1405/08/20")
+        assertEquals(now.days,before.days);assertEquals(Jalali.addDays(now.start,-7),before.start)
+    }
     @Test fun invalidAndReversedRangesAreRejected() {
         for ((a,b) in listOf("1405/13/01" to "1405/13/02", "1405/08/20" to "1405/08/01", "1405/8/01" to "1405/08/03", "1300/01/01" to "1405/01/01")) {
             assertTrue(runCatching { ReportWindow(a,b) }.isFailure)

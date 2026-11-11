@@ -111,7 +111,7 @@ fun DashboardScreen(
                     PrivacyToggle(enabled = settings.privacyMode, onToggle = onTogglePrivacy)
                 }
                 Spacer(Modifier.height(12.dp))
-                Text(amount(todaySummary.totalIncome), color = Color.White, style = MaterialTheme.typography.displaySmall,
+                Text(amount(todaySummary.totalIncome), modifier = Modifier.testTag("today-income"), color = Color.White, style = MaterialTheme.typography.displaySmall,
                     maxLines = 2, overflow = TextOverflow.Ellipsis)
                 Text(tr("تومان", "Toman"), color = Color(0xFFA5CFC5), style = MaterialTheme.typography.labelMedium)
                 holidayTitle?.takeIf { !settings.privacyMode }?.let {

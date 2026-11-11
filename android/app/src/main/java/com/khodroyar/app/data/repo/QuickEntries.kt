@@ -8,11 +8,11 @@ import com.khodroyar.app.core.jalali.Jalali
 import com.khodroyar.app.core.rates.*
 import com.khodroyar.app.data.db.*
 import com.khodroyar.app.data.prefs.SettingsStore
+import com.khodroyar.app.data.prefs.AppSettings
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.util.UUID
@@ -80,11 +80,12 @@ class QuickEntries(
     }
 
     suspend fun save(draft: QuickDraft, operationId: String, expectedIncome: Long? = null, editing: EntryReceipt? = null): EntryReceipt = withContext(Dispatchers.IO + NonCancellable) {
-        mutex.withLock {
+        RecordMutations.mutex.withLock {
             require(draft.error() == null) { draft.error().orEmpty() }
             require(runCatching { UUID.fromString(operationId) }.isSuccess)
-            if (operationId in consumed) {
-                return@withLock requireNotNull(latest.value?.takeIf { it.id == operationId }) { "این درخواست قبلاً پردازش شده؛ دوباره ثبت نشد." }
+            consumed[operationId]?.let { previous ->
+                check(latest.value?.revision == previous.revision) { "این درخواست قبلاً پردازش شده؛ دوباره ثبت نشد." }
+                return@withLock previous
             }
             if (editing != null) check(editing.draft.kind == draft.kind && latest.value?.revision == editing.revision && matches(editing)) { "ثبت تغییر کرده است؛ دوباره آن را از فهرست اصلی باز کن." }
             val income = previewIncome(draft)
@@ -98,7 +99,8 @@ class QuickEntries(
                     draft.title.ifBlank { MaintenanceType.fromWire(draft.maintenanceType).label }, draft.amount, draft.km, draft.carType, "", timestamp)
                 QuickKind.SERVICE -> requireNotNull(draft.trip).copy(id = id, date = draft.date, carType = draft.carType, income = requireNotNull(income), timestamp = timestamp, attachmentPath = "", requestNumber = "")
             }
-            val before = settings.current
+            var before = settings.current
+            var after = before
             val mileage = (row as? ServiceEntity)?.takeIf { ServiceType.fromWire(it.type) !in ServiceType.FIXED_AMOUNT_TYPES }?.km
             val previousMileage = (editing?.row as? ServiceEntity)?.takeIf { ServiceType.fromWire(it.type) !in ServiceType.FIXED_AMOUNT_TYPES }?.km ?: 0.0
             if (editing?.odometerAfter != null) check(before.vehicleCurrentKm == editing.odometerAfter) { "کیلومتر خودرو بعد از این ثبت تغییر کرده؛ از ویرایش کامل سرویس استفاده کن." }
@@ -117,16 +119,21 @@ class QuickEntries(
                     is ServiceEntity -> if (editing == null) check(db.services().insertIfAbsent(row) != -1L) else db.services().update(row)
                     else -> error("نوع ثبت معتبر نیست")
                 }
+                check(settings.updateIf({ state -> editing == null || stateMatches(editing, state) }) { state ->
+                    before = state
+                    var value = state
+                    if (mileage != null || previousMileage > 0) value = value.copy(vehicleCurrentKm = (value.vehicleCurrentKm + (mileage ?: 0.0) - previousMileage).coerceAtLeast(0.0))
+                    if (trackedType != null) value = value.withTrackedKm(trackedType, draft.km, next)
+                    after = value
+                    value
+                }) { "کیلومتر هم‌زمان تغییر کرد؛ ثبت قبلی و تنظیمات را دوباره بررسی کن." }
             }
-            if (mileage != null || previousMileage > 0) settings.update { it.copy(vehicleCurrentKm = (it.vehicleCurrentKm + (mileage ?: 0.0) - previousMileage).coerceAtLeast(0.0)) }
-            if (trackedType != null) settings.update { it.withTrackedKm(trackedType, draft.km, next) }
-            val after = settings.current
             val change = trackedType?.let { TrackedChange(it, editing?.tracked?.beforeCurrent ?: before.currentKmFor(it), editing?.tracked?.beforeNext ?: before.nextKmFor(it), after.currentKmFor(it), after.nextKmFor(it)) }
             val saved = EntryReceipt(id, draft, row,
                 odometerBefore = if (mileage != null) editing?.odometerBefore ?: before.vehicleCurrentKm else null,
                 odometerAfter = if (mileage != null) after.vehicleCurrentKm else null, tracked = change)
             check(matches(saved)) { "نتیجهٔ ثبت در پایگاه‌داده تأیید نشد؛ فهرست اصلی را بررسی کن." }
-            consumed.add(operationId); if (consumed.size > 256) consumed.remove(consumed.first())
+            consumed[operationId] = saved; if (consumed.size > 256) consumed.remove(consumed.keys.first())
             latest.value = saved
             saved
         }
@@ -142,35 +149,44 @@ class QuickEntries(
 
     /** Refuse stale receipts or changed odometer/tracking; never delete an arbitrary last row. */
     suspend fun undo(receipt: EntryReceipt): Boolean = withContext(Dispatchers.IO + NonCancellable) {
-        mutex.withLock {
+        RecordMutations.mutex.withLock {
             if (latest.value?.revision != receipt.revision) return@withLock false
-            val success = db.withTransaction {
-                if (!matches(receipt)) return@withTransaction false
-                val state = settings.current
-                if (receipt.odometerAfter != null && state.vehicleCurrentKm != receipt.odometerAfter) return@withTransaction false
-                val t = receipt.tracked
-                if (t != null && (state.currentKmFor(t.wire) != t.afterCurrent || state.nextKmFor(t.wire) != t.afterNext)) return@withTransaction false
-                when (receipt.row) {
-                    is PersonalExpenseEntity -> db.personalExpenses().deleteById(receipt.id)
-                    is FuelEntity -> db.fuels().deleteById(receipt.id)
-                    is MaintenanceEntity -> db.maintenances().deleteById(receipt.id)
-                    is ServiceEntity -> db.services().deleteById(receipt.id)
+            val success = try {
+                db.withTransaction {
+                    if (!matches(receipt) || !stateMatches(receipt, settings.current)) return@withTransaction false
+                    when (receipt.row) {
+                        is PersonalExpenseEntity -> db.personalExpenses().deleteById(receipt.id)
+                        is FuelEntity -> db.fuels().deleteById(receipt.id)
+                        is MaintenanceEntity -> db.maintenances().deleteById(receipt.id)
+                        is ServiceEntity -> db.services().deleteById(receipt.id)
+                    }
+                    if (!settings.updateIf({ stateMatches(receipt, it) }) { state ->
+                        var value = state
+                        receipt.odometerBefore?.let { value = value.copy(vehicleCurrentKm = it) }
+                        receipt.tracked?.let { t -> value = value.withTrackedKm(t.wire, t.beforeCurrent, t.beforeNext) }
+                        value
+                    }) throw UndoConflict()
+                    true
                 }
-                true
-            }
-            if (success) {
-                if (receipt.odometerBefore != null) settings.update { it.copy(vehicleCurrentKm = receipt.odometerBefore) }
-                receipt.tracked?.let { t -> settings.update { it.withTrackedKm(t.wire, t.beforeCurrent, t.beforeNext) } }
-                latest.value = null
-            }
+            } catch (_: UndoConflict) { false }
+            if (success) latest.value = null
             success
         }
     }
 
+    private class UndoConflict : IllegalStateException()
+    private fun stateMatches(receipt: EntryReceipt, state: AppSettings): Boolean =
+        (receipt.odometerAfter == null || state.vehicleCurrentKm == receipt.odometerAfter) &&
+            (receipt.tracked?.let { state.currentKmFor(it.wire) == it.afterCurrent && state.nextKmFor(it.wire) == it.afterNext } != false)
+
     companion object {
-        private val mutex = Mutex()
         private val latest = MutableStateFlow<EntryReceipt?>(null)
-        private val consumed = LinkedHashSet<String>()
+        private val consumed = LinkedHashMap<String, EntryReceipt>()
         fun invalidate() { latest.value = null }
+        fun invalidateSettingsChange(before: AppSettings, after: AppSettings) {
+            val receipt = latest.value ?: return
+            if (receipt.odometerAfter != null && before.vehicleCurrentKm != after.vehicleCurrentKm ||
+                receipt.tracked?.let { before.currentKmFor(it.wire) != after.currentKmFor(it.wire) || before.nextKmFor(it.wire) != after.nextKmFor(it.wire) } == true) latest.value = null
+        }
     }
 }

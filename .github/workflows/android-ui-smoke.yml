@@ -96,6 +96,24 @@ jobs:
       - name: Compact report table preview
         if: always() && github.event_name == 'workflow_dispatch'
         run: '"$RUNNER_TEMP/ui-preview-env/bin/python" tools/ui-previews.py "$RUNNER_TEMP/orbit-ui-screenshots" 23-report-table-320-large-text'
+      - name: Compact quick entry preview
+        if: always() && github.event_name == 'workflow_dispatch'
+        run: '"$RUNNER_TEMP/ui-preview-env/bin/python" tools/ui-previews.py "$RUNNER_TEMP/orbit-ui-screenshots" 25-quick-entry-320-large-text'
+      - name: Reviewed quick entry preview
+        if: always() && github.event_name == 'workflow_dispatch'
+        run: '"$RUNNER_TEMP/ui-preview-env/bin/python" tools/ui-previews.py "$RUNNER_TEMP/orbit-ui-screenshots" 26-quick-entry-review'
+      - name: Fuel review in dark mode preview
+        if: always() && github.event_name == 'workflow_dispatch'
+        run: '"$RUNNER_TEMP/ui-preview-env/bin/python" tools/ui-previews.py "$RUNNER_TEMP/orbit-ui-screenshots" 28-quick-fuel-dark-review'
+      - name: Maintenance forecast preview
+        if: always() && github.event_name == 'workflow_dispatch'
+        run: '"$RUNNER_TEMP/ui-preview-env/bin/python" tools/ui-previews.py "$RUNNER_TEMP/orbit-ui-screenshots" 29-maintenance-forecast'
+      - name: Financial comparison preview
+        if: always() && github.event_name == 'workflow_dispatch'
+        run: '"$RUNNER_TEMP/ui-preview-env/bin/python" tools/ui-previews.py "$RUNNER_TEMP/orbit-ui-screenshots" 31-financial-comparison'
+      - name: Automation health preview
+        if: always() && github.event_name == 'workflow_dispatch'
+        run: '"$RUNNER_TEMP/ui-preview-env/bin/python" tools/ui-previews.py "$RUNNER_TEMP/orbit-ui-screenshots" 32-automation-health'
       - name: Upload native screenshots and test reports
         if: always()
         uses: actions/upload-artifact@v4

@@ -22,6 +22,10 @@ import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.work.WorkManager
+import com.khodroyar.app.ai.*
+import com.khodroyar.app.automation.*
+import com.khodroyar.app.data.repo.*
+import kotlinx.coroutines.flow.first
 import com.khodroyar.app.ai.AiSettings
 import com.khodroyar.app.ai.AiSettingsStore
 import com.khodroyar.app.core.jalali.Jalali
@@ -51,6 +55,7 @@ class OrbitUiSmokeTest {
             "A disposable emulator is required: these UI fixtures replace the test app's data."
         }
         WorkManager.getInstance(context).cancelAllWork().result.get()
+        QuickEntries.invalidate()
         repository = AppRepository(context)
         repository.updateSettings { AppSettings(userFirstName = "آرمان", userLastName = "آزمایشی", monthlyIncomeGoal = 20_000_000.0,
             acceptedTermsVersion = TermsOfUse.VERSION, remindInstallments = false, remindOilChange = false, remindBodyInsurance = false,
@@ -312,6 +317,192 @@ class OrbitUiSmokeTest {
         compose.onAllNodesWithText("آموزش", substring = true).assertCountEquals(0)
     }
 
+    @Test fun quickExpenseRequiresReviewSupportsCorrectionAndConfirmedUndoAtLargeFont() {
+        render(fontScale = 1.35f) {
+            Box(Modifier.width(320.dp).testTag("compact-app").fillMaxHeight()) { CarManagerRoot(repository) }
+        }
+        compose.onNodeWithTag("dashboard-list").performScrollToNode(hasTestTag("home-quick-add"))
+        compose.onNodeWithTag("home-quick-add").performClick()
+        compose.onNodeWithTag("quick-title").performScrollTo().performTextReplacement("پارکینگ")
+        compose.onNodeWithTag("quick-amount").performScrollTo().performTextReplacement("75000")
+        shot("25-quick-entry-320-large-text")
+        compose.onNodeWithTag("quick-confirm").performClick()
+        compose.onNodeWithTag("quick-review").assertExists()
+        assertEquals(1, runBlocking { AppDatabase.get(context).personalExpenses().allOnce().size })
+        shot("26-quick-entry-review")
+        compose.onNodeWithTag("quick-confirm").performClick()
+        compose.waitUntil(15_000) { repository.quickEntries.receipt.value != null }
+        assertEquals(2, runBlocking { AppDatabase.get(context).personalExpenses().allOnce().size })
+        val id = repository.quickEntries.receipt.value!!.id
+        compose.onNodeWithTag("dashboard-list").performScrollToNode(hasTestTag("edit-quick-entry"))
+        compose.onNodeWithTag("edit-quick-entry").performClick()
+        compose.onNodeWithTag("quick-amount").performScrollTo().performTextReplacement("80000")
+        compose.onNodeWithTag("quick-confirm").performClick()
+        compose.onNodeWithTag("quick-confirm").performClick()
+        compose.waitUntil(15_000) { repository.quickEntries.receipt.value?.draft?.amount == 80000.0 }
+        assertEquals(2, runBlocking { AppDatabase.get(context).personalExpenses().allOnce().size })
+        assertEquals(id, repository.quickEntries.receipt.value!!.id)
+        compose.onNodeWithTag("dashboard-list").performScrollToNode(hasTestTag("recent-quick-entry"))
+        shot("27-recent-entry-edit-undo")
+        compose.onNodeWithTag("undo-quick-entry").performClick()
+        assertNotNull(runBlocking { AppDatabase.get(context).insights().expense(id) })
+        compose.onNodeWithTag("confirm-quick-undo").performClick()
+        compose.waitUntil(15_000) { repository.quickEntries.receipt.value == null }
+        assertNull(runBlocking { AppDatabase.get(context).insights().expense(id) })
+        assertEquals(1, runBlocking { AppDatabase.get(context).personalExpenses().allOnce().size })
+    }
+
+    @Test fun repeatFuelFillsDraftOnlyAndKeepsActualPaidAmount() {
+        var finished = false
+        render(dark = true) { QuickEntryScreen(repository, initialKind = QuickKind.FUEL, onFullService = {}, onDone = { finished = true }) }
+        compose.waitUntil(15_000) { compose.onAllNodesWithTag("quick-suggestion-0").fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithTag("quick-suggestion-0").performClick()
+        assertEquals(1, runBlocking { AppDatabase.get(context).fuels().allOnce().size })
+        compose.onNodeWithTag("quick-liters").performScrollTo().performTextReplacement("35")
+        compose.onNodeWithTag("quick-amount").performScrollTo().performTextReplacement("350000")
+        compose.onNodeWithTag("quick-confirm").performClick()
+        shot("28-quick-fuel-dark-review")
+        compose.onNodeWithTag("quick-confirm").performClick()
+        compose.waitUntil(15_000) { finished }
+        val row = runBlocking { AppDatabase.get(context).fuels().allOnce().first { it.id != "ui-fuel" } }
+        assertEquals(35.0, row.liters, 0.0); assertEquals(350000.0, row.total, 0.0)
+        assertEquals(Jalali.todayString(), row.date)
+    }
+
+    @Test fun quickTripIsRepricedNotDuplicatedAndMileageUndoIsGuarded() = runBlocking {
+        val source = AppDatabase.get(context).services().byId("ui-service-0")!!
+        val draft = QuickDraft.from(source)
+        val income = repository.quickEntries.previewIncome(draft)
+        val operation = java.util.UUID.randomUUID().toString()
+        val receipt = repository.quickEntries.save(draft, operation, income)
+        assertEquals(receipt, repository.quickEntries.save(draft, operation, income))
+        assertEquals(7, AppDatabase.get(context).services().allOnce().size)
+        assertEquals(80.0, repository.settingsNow.vehicleCurrentKm, 0.0)
+        assertEquals(income, AppDatabase.get(context).services().byId(receipt.id)!!.income)
+        assertTrue(repository.quickEntries.undo(receipt))
+        assertEquals(0.0, repository.settingsNow.vehicleCurrentKm, 0.0)
+        assertEquals(6, AppDatabase.get(context).services().allOnce().size)
+        assertTrue(runCatching { repository.quickEntries.save(draft, operation, income) }.isFailure)
+        val next = repository.quickEntries.save(draft, java.util.UUID.randomUUID().toString(), income)
+        repository.updateSettings { it.copy(vehicleCurrentKm = 90000.0) }
+        assertFalse(repository.quickEntries.undo(next))
+        assertNotNull(AppDatabase.get(context).services().byId(next.id))
+        assertEquals(90000.0, repository.settingsNow.vehicleCurrentKm, 0.0)
+    }
+
+    @Test fun changedExpenseCannotBeDeletedByStaleQuickReceipt() = runBlocking {
+        val receipt = repository.quickEntries.save(QuickDraft(title = "قهوه", amount = 50000.0), java.util.UUID.randomUUID().toString())
+        val row = AppDatabase.get(context).insights().expense(receipt.id)!!
+        repository.updatePersonalExpense(row.copy(amount = 70000.0))
+        assertFalse(repository.quickEntries.undo(receipt))
+        assertEquals(70000.0, AppDatabase.get(context).insights().expense(receipt.id)!!.amount, 0.0)
+    }
+
+    @Test fun maintenanceForecastUsesHistoryAndOpensTheCorrectReplacementForm() {
+        runBlocking {
+            val db = AppDatabase.get(context); val base = db.services().byId("ui-service-0")!!
+            listOf(7,14,27).forEach { days -> db.services().insert(base.copy(id = "pace-$days", date = Jalali.addDays(Jalali.todayString(),-days), km = 140.0)) }
+        }
+        repository.updateSettings { it.copy(vehicleCurrentKm = 100000.0, oilCurrentKm = 95000.0, oilNextKm = 105000.0) }
+        render { MaintenanceScreen(repository) }
+        compose.waitUntil(15_000) { compose.onAllNodesWithTag("maintenance-eta-oil-change").fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithTag("maintenance-eta-oil-change").assertIsDisplayed()
+        shot("29-maintenance-forecast")
+        compose.onNodeWithTag("maintenance-record-oil-change").performClick()
+        compose.onNodeWithText("نوع تعمیر").assertIsDisplayed()
+        compose.onNodeWithText("کیلومتر تعویض روغن").assertIsDisplayed()
+        shot("30-maintenance-direct-form")
+    }
+
+    @Test fun trackedQuickMaintenanceUndoRestoresOnlyItsTrackingAndRefusesLaterChanges() = runBlocking {
+        repository.updateSettings { it.copy(vehicleCurrentKm = 100000.0, oilCurrentKm = 90000.0, oilNextKm = 101000.0) }
+        val draft = QuickDraft(QuickKind.MAINTENANCE, amount = 650000.0, maintenanceType = "oil-change", km = 100000.0)
+        val receipt = repository.quickEntries.save(draft, java.util.UUID.randomUUID().toString())
+        assertEquals(100000.0, repository.settingsNow.oilCurrentKm, 0.0)
+        assertEquals(110000.0, repository.settingsNow.oilNextKm, 0.0)
+        assertTrue(repository.quickEntries.undo(receipt))
+        assertEquals(90000.0, repository.settingsNow.oilCurrentKm, 0.0)
+        assertEquals(101000.0, repository.settingsNow.oilNextKm, 0.0)
+        assertEquals(100000.0, repository.settingsNow.vehicleCurrentKm, 0.0)
+        val second = repository.quickEntries.save(draft, java.util.UUID.randomUUID().toString())
+        repository.updateSettings { it.copy(oilNextKm = 112000.0) }
+        assertFalse(repository.quickEntries.undo(second))
+        assertNotNull(AppDatabase.get(context).insights().maintenance(second.id))
+        assertEquals(112000.0, repository.settingsNow.oilNextKm, 0.0)
+    }
+
+    @Test fun financialInsightsUseSameRecordedTotalsAndSeparateVehicleRatios() {
+        render { CarManagerRoot(repository) }
+        compose.onNodeWithTag("nav-REPORTS").performClick()
+        compose.onNodeWithTag("report-list").performScrollToNode(hasTestTag("financial-comparison"))
+        compose.waitUntil(15_000) { compose.onAllNodesWithTag("comparison-details").fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithTag("comparison-details").performClick()
+        compose.onNodeWithTag("report-list").performScrollToNode(hasText("خالص خودرو / کیلومتر"))
+        compose.waitUntil(15_000) { compose.onAllNodesWithText("21,000 تومان").fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithText("21,000 تومان").assertIsDisplayed()
+        shot("31-financial-comparison")
+        val today = Jalali.todayString(); val date = Jalali.parse(today)!!
+        val current = runBlocking { repository.insights.financial(Jalali.format(date.year,date.month,1), today).first() }
+        assertEquals(1_645_000.0, current.net, 0.0)
+        assertEquals(1_680_000.0, current.vehicleNet, 0.0)
+    }
+
+    @Test fun automationManagerShowsPersistedFailureAndBatteryDiagnostics() {
+        val rule = AutomationRule(java.util.UUID.randomUUID().toString(), RuleKind.EXPENSE, "قهوه", RepeatSchedule(RepeatFrequency.DAILY,Jalali.todayString()), amount = 50000.0, failures = 1, lastMessage = "ثبت تأیید نشد؛ در انتظار تلاش مجدد")
+        render { AutomationManagerSheet(listOf(rule), false, {}, {}, {}, {}, {}) }
+        compose.onNodeWithTag("background-health").assertIsDisplayed()
+        compose.waitUntil(15_000) { compose.onAllNodesWithText("ناموفق").fetchSemanticsNodes().isNotEmpty() }
+        shot("32-automation-health")
+    }
+
+    @Test fun localRepeatUsesActualSourceRequiresApprovalAndRejectsChangedSnapshot() = runBlocking {
+        val db = AppDatabase.get(context); val yesterday = Jalali.addDays(Jalali.todayString(),-1)
+        val source = PersonalExpenseEntity("repeat-source",yesterday,"coffee","قهوه",50000.0,"2026-01-02T00:00:00Z")
+        db.personalExpenses().insert(source)
+        val tools = AppAgentTools(context, repository); val assistant = LocalAssistant(tools)
+        val pending = (assistant.run("همون هزینه دیروز رو برای امروز ثبت کن") as AgentStep.Confirm).pending
+        assertEquals(2,db.personalExpenses().allOnce().size)
+        db.personalExpenses().insert(source.copy(amount = 60000.0))
+        assertFalse(tools.execute(pending.call).ok)
+        assertEquals(2,db.personalExpenses().allOnce().size)
+        val fresh = (assistant.run("همون قهوه دیروز رو برای امروز تکرار کن") as AgentStep.Confirm).pending
+        assertTrue(fresh.summary.contains("60,000"))
+        assertTrue(tools.execute(fresh.call).ok);assertTrue(tools.execute(fresh.call).ok)
+        assertEquals(3,db.personalExpenses().allOnce().size)
+    }
+
+    @Test fun twelveThousandRecordsUseBoundedSqlAndRenderHomeWithMeasuredEvidence() {
+        val db = AppDatabase.get(context); val today = Jalali.todayString()
+        runBlocking {
+            val base = db.services().byId("ui-service-0")!!
+            db.services().clear()
+            db.services().insertAll((0 until 12000).map { i -> base.copy(id="volume-$i",date=Jalali.addDays(today,-(i%365)),km=10.0,hours=1.0,workHours=1.0,income=1000L) })
+        }
+        val started = android.os.SystemClock.elapsedRealtime()
+        val totals = runBlocking { repository.insights.financial(Jalali.addDays(today,-364),today).first() }
+        val queryMs = android.os.SystemClock.elapsedRealtime()-started
+        assertEquals(12000,totals.serviceCount);assertEquals(12000000.0,totals.serviceIncome,0.0)
+        val daily = runBlocking { repository.insights.mileageDays(Jalali.addDays(today,-55),today).first() }
+        assertEquals(56,daily.size)
+        assertEquals(3,runBlocking { repository.insights.recentServices().first().size })
+        val renderStarted = android.os.SystemClock.elapsedRealtime()
+        render { CarManagerRoot(repository) }
+        compose.waitUntil(30_000) { compose.onAllNodesWithText("33,000").fetchSemanticsNodes().isNotEmpty() }
+        val renderMs = android.os.SystemClock.elapsedRealtime()-renderStarted
+        shot("33-home-12000-records")
+        writeTextArtifact("performance-12000.json", """{"environment":"API35 x86_64 debug emulator; not a phone benchmark","records":12000,"aggregateQueryMs":$queryMs,"homeFirstDataMs":$renderMs,"mileageRows":${daily.size}}""")
+    }
+
+    private fun writeTextArtifact(name: String, text: String) {
+        val resolver=context.contentResolver
+        val uri=requireNotNull(resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI,ContentValues().apply {
+            put(MediaStore.Downloads.DISPLAY_NAME,name);put(MediaStore.Downloads.MIME_TYPE,"application/json")
+            put(MediaStore.Downloads.RELATIVE_PATH,"Download/KhodroYar-UI-Smoke");put(MediaStore.Downloads.IS_PENDING,1)
+        }))
+        requireNotNull(resolver.openOutputStream(uri)).use { it.write(text.toByteArray()) }
+        resolver.update(uri,ContentValues().apply { put(MediaStore.Downloads.IS_PENDING,0) },null,null)
+    }
+
     private fun shot(name: String) {
         // Synchronize the rendered Compose frame, not just updated semantics. A raw
         // UiAutomation screenshot can still contain the frame before a chart tap.
@@ -319,7 +510,7 @@ class OrbitUiSmokeTest {
         compose.waitForIdle()
         // ModalBottomSheet/Dialog adds another root; capture the topmost visible
         // surface rather than asking onRoot() to match exactly one window.
-        val node = if (name in setOf("19-home-dark-320-large-text", "23-report-table-320-large-text", "24-report-table-scrolled-amount")) compose.onNodeWithTag("compact-app") else compose.onAllNodes(isRoot()).onLast()
+        val node = if (name in setOf("19-home-dark-320-large-text", "23-report-table-320-large-text", "24-report-table-scrolled-amount", "25-quick-entry-320-large-text", "26-quick-entry-review", "27-recent-entry-edit-undo")) compose.onNodeWithTag("compact-app") else compose.onAllNodes(isRoot()).onLast()
         val bitmap = node.captureToImage().asAndroidBitmap()
         // UTP uninstalls the tested APK after a run, removing its app-specific external files.
         // Publish synthetic screenshots to shared Downloads so CI can collect them afterwards.

@@ -36,6 +36,8 @@ fun QuickEntryScreen(
     onDone: () -> Unit,
 ) {
     val scope = rememberCoroutineScope()
+    val focus = androidx.compose.ui.platform.LocalFocusManager.current
+    val keyboard = androidx.compose.ui.platform.LocalSoftwareKeyboardController.current
     val settings by repository.settings.collectAsState(initial = repository.settingsNow)
     val expenses by remember { repository.insights.recentExpenses() }.collectAsState(initial = emptyList())
     val fuels by remember { repository.insights.recentFuels() }.collectAsState(initial = emptyList())
@@ -46,6 +48,8 @@ fun QuickEntryScreen(
     var amountText by rememberSaveable { mutableStateOf(if (original.amount > 0) original.amount.trimNumber() else "") }
     var litersText by rememberSaveable { mutableStateOf(if (original.liters > 0) original.liters.trimNumber() else "") }
     var kmText by rememberSaveable { mutableStateOf(if (original.km > 0) original.km.trimNumber() else "") }
+    var tripKmText by rememberSaveable { mutableStateOf(original.trip?.km?.trimNumber().orEmpty()) }
+    var tripHoursText by rememberSaveable { mutableStateOf(original.trip?.hours?.trimNumber().orEmpty()) }
     var review by remember { mutableStateOf<QuickDraft?>(null) }
     var income by remember { mutableStateOf<Long?>(null) }
     var operationId by rememberSaveable { mutableStateOf(UUID.randomUUID().toString()) }
@@ -59,7 +63,8 @@ fun QuickEntryScreen(
     fun fill(value: QuickDraft) {
         draft = value; amountText = value.amount.takeIf { it > 0 }?.trimNumber().orEmpty()
         litersText = value.liters.takeIf { it > 0 }?.trimNumber().orEmpty()
-        kmText = value.km.takeIf { it > 0 }?.trimNumber().orEmpty(); error = null
+        kmText = value.km.takeIf { it > 0 }?.trimNumber().orEmpty()
+        tripKmText = value.trip?.km?.trimNumber().orEmpty(); tripHoursText = value.trip?.hours?.trimNumber().orEmpty(); error = null
     }
     BackHandler(enabled = reviewing || busy) { if (!busy) { review = null; error = null } }
 
@@ -135,9 +140,19 @@ fun QuickEntryScreen(
                                 Text("${trip.origin} ← ${trip.destination}", style = MaterialTheme.typography.titleMedium)
                                 Text(ServiceType.fromWire(trip.type).label, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
                                 Spacer(Modifier.height(12.dp))
-                                NumberField(tr("مسافت", "Distance"), trip.km.trimNumber(), { draft = draft.copy(trip = trip.copy(km = it.asDouble())) }, suffix = tr("کیلومتر", "km"))
+                                NumberField(tr("مسافت", "Distance"), tripKmText, { tripKmText = it; draft = draft.copy(trip = trip.copy(km = it.asDouble())) }, suffix = tr("کیلومتر", "km"))
                                 Spacer(Modifier.height(12.dp))
-                                NumberField(tr("مدت کار", "Work duration"), trip.hours.trimNumber(), { draft = draft.copy(trip = trip.copy(hours = it.asDouble(), workHours = it.asDouble())) }, suffix = tr("ساعت", "hours"))
+                                NumberField(tr("مدت کار", "Work duration"), tripHoursText, { tripHoursText = it; draft = draft.copy(trip = trip.copy(hours = it.asDouble(), workHours = it.asDouble())) }, suffix = tr("ساعت", "hours"))
+                                Spacer(Modifier.height(12.dp))
+                                Collapsible(title = tr("مسیر و زمان سفر", "Route and time"), summary = "") {
+                                    TextFieldR(tr("مبدأ", "Origin"), trip.origin, { draft = draft.copy(trip = trip.copy(origin = it)) })
+                                    Spacer(Modifier.height(12.dp))
+                                    TextFieldR(tr("مقصد", "Destination"), trip.destination, { draft = draft.copy(trip = trip.copy(destination = it)) })
+                                    Spacer(Modifier.height(12.dp))
+                                    TextFieldR(tr("شروع HH:mm", "Start HH:mm"), trip.startTime, { draft = draft.copy(trip = trip.copy(startTime = it.toLatinDigits())) })
+                                    Spacer(Modifier.height(12.dp))
+                                    TextFieldR(tr("پایان HH:mm", "End HH:mm"), trip.endTime, { draft = draft.copy(trip = trip.copy(endTime = it.toLatinDigits())) })
+                                }
                             }
                             if (settings.autoServicePresetSaved) TextButton(onClick = {
                                 val s = settings
@@ -165,9 +180,10 @@ fun QuickEntryScreen(
                     modifier = Modifier.weight(1f).heightIn(min = 52.dp), shape = FieldShape) { Text(if (reviewing) tr("اصلاح", "Edit") else tr("انصراف", "Cancel")) }
                 Button(onClick = {
                     if (busy) return@Button
+                    focus.clearFocus(); keyboard?.hide()
                     if (!reviewing) {
                         val value = draft.copy(amount = amountText.asDouble(), liters = litersText.asDouble(), km = kmText.asDouble())
-                        val validation = value.error()
+                        val validation = if (value.kind != QuickKind.SERVICE && amountText.isBlank()) "مبلغ را وارد کن؛ برای ثبت رایگان، صفر بنویس." else value.error()
                         if (validation != null) error = validation else {
                             busy = true
                             scope.launch {
