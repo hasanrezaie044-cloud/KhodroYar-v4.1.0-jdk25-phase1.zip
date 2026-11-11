@@ -53,7 +53,7 @@ fun SettingsScreen(repository: AppRepository, settings: AppSettings, onToggleThe
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val toast = LocalToast.current
-    val sectionOpen = remember { mutableStateOf(setOf<String>()) }
+    val sectionOpen = remember { mutableStateOf(setOf("appearance")) }
     fun toggleSection(key: String) {
         sectionOpen.value = if (key in sectionOpen.value) sectionOpen.value - key else sectionOpen.value + key
     }
@@ -118,6 +118,9 @@ fun SettingsScreen(repository: AppRepository, settings: AppSettings, onToggleThe
         ),
         verticalArrangement = Arrangement.spacedBy(AppDimens.gutter),
     ) {
+        item {
+            ScreenHeader(tr("فضای شما، به سلیقهٔ شما", "Make it yours"), tr("ظاهر، امنیت و تنظیمات خودرویار", "Appearance, security and preferences"))
+        }
         /* ------------------------------------------------------------- profile */
         item { CollapsibleSectionTitle(
             "پروفایل کاربر", icon = Icons.Outlined.Person,
@@ -950,7 +953,7 @@ private fun daysAgoLabel(timestamp: Long): String {
 private fun ThemeColorPicker(selected: String, onSelect: (String) -> Unit) {
     val palettes = AppPalette.all
     Column(verticalArrangement = Arrangement.spacedBy(AppDimens.gap)) {
-        palettes.chunked(3).forEach { row ->
+        palettes.chunked(2).forEach { row ->
             Row(horizontalArrangement = Arrangement.spacedBy(AppDimens.gap)) {
                 row.forEach { palette ->
                     val isSelected = palette.wire == selected
@@ -989,7 +992,7 @@ private fun ThemeColorPicker(selected: String, onSelect: (String) -> Unit) {
                             }
                             Spacer(Modifier.height(6.dp))
                             Text(
-                                palette.label,
+                                if (LocalLanguage.current == "en") palette.englishLabel else palette.label,
                                 style = MaterialTheme.typography.labelSmall,
                                 textAlign = TextAlign.Center,
                                 maxLines = 2,
@@ -998,7 +1001,7 @@ private fun ThemeColorPicker(selected: String, onSelect: (String) -> Unit) {
                         }
                     }
                 }
-                repeat(3 - row.size) { Spacer(Modifier.weight(1f)) }
+                repeat(2 - row.size) { Spacer(Modifier.weight(1f)) }
             }
         }
     }

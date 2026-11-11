@@ -3,7 +3,6 @@ package com.khodroyar.app.ui.screens
 import android.app.Activity
 import android.content.Context
 import android.content.ContextWrapper
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -20,16 +19,15 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalLayoutDirection
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
-import com.khodroyar.app.R
 import com.khodroyar.app.ui.components.FieldShape
+import com.khodroyar.app.ui.components.CardShape
+import com.khodroyar.app.ui.components.IconBadge
 import com.khodroyar.app.ui.components.tr
 
 /**
@@ -134,100 +132,36 @@ internal tailrec fun Context.findActivity(): Activity? = when (this) {
 fun AgreementScreen(onAccept: () -> Unit, onDecline: () -> Unit) {
     var agreed by rememberSaveable { mutableStateOf(false) }
 
-    CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) {
-        Box(Modifier.fillMaxSize().background(Color(0xFF05090B))) {
-            Image(
-                painter = painterResource(R.drawable.login_background),
-                contentDescription = null,
-                contentScale = ContentScale.Crop,
-                modifier = Modifier.fillMaxSize(),
-            )
-            Box(
-                Modifier
-                    .fillMaxSize()
-                    .background(
-                        Brush.verticalGradient(
-                            listOf(Color(0xCC05090B), Color(0xE605090B), Color(0xF205090B)),
-                        ),
-                    ),
-            )
-            Column(
-                Modifier
-                    .fillMaxSize()
-                    .statusBarsPadding()
-                    .navigationBarsPadding()
-                    .padding(horizontal = 24.dp, vertical = 16.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-            ) {
-                Box(
-                    Modifier.size(56.dp).clip(CircleShape).background(Color(0x33A8D5C2)),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Icon(Icons.Outlined.Shield, null, tint = Color(0xFFA8D5C2), modifier = Modifier.size(28.dp))
+    GateBackdrop {
+        Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().padding(horizontal = 20.dp, vertical = 16.dp),
+            horizontalAlignment = Alignment.CenterHorizontally) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                IconBadge(Icons.Outlined.Shield, size = 44.dp)
+                Column(Modifier.weight(1f)) {
+                    Text(TermsOfUse.TITLE, color = Color.White, style = MaterialTheme.typography.titleMedium)
+                    Text("پیش از شروع، با آگاهی ادامه دهید", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
                 }
-                Spacer(Modifier.height(12.dp))
-                Text(
-                    TermsOfUse.TITLE,
-                    color = Color.White,
-                    style = MaterialTheme.typography.headlineSmall,
-                    fontWeight = FontWeight.Bold,
-                    textAlign = TextAlign.Center,
-                )
-                Spacer(Modifier.height(4.dp))
-                Text(
-                    "پیش از شروع، لطفاً متن زیر را بخوانید.",
-                    color = Color(0xFFB8C8C4),
-                    style = MaterialTheme.typography.bodyMedium,
-                    textAlign = TextAlign.Center,
-                )
-                Spacer(Modifier.height(16.dp))
-                Surface(
-                    color = Color(0xE6121A1C),
-                    shape = FieldShape,
-                    tonalElevation = 0.dp,
-                    shadowElevation = 8.dp,
-                    modifier = Modifier.widthIn(max = 420.dp).fillMaxWidth().weight(1f),
-                ) {
-                    Column(Modifier.verticalScroll(rememberScrollState()).padding(18.dp)) {
-                        TermsText(headingColor = Color(0xFFA8D5C2), bodyColor = Color(0xFFD5E0DD))
-                    }
+            }
+            Spacer(Modifier.height(16.dp))
+            Surface(color = MaterialTheme.colorScheme.surfaceContainerLowest, shape = CardShape,
+                modifier = Modifier.widthIn(max = 520.dp).fillMaxWidth().weight(1f)) {
+                Column(Modifier.verticalScroll(rememberScrollState()).padding(20.dp)) {
+                    TermsText(headingColor = MaterialTheme.colorScheme.primary, bodyColor = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
-                Spacer(Modifier.height(10.dp))
-                Column(Modifier.widthIn(max = 420.dp).fillMaxWidth()) {
-                    Row(
-                        Modifier
-                            .fillMaxWidth()
-                            .toggleable(value = agreed, role = Role.Checkbox, onValueChange = { agreed = it })
-                            .padding(vertical = 6.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Checkbox(
-                            checked = agreed,
-                            onCheckedChange = null,
-                            colors = CheckboxDefaults.colors(
-                                checkedColor = Color(0xFFA8D5C2),
-                                checkmarkColor = Color(0xFF05090B),
-                                uncheckedColor = Color(0xFF8FA09D),
-                            ),
-                        )
-                        Spacer(Modifier.width(10.dp))
-                        Text(
-                            "متن بالا را خوانده‌ام و می‌پذیرم",
-                            color = Color.White,
-                            style = MaterialTheme.typography.bodyMedium,
-                        )
-                    }
-                    Spacer(Modifier.height(6.dp))
-                    Button(
-                        onClick = onAccept,
-                        enabled = agreed,
-                        modifier = Modifier.fillMaxWidth().heightIn(min = 50.dp),
-                        shape = FieldShape,
-                    ) { Text("می‌پذیرم و ادامه") }
-                    TextButton(
-                        onClick = onDecline,
-                        modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
-                    ) { Text("نمی‌پذیرم و خروج", color = Color(0xFFE6A8A0)) }
+            }
+            Spacer(Modifier.height(8.dp))
+            Column(Modifier.widthIn(max = 520.dp).fillMaxWidth()) {
+                Row(Modifier.fillMaxWidth().toggleable(value = agreed, role = Role.Checkbox, onValueChange = { agreed = it })
+                    .heightIn(min = 52.dp).padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Checkbox(checked = agreed, onCheckedChange = null)
+                    Spacer(Modifier.width(10.dp))
+                    Text("متن بالا را خوانده‌ام و می‌پذیرم", color = Color.White, style = MaterialTheme.typography.bodyMedium)
+                }
+                Button(onClick = onAccept, enabled = agreed, modifier = Modifier.fillMaxWidth().heightIn(min = 54.dp), shape = FieldShape) {
+                    Text("می‌پذیرم و ادامه")
+                }
+                TextButton(onClick = onDecline, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) {
+                    Text("نمی‌پذیرم و خروج", color = MaterialTheme.colorScheme.error)
                 }
             }
         }

@@ -27,6 +27,7 @@ import com.khodroyar.app.data.repo.AppRepository
 import com.khodroyar.app.ui.components.*
 import com.khodroyar.app.ui.theme.AppDimens
 import com.khodroyar.app.ui.theme.heroBrush
+import com.khodroyar.app.ui.theme.appAccents
 import kotlinx.coroutines.launch
 
 private enum class FinanceTab(val label: String) {
@@ -118,6 +119,8 @@ private fun FinanceOverview(
     val income = totals.totalIncome + personalIncome
     val expenses = fuelCost + maintenanceCost + purchases + installmentsDue
     val profit = income - expenses
+    val chartColors = appAccents.chart
+    var selectedPurchase by remember(prefix) { mutableStateOf<String?>(null) }
 
     LazyColumn(
         contentPadding = PaddingValues(
@@ -134,27 +137,21 @@ private fun FinanceOverview(
             }
         }
         item {
-            MetricPair(
-                first = { m -> MetricCard("درآمد", amount(income), Icons.Outlined.TrendingUp, m) },
-                second = { m ->
-                    MetricCard(
-                        "هزینه", amount(expenses), Icons.Outlined.TrendingDown, m,
-                        accent = MaterialTheme.colorScheme.secondary,
-                    )
-                },
-            )
-        }
-        item {
-            SurfaceCard {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(tr("سود / زیان ماه", "Monthly Profit / Loss"), Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
-                    Text(
-                        amount(profit),
-                        color = if (profit >= 0) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
-                        style = MaterialTheme.typography.titleLarge,
-                        fontWeight = FontWeight.Bold,
-                        maxLines = 1,
-                    )
+            GradientCard(brush = heroBrush()) {
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Text(tr("تراز این ماه", "This month's balance"), Modifier.weight(1f), color = Color(0xFFB9CFD0),
+                        style = MaterialTheme.typography.labelLarge)
+                    Icon(if (profit >= 0) Icons.Outlined.TrendingUp else Icons.Outlined.TrendingDown, null,
+                        tint = if (profit >= 0) Color(0xFF99E3C7) else Color(0xFFFFB4AB))
+                }
+                Spacer(Modifier.height(12.dp))
+                Text(amount(profit), color = Color.White, style = MaterialTheme.typography.displaySmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                Text(tr("تومان · پس از کسر هزینه و اقساط", "Toman · after expenses and installments"),
+                    color = Color(0xFFB9CFD0), style = MaterialTheme.typography.labelSmall)
+                HorizontalDivider(Modifier.padding(vertical = 18.dp), color = Color.White.copy(alpha = 0.13f))
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                    HeroStat(tr("درآمد", "Income"), amount(income), Modifier.weight(1f), Icons.Outlined.TrendingUp)
+                    HeroStat(tr("هزینه", "Expenses"), amount(expenses), Modifier.weight(1f), Icons.Outlined.TrendingDown)
                 }
             }
         }
@@ -174,26 +171,15 @@ private fun FinanceOverview(
                 SurfaceCard {
                     Text(tr("تفکیک خریدهای شخصی", "Personal purchases by category"), style = MaterialTheme.typography.titleMedium)
                     Spacer(Modifier.height(8.dp))
-                    val catTotal = byCategory.sumOf { it.value }.coerceAtLeast(0.0001)
-                    byCategory.forEach { (cat, value) ->
-                        val pct = (value / catTotal * 100).toInt()
-                        val label = try {
-                            PurchaseCategory.fromWire(cat).label
-                        } catch (_: Exception) {
-                            cat.ifBlank { "—" }
-                        }
-                        Column(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
-                            Row {
-                                Text(label, Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
-                                Text("${amount(value)} · $pct٪", style = MaterialTheme.typography.bodySmall)
-                            }
-                            LinearProgressIndicator(
-                                progress = { (value / catTotal).toFloat().coerceIn(0f, 1f) },
-                                modifier = Modifier.fillMaxWidth().height(6.dp),
-                                strokeCap = androidx.compose.ui.graphics.StrokeCap.Round,
-                            )
-                        }
-                    }
+                    InteractiveDonutChart(
+                        slices = byCategory.mapIndexed { index, entry ->
+                            val label = try { PurchaseCategory.fromWire(entry.key).label } catch (_: Exception) { entry.key.ifBlank { "—" } }
+                            DonutSlice(entry.key, label, entry.value, chartColors[index % chartColors.size])
+                        },
+                        selectedId = selectedPurchase,
+                        onSelect = { selectedPurchase = it.ifBlank { null } },
+                        centerTitle = tr("خریدهای شخصی", "Personal purchases"),
+                    )
                 }
             }
         }
@@ -637,7 +623,7 @@ private fun LoanMonthlyChart(repository: AppRepository, loans: List<LoanEntity>)
                 val received = loans.filter { it.date.startsWith(prefix) }.sumOf { it.totalAmount }
                 LoanMonthPoint(
                     prefix = prefix,
-                    label = Jalali.monthName(monthNumber).take(3),
+                    label = Jalali.monthName(monthNumber),
                     installmentAmount = due,
                     receivedAmount = received,
                     installmentCount = count,
@@ -671,10 +657,11 @@ private fun LoanMonthlyChart(repository: AppRepository, loans: List<LoanEntity>)
         )
         Spacer(Modifier.height(AppDimens.gutter))
         SmoothLineChart(
-            labels = points.map { it.label },
+            labels = points.map { "${it.label} ${it.prefix.take(4)}" },
             values = points.map { it.installmentAmount },
             markers = markers,
-            valueText = { money(it) },
+            masked = LocalPrivacyMode.current,
+            valueText = { money(it) + " تومان" },
         )
     }
 }

@@ -108,7 +108,7 @@ data class AppSettings(
         const val THEME_DARK = "dark"
         const val LANGUAGE_FA = "fa"
         const val LANGUAGE_EN = "en"
-        const val THEME_COLOR_DEFAULT = "indigo"
+        const val THEME_COLOR_DEFAULT = "orbit"
     }
 
     /** Full display name, trimmed. Empty when profile not set yet. */

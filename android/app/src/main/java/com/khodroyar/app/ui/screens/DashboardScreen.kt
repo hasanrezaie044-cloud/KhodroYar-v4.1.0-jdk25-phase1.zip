@@ -1,6 +1,7 @@
 package com.khodroyar.app.ui.screens
 
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
@@ -47,8 +48,10 @@ fun DashboardScreen(
     onOpenPersonnel: (PersonnelEntity) -> Unit,
     onTogglePrivacy: () -> Unit,
     onOpenTraffic: () -> Unit = {},
+    onAddService: () -> Unit = {},
+    onOpenAssistant: () -> Unit = {},
 ) {
-    val sectionOpen = remember { mutableStateOf(setOf<String>()) }
+    val sectionOpen = remember { mutableStateOf(setOf("recent")) }
     fun toggleSection(key: String) {
         sectionOpen.value = if (key in sectionOpen.value) sectionOpen.value - key else sectionOpen.value + key
     }
@@ -107,67 +110,80 @@ fun DashboardScreen(
                 start = AppDimens.screenPadding,
                 end = AppDimens.screenPadding,
                 top = AppDimens.gutter,
-                bottom = 88.dp,
+                bottom = 28.dp,
             ),
             verticalArrangement = Arrangement.spacedBy(AppDimens.sectionSpacing),
         ) {
-        /* ------------------------------------------------------------- today */
+        item {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text(if (settings.displayName.isNotBlank()) "سلام، ${settings.displayName}" else tr("سلام، خوش آمدید", "Welcome back"),
+                        style = MaterialTheme.typography.headlineSmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    Text(tr("یک نگاه به روز شما", "Your day at a glance"), style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                IconBadge(Icons.Outlined.WbSunny, tint = MaterialTheme.colorScheme.tertiary, size = 44.dp)
+            }
+        }
         item {
             GradientCard(brush = heroBrush()) {
-                Row(verticalAlignment = Alignment.Top) {
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
-                        val greetingName = settings.displayName
-                        Text(
-                            if (greetingName.isNotBlank()) "سلام، $greetingName" else "امروز",
-                            color = Color.White.copy(alpha = 0.8f),
-                            style = MaterialTheme.typography.labelMedium,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                        if (!settings.privacyMode) {
-                            Text(today, color = Color.White, style = MaterialTheme.typography.displayMedium, maxLines = 1)
-                        }
-                        holidayTitle?.takeIf { !settings.privacyMode }?.let {
-                            Text(
-                                "تعطیل رسمی: $it",
-                                color = Color(0xFFFFC9BF),
-                                style = MaterialTheme.typography.bodySmall,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                        }
+                        Text(tr("درآمد امروز", "Today's income"), color = Color(0xFFB9CFD0), style = MaterialTheme.typography.labelLarge)
+                        if (!settings.privacyMode) Text(today, color = Color(0xFFB9CFD0), style = MaterialTheme.typography.labelSmall)
                     }
-                    // Privacy mode: back on the dashboard, one tap on / one tap off.
                     PrivacyToggle(enabled = settings.privacyMode, onToggle = onTogglePrivacy)
                 }
-                Spacer(Modifier.height(14.dp))
-                MetricPair(
-                    first = { m ->
-                        MetricCard("سرویس امروز", todaySummary.count.toString(), Icons.Outlined.Route, m, compact = true)
-                    },
-                    second = { m ->
-                        MetricCard("درآمد امروز", amount(todaySummary.totalIncome), Icons.Outlined.Payments, m, compact = true)
-                    },
-                )
-                Spacer(Modifier.height(AppDimens.gap))
-                MetricPair(
-                    first = { m ->
-                        MetricCard("کیلومتر امروز", money(todaySummary.totalKm), Icons.Outlined.Speed, m, compact = true)
-                    },
-                    second = { m ->
-                        MetricCard(
-                            "کارکرد امروز",
-                            "${Analytics.formatHours(todaySummary.totalHours)} ساعت",
-                            Icons.Outlined.Schedule, m, compact = true,
-                        )
-                    },
-                )
+                Spacer(Modifier.height(12.dp))
+                Text(amount(todaySummary.totalIncome), color = Color.White, style = MaterialTheme.typography.displayMedium,
+                    maxLines = 2, overflow = TextOverflow.Ellipsis)
+                Text(tr("تومان", "Toman"), color = Color(0xFFA5CFC5), style = MaterialTheme.typography.labelMedium)
+                holidayTitle?.takeIf { !settings.privacyMode }?.let {
+                    Spacer(Modifier.height(8.dp))
+                    Text("تعطیل رسمی: $it", color = Color(0xFFFFD6B1), style = MaterialTheme.typography.bodySmall, maxLines = 2)
+                }
+                HorizontalDivider(Modifier.padding(vertical = 18.dp), color = Color.White.copy(alpha = 0.13f))
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    HeroStat(tr("سرویس", "Trips"), money(todaySummary.count), Modifier.weight(1f), Icons.Outlined.Route)
+                    HeroStat(tr("کیلومتر", "Kilometres"), money(todaySummary.totalKm), Modifier.weight(1f), Icons.Outlined.Speed)
+                    HeroStat(tr("ساعت کار", "Hours"), Analytics.formatHours(todaySummary.totalHours), Modifier.weight(1f), Icons.Outlined.Schedule)
+                }
+            }
+        }
+        item {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                DashboardAction(tr("ثبت سرویس", "Add service"), Icons.Outlined.Add, Modifier.weight(1f), onAddService)
+                DashboardAction(tr("دستیار داخلی", "Assistant"), Icons.Outlined.AutoAwesome, Modifier.weight(1f), onOpenAssistant)
+                DashboardAction(tr("ترافیک مسیر", "Traffic"), Icons.Outlined.DirectionsCar, Modifier.weight(1f), onOpenTraffic)
+            }
+        }
+        if (goal > 0 && !settings.privacyMode) {
+            item {
+                SurfaceCard {
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        IconBadge(Icons.Outlined.Flag, size = 36.dp)
+                        Column(Modifier.weight(1f).padding(horizontal = 10.dp)) {
+                            Text(tr("هدف این ماه", "This month's goal"), style = MaterialTheme.typography.titleSmall)
+                            Text("${amount(monthTotals.totalIncome)} / ${amount(goal)} تومان", style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2)
+                        }
+                        StatusPill("${money(goalProgress * 100)}٪")
+                    }
+                    Spacer(Modifier.height(12.dp))
+                    LinearProgressIndicator(progress = { goalProgress.toFloat() }, modifier = Modifier.fillMaxWidth().height(6.dp),
+                        trackColor = MaterialTheme.colorScheme.surfaceContainerHigh, strokeCap = androidx.compose.ui.graphics.StrokeCap.Round)
+                }
             }
         }
 
         if (!settings.privacyMode) {
             /* ---------------------------------------------------------- trend */
-            item { SectionTitle("روند عملکرد", icon = Icons.Outlined.TrendingUp) }
+            item {
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Text(tr("روند عملکرد", "Performance"), Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
+                    TextButton(onClick = onOpenReports) { Text(tr("گزارش کامل", "Full report")) }
+                }
+            }
             item {
                 TrendSection(
                     allServices, today, settings.privacyMode,
@@ -353,16 +369,6 @@ fun DashboardScreen(
         }
         }
 
-        ExtendedFloatingActionButton(
-            onClick = onOpenTraffic,
-            modifier = Modifier
-                .align(Alignment.BottomEnd)
-                .padding(end = 16.dp, bottom = 16.dp),
-            icon = { Icon(Icons.Outlined.DirectionsCar, contentDescription = null) },
-            text = { Text("دستیار ترافیک") },
-            containerColor = MaterialTheme.colorScheme.primary,
-            contentColor = MaterialTheme.colorScheme.onPrimary,
-        )
     }
 }
 
@@ -370,28 +376,22 @@ fun DashboardScreen(
 
 @Composable
 private fun PrivacyToggle(enabled: Boolean, onToggle: () -> Unit) {
-    Surface(
-        shape = MaterialTheme.shapes.small,
-        color = if (enabled) Color.White.copy(alpha = 0.26f) else Color.White.copy(alpha = 0.12f),
-        onClick = onToggle,
-    ) {
-        Row(
-            Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Icon(
-                if (enabled) Icons.Outlined.VisibilityOff else Icons.Outlined.Visibility,
-                if (enabled) "خاموش کردن حالت حریم خصوصی" else "روشن کردن حالت حریم خصوصی",
-                tint = Color.White,
-                modifier = Modifier.size(19.dp),
-            )
-            Spacer(Modifier.width(6.dp))
-            Text(
-                if (enabled) "مبالغ پنهان" else "مبالغ نمایان",
-                color = Color.White,
-                style = MaterialTheme.typography.labelSmall,
-                maxLines = 1,
-            )
+    Surface(shape = RoundedCornerShape(12.dp), color = Color.White.copy(alpha = 0.10f)) {
+        IconButton(onClick = onToggle) {
+            Icon(if (enabled) Icons.Outlined.VisibilityOff else Icons.Outlined.Visibility,
+                if (enabled) tr("نمایش مبالغ", "Show amounts") else tr("پنهان کردن مبالغ", "Hide amounts"), tint = Color.White, modifier = Modifier.size(21.dp))
+        }
+    }
+}
+
+@Composable
+private fun DashboardAction(label: String, icon: androidx.compose.ui.graphics.vector.ImageVector, modifier: Modifier, onClick: () -> Unit) {
+    Surface(onClick = onClick, modifier = modifier, color = MaterialTheme.colorScheme.surfaceContainerLowest,
+        shape = RoundedCornerShape(18.dp), border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) {
+        Column(Modifier.padding(horizontal = 6.dp, vertical = 16.dp), horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Icon(icon, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(24.dp))
+            Text(label, style = MaterialTheme.typography.labelSmall, maxLines = 2, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
         }
     }
 }
@@ -422,6 +422,7 @@ private fun TrendSection(
 ) {
     var scale by remember { mutableStateOf(Analytics.TrendScale.MONTH) }
     var metric by remember { mutableStateOf(TrendMetric.INCOME) }
+    var barView by remember { mutableStateOf(false) }
 
     val buckets = when (scale) {
         Analytics.TrendScale.WEEK -> 6
@@ -454,7 +455,7 @@ private fun TrendSection(
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
-            if (current != null && previous != null) {
+            if (!masked && current != null && previous != null) {
                 DeltaChip(current.metricValue(metric), previous.metricValue(metric))
             }
         }
@@ -473,7 +474,7 @@ private fun TrendSection(
             onSelect = { scale = it },
         )
         Spacer(Modifier.height(AppDimens.gap))
-        SegmentedSelector(
+        HorizontalChipSelector(
             options = TrendMetric.entries.toList(),
             selected = metric,
             label = { it.label },
@@ -481,14 +482,22 @@ private fun TrendSection(
         )
         Spacer(Modifier.height(AppDimens.gutter))
 
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            FilterChip(selected = !barView, onClick = { barView = false }, label = { Text(tr("خطی", "Line")) },
+                leadingIcon = { Icon(Icons.Outlined.ShowChart, null, Modifier.size(16.dp)) })
+            FilterChip(selected = barView, onClick = { barView = true }, label = { Text(tr("ستونی", "Bars")) },
+                leadingIcon = { Icon(Icons.Outlined.BarChart, null, Modifier.size(16.dp)) })
+        }
         if (populated < 2) {
-            InsufficientData("داده‌ی کافی برای نمودار وجود ندارد")
+            InsufficientData(tr("برای مقایسه، در دست‌کم دو بازه سرویس ثبت کنید", "Record trips in at least two periods to compare"))
+        } else if (barView) {
+            TrendBarChart(points = points, metric = metric, masked = masked)
         } else {
             TrendLineChart(
                 points = points,
                 metric = metric,
                 masked = masked,
-                goalValue = if (metric == TrendMetric.INCOME && monthlyGoal > 0) monthlyGoal else null,
+                goalValue = if (scale == Analytics.TrendScale.MONTH && metric == TrendMetric.INCOME && monthlyGoal > 0) monthlyGoal else null,
             )
 
         }

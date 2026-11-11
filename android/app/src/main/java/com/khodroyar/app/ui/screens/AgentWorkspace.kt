@@ -36,12 +36,12 @@ internal fun AgentWorkspaceBar(active: Int, onTasks: () -> Unit, onSections: () 
         TextButton(onClick = onTasks, modifier = Modifier.weight(1f)) {
             Icon(Icons.Outlined.EventRepeat, null, Modifier.size(18.dp))
             Spacer(Modifier.width(6.dp))
-            Text("کارهای خودکار · $active فعال", style = MaterialTheme.typography.labelLarge)
+            Text("کارهای خودکار · $active", style = MaterialTheme.typography.labelMedium)
         }
         TextButton(onClick = onSections, modifier = Modifier.weight(1f)) {
             Icon(Icons.Outlined.AccountTree, null, Modifier.size(18.dp))
             Spacer(Modifier.width(6.dp))
-            Text("دسترسی به بخش‌ها", style = MaterialTheme.typography.labelLarge)
+            Text("بخش‌های برنامه", style = MaterialTheme.typography.labelMedium)
         }
     }
 }
@@ -49,7 +49,7 @@ internal fun AgentWorkspaceBar(active: Int, onTasks: () -> Unit, onSections: () 
 @Composable
 internal fun AgentDraftBar(context: LocalDialogueContext, onCancel: () -> Unit) {
     if (context.title.isBlank()) return
-    Surface(color = MaterialTheme.colorScheme.secondaryContainer, shape = RoundedCornerShape(14.dp),
+    Surface(color = MaterialTheme.colorScheme.primaryContainer, shape = RoundedCornerShape(14.dp),
         modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp)) {
         Row(Modifier.padding(start = 12.dp, top = 8.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {

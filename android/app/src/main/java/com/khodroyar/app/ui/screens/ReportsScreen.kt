@@ -31,6 +31,7 @@ import com.khodroyar.app.export.XlsxWriter
 import com.khodroyar.app.ui.components.*
 import com.khodroyar.app.ui.theme.AppDimens
 import com.khodroyar.app.ui.theme.heroBrush
+import com.khodroyar.app.ui.theme.appAccents
 import kotlinx.coroutines.launch
 import java.io.File
 
@@ -86,6 +87,7 @@ fun ReportsScreen(repository: AppRepository) {
     val excelFileName = "$baseName.xlsx"
 
     var selectedSliceId by remember { mutableStateOf<String?>(null) }
+    var expenseBreakdown by remember { mutableStateOf(true) }
     val personalExpenses = remember(allPersonalExpenses, from, to) {
         allPersonalExpenses.filter { it.date >= from && it.date <= to }
     }
@@ -97,20 +99,14 @@ fun ReportsScreen(repository: AppRepository) {
     val purchaseTotal = remember(personalExpenses) { personalExpenses.sumOf { it.amount } }
     val serviceIncomeTotal = remember(services) { services.sumOf { it.income.toDouble() } }
     val personalIncomeTotalAmt = remember(personalIncomes) { personalIncomes.sumOf { it.amount } }
-    val costTotal = fuelTotal + maintTotal + purchaseTotal
-    val breakdownSlices = remember(
-        fuelTotal, maintTotal, purchaseTotal, serviceIncomeTotal, personalIncomeTotalAmt, costTotal,
-    ) {
-        val raw = listOf(
-            DonutSlice("fuel", "سوخت", fuelTotal, Color(0xFF42A5F5)),
-            DonutSlice("maint", "تعمیرات", maintTotal, Color(0xFFEF5350)),
-            DonutSlice("buy", "خریدها", purchaseTotal, Color(0xFFFFA726)),
-            DonutSlice("income", "درآمد", serviceIncomeTotal, Color(0xFF66BB6A)),
-            DonutSlice("pincome", "درآمد شخصی", personalIncomeTotalAmt, Color(0xFFAB47BC)),
-            DonutSlice("cost", "هزینه", costTotal, Color(0xFF78909C)),
-        ).filter { it.value > 0.0 }
-        if (raw.isEmpty()) listOf(DonutSlice("empty", "بدون داده", 1.0, Color(0xFFBDBDBD))) else raw
+    val chartColors = appAccents.chart
+    // A partition, not a mixture of income, expense and its own aggregate (which double-counted costs).
+    val breakdownSlices = remember(fuelTotal, maintTotal, purchaseTotal, serviceIncomeTotal,
+        personalIncomeTotalAmt, expenseBreakdown, chartColors) {
+        ReportChartData.parts(expenseBreakdown, fuelTotal, maintTotal, purchaseTotal, serviceIncomeTotal, personalIncomeTotalAmt)
+            .map { DonutSlice(it.id, it.label, it.value, chartColors[it.colorIndex]) }
     }
+    LaunchedEffect(from, to, typeFilter, expenseBreakdown) { selectedSliceId = null }
 
     /* --------------------------------------------------------------- workbook */
 
@@ -285,6 +281,23 @@ fun ReportsScreen(repository: AppRepository) {
         ),
         verticalArrangement = Arrangement.spacedBy(AppDimens.sectionSpacing),
     ) {
+        item {
+            GradientCard(brush = heroBrush()) {
+                Text(tr("گزارش سرویس‌های شما", "Your service report"), color = Color(0xFFB9CFD0), style = MaterialTheme.typography.labelLarge)
+                Text(rangeLabel, color = Color(0xFFB9CFD0), style = MaterialTheme.typography.labelSmall, maxLines = 2)
+                Spacer(Modifier.height(14.dp))
+                Text(amount(summary.totals.totalAmount), color = Color.White, style = MaterialTheme.typography.displaySmall,
+                    maxLines = 2, overflow = TextOverflow.Ellipsis)
+                Text(tr("تومان درآمد سرویس", "Toman · service income"), color = Color(0xFFA5CFC5), style = MaterialTheme.typography.labelMedium)
+                HorizontalDivider(Modifier.padding(vertical = 16.dp), color = Color.White.copy(alpha = 0.13f))
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    HeroStat(tr("سرویس", "Trips"), money(summary.totals.count), Modifier.weight(1f))
+                    HeroStat(tr("کیلومتر", "Kilometres"), money(summary.totals.totalKm), Modifier.weight(1f))
+                    HeroStat(tr("ساعت", "Hours"), Analytics.formatHours(summary.totals.totalHours), Modifier.weight(1f))
+                }
+            }
+        }
+
         /* ------------------------------------------------------------- filters */
         item {
             FormSection("بازه گزارش", Icons.Outlined.DateRange) {
@@ -320,7 +333,7 @@ fun ReportsScreen(repository: AppRepository) {
                     periodTitles.forEachIndexed { index, title ->
                         Surface(
                             shape = MaterialTheme.shapes.medium,
-                            color = MaterialTheme.colorScheme.primaryContainer,
+                            color = MaterialTheme.colorScheme.surfaceContainer,
                             modifier = Modifier
                                 .weight(1f)
                                 .defaultMinSize(minHeight = 52.dp)
@@ -368,43 +381,23 @@ fun ReportsScreen(repository: AppRepository) {
             }
         }
 
-        /* ---------------------------------------------------------- range hero */
-        item {
-            GradientCard(brush = heroBrush()) {
-                Text(tr("گزارش کارکرد", "Work Report"), color = Color.White.copy(alpha = 0.8f), style = MaterialTheme.typography.labelMedium)
-                Text(rangeLabel, color = Color.White, style = MaterialTheme.typography.titleLarge, maxLines = 1)
-                Spacer(Modifier.height(10.dp))
-                Text(
-                    "${summary.totals.count} سرویس · ${money(summary.totals.totalKm)} کیلومتر · " +
-                        "${Analytics.formatHours(summary.totals.totalHours)} ساعت",
-                    color = Color.White.copy(alpha = 0.9f),
-                    style = MaterialTheme.typography.bodyMedium,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                Text(
-                    "${amount(summary.totals.totalAmount)} تومان درآمد",
-                    color = Color.White,
-                    style = MaterialTheme.typography.titleMedium,
-                    maxLines = 1,
-                )
-            }
-        }
-
         /* ---------------------------------------------------- circular breakdown */
         item {
             SurfaceCard {
-                Text("نمودار مالی بازه", style = MaterialTheme.typography.titleMedium)
-                Spacer(Modifier.height(10.dp))
+                Text(tr("ترکیب مالی بازه", "Financial breakdown"), style = MaterialTheme.typography.titleMedium)
+                Spacer(Modifier.height(12.dp))
+                SegmentedSelector(options = listOf(true, false), selected = expenseBreakdown,
+                    label = { if (it) tr("هزینه‌ها", "Expenses") else tr("درآمدها", "Income") }, onSelect = { expenseBreakdown = it })
+                Spacer(Modifier.height(16.dp))
                 InteractiveDonutChart(
                     slices = breakdownSlices,
                     selectedId = selectedSliceId,
                     onSelect = { id -> selectedSliceId = id.ifBlank { null } },
-                    centerTitle = "بازه",
+                    centerTitle = if (expenseBreakdown) tr("جمع هزینه‌ها", "Total expenses") else tr("جمع درآمدها", "Total income"),
                     centerSubtitle = rangeLabel,
                 )
                 val sel = breakdownSlices.firstOrNull { it.id == selectedSliceId }
-                if (sel != null && sel.id != "empty") {
+                if (sel != null && !LocalPrivacyMode.current) {
                     Spacer(Modifier.height(8.dp))
                     Text(
                         when (sel.id) {
@@ -413,7 +406,6 @@ fun ReportsScreen(repository: AppRepository) {
                             "buy" -> "${personalExpenses.size} خرید · ${amount(sel.value)} تومان"
                             "income" -> "${services.size} سرویس · ${amount(sel.value)} تومان"
                             "pincome" -> "${personalIncomes.size} درآمد شخصی · ${amount(sel.value)} تومان"
-                            "cost" -> "سوخت + تعمیر + خرید · ${amount(sel.value)} تومان"
                             else -> "${sel.label}: ${amount(sel.value)} تومان"
                         },
                         style = MaterialTheme.typography.bodyMedium,

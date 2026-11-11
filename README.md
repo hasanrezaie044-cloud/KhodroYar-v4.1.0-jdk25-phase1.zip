@@ -1,6 +1,15 @@
 # مدیریت خودرو — Native Android
 
-## Current release: 5.2.0 (versionCode 57)
+## Current release: 5.3.0 (versionCode 58)
+
+**Orbit / مدار: a complete native UI refresh**, with bundled Persian Vazirmatn typography,
+calm light/dark palettes, redesigned navigation, dashboard, forms, conversation and authentication.
+All charts now share a native interactive system: zero-based axes, RTL-aware selection,
+full-value readouts, expense/income partitions, honest empty states and privacy masking.
+No chart library, downloaded model or continuous login animation was added.
+
+Read the [5.3.0 changes](CHANGES_5.3.0.md), [design and test contract](docs/ORBIT-DESIGN.md)
+and [font licence notices](THIRD_PARTY_NOTICES.md). The 5.2.0 agent functionality below is preserved.
 
 **Device-local conversational agent and daily automations**, no AI API key or downloaded LLM.
 Short Persian slot-filling conversations, recurring expenses/trips, explicit traffic tools and

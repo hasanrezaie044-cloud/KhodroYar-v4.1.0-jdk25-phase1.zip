@@ -32,6 +32,9 @@ import com.khodroyar.app.traffic.TrafficLevel
 import com.khodroyar.app.traffic.RouteStatus
 import com.khodroyar.app.data.repo.AppRepository
 import com.khodroyar.app.notifications.TrafficCheckScheduler
+import com.khodroyar.app.ui.components.*
+import com.khodroyar.app.ui.theme.AppDimens
+import com.khodroyar.app.ui.theme.appAccents
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.util.concurrent.TimeUnit
@@ -88,23 +91,27 @@ fun TrafficAssistantScreen(repository: AppRepository) {
     }
 
     Column(
-        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
+        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(AppDimens.screenPadding),
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
-        Surface(shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.surface, tonalElevation = 2.dp) {
-            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        ScreenHeader("مسیرتان را آگاهانه انتخاب کنید", "مبارکه به اصفهان · سه کریدور · دادهٔ آنلاین نشان")
+        Collapsible(title = "اتصال به نشان", summary = if (settings.neshanApiKey.isBlank()) "کلید تنظیم نشده" else "کلید ذخیره شده",
+            initiallyExpanded = settings.neshanApiKey.isBlank()) {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text("کلید API نشان", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
                 OutlinedTextField(
                     value = apiKeyDraft,
                     onValueChange = { apiKeyDraft = it; keySavedMsg = null },
                     modifier = Modifier.fillMaxWidth(),
                     singleLine = true,
+                    shape = FieldShape,
+                    colors = fieldColors(),
                     label = { Text("Api-Key") },
                     visualTransformation = if (showKey) VisualTransformation.None else PasswordVisualTransformation(),
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Ascii),
                     trailingIcon = {
                         IconButton(onClick = { showKey = !showKey }) {
-                            Icon(if (showKey) Icons.Outlined.VisibilityOff else Icons.Outlined.Visibility, null)
+                            Icon(if (showKey) Icons.Outlined.VisibilityOff else Icons.Outlined.Visibility, if (showKey) "پنهان کردن کلید" else "نمایش کلید")
                         }
                     },
                 )
@@ -201,45 +208,28 @@ fun TrafficAssistantScreen(repository: AppRepository) {
 
 @Composable
 private fun RouteStatusCard(title: String, status: RouteStatus?, loading: Boolean) {
-    val color by animateColorAsState(
-        when (status?.level) {
-            TrafficLevel.SMOOTH -> Color(0xFF2E7D32)
-            TrafficLevel.MODERATE -> Color(0xFFF9A825)
-            TrafficLevel.HEAVY -> Color(0xFFC62828)
-            null -> MaterialTheme.colorScheme.outline
-        },
-        label = "statusColor",
-    )
-    val bg by animateColorAsState(
-        when (status?.level) {
-            TrafficLevel.SMOOTH -> Color(0x1A2E7D32)
-            TrafficLevel.MODERATE -> Color(0x1AF9A825)
-            TrafficLevel.HEAVY -> Color(0x1AC62828)
-            null -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
-        },
-        label = "statusBg",
-    )
-    Surface(
-        shape = RoundedCornerShape(16.dp),
-        color = bg,
-        border = androidx.compose.foundation.BorderStroke(1.dp, color.copy(alpha = 0.4f)),
-    ) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Text(title, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
-            when {
-                loading -> LinearProgressIndicator(Modifier.fillMaxWidth())
-                status != null -> {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Box(Modifier.size(12.dp).clip(CircleShape).background(color))
-                        Spacer(Modifier.width(10.dp))
-                        Text(status.labelFa, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold, color = color)
-                    }
-                    status.detail?.let {
-                        Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
+    val color = when (status?.level) {
+        TrafficLevel.SMOOTH -> appAccents.positive
+        TrafficLevel.MODERATE -> MaterialTheme.colorScheme.tertiary
+        TrafficLevel.HEAVY -> MaterialTheme.colorScheme.error
+        null -> MaterialTheme.colorScheme.onSurfaceVariant
+    }
+    SurfaceCard {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            IconBadge(Icons.Outlined.DirectionsCar, tint = color)
+            Text(title, Modifier.weight(1f), style = MaterialTheme.typography.titleSmall)
+        }
+        Spacer(Modifier.height(16.dp))
+        when {
+            loading -> LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+            status != null -> {
+                StatusPill(status.labelFa, color = color)
+                status.detail?.let {
+                    Spacer(Modifier.height(8.dp))
+                    Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
-                else -> Text("هنوز بررسی نشده", color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
+            else -> Text("هنوز بررسی نشده", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodyMedium)
         }
     }
 }

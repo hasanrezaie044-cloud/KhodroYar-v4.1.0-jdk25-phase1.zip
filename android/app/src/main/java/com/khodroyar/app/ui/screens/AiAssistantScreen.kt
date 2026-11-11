@@ -87,6 +87,11 @@ import com.khodroyar.app.ui.components.ConfirmDialog
 import com.khodroyar.app.ui.components.FieldShape
 import com.khodroyar.app.ui.components.LocalToast
 import com.khodroyar.app.ui.components.fieldColors
+import com.khodroyar.app.ui.components.IconBadge
+import com.khodroyar.app.ui.components.SurfaceCard
+import com.khodroyar.app.ui.components.StatusPill
+import com.khodroyar.app.ui.components.tr
+import com.khodroyar.app.ui.theme.appAccents
 
 /**
  * «دستیار هوشمند»: chat with the KhodroYar AI agent. Layout direction and language come from
@@ -246,41 +251,42 @@ private fun AssistantHeader(
     onClear: () -> Unit,
     onSettings: () -> Unit,
 ) {
-    Row(
-        Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 6.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Column(Modifier.weight(1f)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
+    SurfaceCard(modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp), contentPadding = 12.dp) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            IconBadge(Icons.Outlined.AutoAwesome)
+            Column(Modifier.weight(1f)) {
                 val (label, color) = connectionLook(state)
-                Box(Modifier.size(9.dp).clip(CircleShape).background(color))
-                Spacer(Modifier.width(7.dp))
-                Text(label, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
+                Text(label, color = color, style = MaterialTheme.typography.labelMedium, maxLines = 2)
+                Text(model.ifBlank { "دستیار خودرویار" }, style = MaterialTheme.typography.labelSmall.copy(textDirection = TextDirection.Content),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
             }
-            Text(
-                "دستیار: " + model.ifBlank { "تعیین‌نشده" },
-                style = MaterialTheme.typography.labelSmall.copy(textDirection = TextDirection.Content),
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
-            )
+            IconButton(onClick = onSettings) { Icon(Icons.Outlined.Settings, "تنظیمات دستیار") }
         }
-        IconButton(onClick = onNew) { Icon(Icons.Outlined.Add, contentDescription = "گفتگوی جدید") }
-        IconButton(onClick = onHistory) { Icon(Icons.Outlined.History, contentDescription = "تاریخچه") }
-        IconButton(onClick = onClear, enabled = canClear) { Icon(Icons.Outlined.DeleteSweep, contentDescription = "پاک کردن تاریخچه") }
-        IconButton(onClick = onSettings) { Icon(Icons.Outlined.Settings, contentDescription = "تنظیمات دستیار") }
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            TextButton(onClick = onNew, modifier = Modifier.weight(1f)) {
+                Icon(Icons.Outlined.Add, null, Modifier.size(17.dp)); Spacer(Modifier.width(4.dp)); Text("گفتگوی نو", style = MaterialTheme.typography.labelSmall)
+            }
+            TextButton(onClick = onHistory, modifier = Modifier.weight(1f)) {
+                Icon(Icons.Outlined.History, null, Modifier.size(17.dp)); Spacer(Modifier.width(4.dp)); Text("تاریخچه", style = MaterialTheme.typography.labelSmall)
+            }
+            TextButton(onClick = onClear, enabled = canClear, modifier = Modifier.weight(1f)) {
+                Icon(Icons.Outlined.DeleteSweep, null, Modifier.size(17.dp)); Spacer(Modifier.width(4.dp)); Text("پاک‌سازی", style = MaterialTheme.typography.labelSmall)
+            }
+        }
     }
 }
 
+@Composable
 private fun connectionLook(s: ConnectionState): Pair<String, Color> = when (s) {
-    ConnectionState.READY -> "تنظیم شده — اتصال آزمایش نشده" to Color(0xFFF9A825)
-    ConnectionState.LOCAL -> "داخلی — آماده، بدون API" to Color(0xFF2E7D32)
-    ConnectionState.NEEDS_CONSENT -> "آنلاین — نیاز به رضایت ارسال داده" to Color(0xFFF9A825)
-    ConnectionState.ONLINE -> "متصل" to Color(0xFF2E7D32)
-    ConnectionState.CHECKING, ConnectionState.UNKNOWN -> "در حال بررسی اتصال…" to Color(0xFFF9A825)
-    ConnectionState.OFFLINE -> "قطع (اینترنت یا سرور)" to Color(0xFFC62828)
-    ConnectionState.NOT_CONFIGURED -> "اتصال یا کلید تنظیم نشده" to Color(0xFF757575)
-    ConnectionState.DISABLED -> "غیرفعال" to Color(0xFF757575)
-    ConnectionState.ERROR -> "سرور آماده نیست" to Color(0xFFC62828)
+    ConnectionState.READY -> "تنظیم شده — اتصال آزمایش نشده" to MaterialTheme.colorScheme.tertiary
+    ConnectionState.LOCAL -> "داخلی · آماده، بدون API" to appAccents.positive
+    ConnectionState.NEEDS_CONSENT -> "آنلاین — نیاز به رضایت ارسال داده" to MaterialTheme.colorScheme.tertiary
+    ConnectionState.ONLINE -> "متصل" to appAccents.positive
+    ConnectionState.CHECKING, ConnectionState.UNKNOWN -> "در حال بررسی اتصال…" to MaterialTheme.colorScheme.tertiary
+    ConnectionState.OFFLINE -> "قطع (اینترنت یا سرور)" to MaterialTheme.colorScheme.error
+    ConnectionState.NOT_CONFIGURED -> "اتصال یا کلید تنظیم نشده" to MaterialTheme.colorScheme.onSurfaceVariant
+    ConnectionState.DISABLED -> "غیرفعال" to MaterialTheme.colorScheme.onSurfaceVariant
+    ConnectionState.ERROR -> "سرور آماده نیست" to MaterialTheme.colorScheme.error
 }
 
 /* ------------------------------------------------------------------- bubbles */
@@ -289,12 +295,13 @@ private fun connectionLook(s: ConnectionState): Pair<String, Color> = when (s) {
 private fun Bubble(entry: ChatEntry, onCopy: (String) -> Unit) {
     val isUser = entry.role == ChatRole.USER
     val (bg, fg) = when (entry.role) {
-        ChatRole.USER -> MaterialTheme.colorScheme.primaryContainer to MaterialTheme.colorScheme.onPrimaryContainer
-        ChatRole.ASSISTANT -> MaterialTheme.colorScheme.surfaceContainerHigh to MaterialTheme.colorScheme.onSurface
+        ChatRole.USER -> MaterialTheme.colorScheme.primary to MaterialTheme.colorScheme.onPrimary
+        ChatRole.ASSISTANT -> MaterialTheme.colorScheme.surfaceContainerLowest to MaterialTheme.colorScheme.onSurface
         ChatRole.RESULT -> MaterialTheme.colorScheme.tertiaryContainer to MaterialTheme.colorScheme.onTertiaryContainer
         ChatRole.ERROR -> MaterialTheme.colorScheme.errorContainer to MaterialTheme.colorScheme.onErrorContainer
     }
-    val shape = RoundedCornerShape(18.dp)
+    val shape = if (isUser) RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp, bottomStart = 20.dp, bottomEnd = 6.dp)
+        else RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp, bottomStart = 6.dp, bottomEnd = 20.dp)
     Row(
         Modifier.fillMaxWidth(),
         horizontalArrangement = if (isUser) Arrangement.Absolute.Right else Arrangement.Absolute.Left,
@@ -398,13 +405,13 @@ private fun EmptyState(state: ConnectionState, mode: AiMode, onSettings: () -> U
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
     ) {
-        Icon(Icons.Outlined.AutoAwesome, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(44.dp))
+        IconBadge(Icons.Outlined.AutoAwesome, size = 64.dp)
         Spacer(Modifier.height(12.dp))
-        Text("دستیار خودرویار", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+        Text("چی برات انجام بدم؟", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
         Spacer(Modifier.height(6.dp))
         Text(
             when (mode) {
-                AiMode.LOCAL -> "ایجنت تخصصی داخل گوشی؛ کوتاه و راحت بگو، جزئیات ناقص را می‌پرسم. هزینه و سرویس تکراری، گزارش و ثبت‌های روزمره بدون API هوش مصنوعی انجام می‌شوند. فقط ترافیک تازه از سرویس آنلاین همان تب می‌آید. مدل چت عمومی نیست."
+                AiMode.LOCAL -> "کوتاه و راحت بگو؛ جزئیات ناقص را می‌پرسم. ثبت، گزارش و کارهای تکراری خودرو بدون API انجام می‌شوند. این دستیار تخصصی است، نه چت‌بات عمومی؛ فقط ترافیک تازه اینترنت می‌خواهد."
                 AiMode.ONLINE -> "اتصال از طریق بک‌اند خودرویار؛ آدرس مستقیم GapGPT را در این حالت وارد نکنید. برای اتصال مستقیم، گزینهٔ جداگانهٔ GapGPT در تنظیمات است."
                 AiMode.GAPGPT_DIRECT -> "اتصال مستقیم به Chat Completions گپ‌جی‌پی‌تی؛ به کلید واقعی، اینترنت و اعتبار حساب نیاز دارد. کلید فقط با رمزنگاری گوشی نگهداری می‌شود. ارسال اطلاعات و ثبت/حذف همچنان با رضایت و تأیید شماست."
             },
@@ -443,9 +450,9 @@ private fun InputBar(
     placeholder: String,
     onSend: () -> Unit,
 ) {
-    Surface(color = MaterialTheme.colorScheme.surfaceContainerLowest, shadowElevation = 6.dp) {
+    Surface(color = MaterialTheme.colorScheme.background) {
         Row(
-            Modifier.fillMaxWidth().navigationBarsPadding().padding(horizontal = 12.dp, vertical = 8.dp),
+            Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp),
             verticalAlignment = Alignment.Bottom,
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
@@ -465,7 +472,7 @@ private fun InputBar(
             )
             val canSend = enabled && !busy && value.isNotBlank()
             Surface(
-                shape = CircleShape,
+                shape = RoundedCornerShape(14.dp),
                 color = if (canSend) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant,
                 modifier = Modifier.padding(bottom = if (value.length > AiLimits.MAX_USER_CHARS * 8 / 10) 22.dp else 4.dp),
             ) {

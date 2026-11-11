@@ -23,6 +23,10 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.ArrowBack
+import androidx.compose.material.icons.outlined.Add
+import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.AutoAwesome
 import androidx.compose.material.icons.outlined.ArrowForward
 import androidx.compose.material.icons.outlined.DirectionsCar
 import androidx.compose.material.icons.outlined.Menu
@@ -57,7 +61,7 @@ import com.khodroyar.app.ui.components.*
 import com.khodroyar.app.ui.nav.AppDestination
 import com.khodroyar.app.ui.nav.ToolDestination
 import com.khodroyar.app.ui.theme.AppDimens
-import com.khodroyar.app.ui.theme.headerBrush
+import com.khodroyar.app.ui.theme.LocalDarkTheme
 import kotlinx.coroutines.launch
 
 /**
@@ -84,6 +88,7 @@ fun CarManagerRoot(
     onToggleTheme: () -> Unit = {},
 ) {
     val context = LocalContext.current
+    SystemChrome(dark = LocalDarkTheme.current)
     val scope = rememberCoroutineScope()
     val settings by repository.settings.collectAsState(initial = repository.settingsNow)
 
@@ -168,7 +173,7 @@ fun CarManagerRoot(
         overlay != null -> if (settings.language == AppSettings.LANGUAGE_EN) "Back" else "بازگشت با دکمه بازگشت"
         tool != null -> if (settings.language == AppSettings.LANGUAGE_EN) tool!!.englishSubtitle else tool!!.subtitle
         destination == AppDestination.HOME -> todayLabel()
-        else -> if (settings.language == AppSettings.LANGUAGE_EN) "KhodroYar · Offline" else "مدیریت خودرو  ·  آفلاین"
+        else -> if (settings.language == AppSettings.LANGUAGE_EN) "KhodroYar · Your workspace" else "خودرویار · فضای شخصی شما"
     }
 
     CompositionLocalProvider(
@@ -327,6 +332,8 @@ fun CarManagerRoot(
                                     repository.updateSettings { it.copy(privacyMode = !it.privacyMode) }
                                 },
                                 onOpenTraffic = { tool = ToolDestination.TRAFFIC },
+                                onAddService = { destination = AppDestination.SERVICES; tool = null },
+                                onOpenAssistant = { tool = ToolDestination.AI_ASSISTANT },
                             )
                             AppDestination.SERVICES -> ServicesScreen(repository)
                             AppDestination.CALENDAR -> CalendarScreen(
@@ -349,6 +356,8 @@ fun CarManagerRoot(
                                     repository.updateSettings { it.copy(privacyMode = !it.privacyMode) }
                                 },
                                 onOpenTraffic = { tool = ToolDestination.TRAFFIC },
+                                onAddService = { destination = AppDestination.SERVICES; tool = null },
+                                onOpenAssistant = { tool = ToolDestination.AI_ASSISTANT },
                             )
                         }
                     }
@@ -463,152 +472,63 @@ private fun todayLabel(): String {
 
 /* ------------------------------------------------------------------- top bar */
 
-/**
- * Status-bar-aware header.
- *
- * The gradient fills the whole top area including the cutout/notch strip
- * ([Modifier.statusBarsPadding] insets only the *content*), so the camera area reads as
- * part of the app. The gradient is dark in both themes, which keeps the system clock,
- * battery and signal icons legible — light status-bar icons are requested in
- * `MainActivity`. Nothing about the system bar's behaviour is overridden.
- */
+/** A quiet, theme-aware toolbar. Insets and icon contrast follow the actual surface. */
 @Composable
 private fun AppTopBar(
-    title: String,
-    subtitle: String,
-    privacyMode: Boolean,
-    showBack: Boolean,
-    onBack: () -> Unit,
-    onOpenTools: () -> Unit,
-    onSearch: (() -> Unit)? = null,
+    title: String, subtitle: String, privacyMode: Boolean, showBack: Boolean,
+    onBack: () -> Unit, onOpenTools: () -> Unit, onSearch: (() -> Unit)? = null,
 ) {
-    Box(
-        Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(bottomStart = 30.dp, bottomEnd = 30.dp))
-            .background(headerBrush())
-    ) {
-        Row(
-            Modifier
-                .fillMaxWidth()
-                .statusBarsPadding()
-                .padding(start = 14.dp, end = 14.dp, top = 12.dp, bottom = 20.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            if (showBack) {
-                IconButton(onClick = onBack) {
-                    Icon(Icons.Outlined.ArrowForward, "بازگشت", tint = Color.White)
-                }
-            } else {
-                Surface(
-                    shape = CircleShape,
-                    color = Color.White.copy(alpha = 0.16f),
-                    modifier = Modifier.padding(start = 4.dp),
-                ) {
-                    Icon(
-                        Icons.Outlined.DirectionsCar, null,
-                        tint = Color.White,
-                        modifier = Modifier.padding(9.dp).size(20.dp),
-                    )
+    Surface(color = MaterialTheme.colorScheme.background) {
+        Row(Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 14.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            Surface(shape = RoundedCornerShape(14.dp), color = MaterialTheme.colorScheme.surfaceContainerLowest,
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) {
+                IconButton(onClick = if (showBack) onBack else onOpenTools) {
+                    Icon(if (showBack) Icons.AutoMirrored.Outlined.ArrowBack else Icons.Outlined.Menu,
+                        if (showBack) tr("بازگشت", "Back") else tr("ابزارها", "Tools"), modifier = Modifier.size(22.dp))
                 }
             }
-            Column(Modifier.weight(1f).padding(horizontal = 10.dp)) {
-                Text(
-                    title,
-                    color = Color.White,
-                    style = MaterialTheme.typography.titleLarge,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                Text(
-                    subtitle,
-                    color = Color.White.copy(alpha = 0.78f),
-                    style = MaterialTheme.typography.bodySmall,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
+            Column(Modifier.weight(1f)) {
+                Text(title, style = MaterialTheme.typography.titleLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                if (subtitle.isNotBlank()) Text(subtitle, style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
-            if (privacyMode) {
-                Icon(
-                    Icons.Outlined.VisibilityOff, "حالت حریم خصوصی روشن است",
-                    tint = Color.White,
-                    modifier = Modifier.padding(end = 6.dp).size(20.dp),
-                )
+            if (privacyMode) Icon(Icons.Outlined.VisibilityOff, tr("حالت حریم خصوصی", "Privacy mode"),
+                tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
+            if (onSearch != null && !showBack) IconButton(onClick = onSearch) {
+                Icon(Icons.Outlined.Search, tr("جستجو", "Search"), modifier = Modifier.size(23.dp))
             }
-            if (onSearch != null && !showBack) {
-                IconButton(onClick = onSearch) {
-                    Icon(Icons.Outlined.Search, "جستجو", tint = Color.White)
-                }
-            }
-            IconButton(onClick = onOpenTools) {
-                Icon(Icons.Outlined.Menu, "پنل ابزارها", tint = Color.White)
-            }
+            if (showBack) IconButton(onClick = onOpenTools) { Icon(Icons.Outlined.Menu, tr("ابزارها", "Tools")) }
         }
     }
 }
 
-/* ---------------------------------------------------------------- bottom bar */
-
+/** Anchored navigation, a distinct registration action, and readable persistent labels. */
 @Composable
-private fun AppBottomBar(
-    selected: AppDestination,
-    toolActive: Boolean,
-    onSelect: (AppDestination) -> Unit,
-) {
-    // A floating rounded bar instead of a full-width strip: the selected destination is a
-    // filled pill (icon + label), the others are quiet icons with a small caption.
-    Box(
-        Modifier
-            .fillMaxWidth()
-            .navigationBarsPadding()
-            .padding(horizontal = 14.dp)
-            .padding(top = 6.dp, bottom = 10.dp),
-    ) {
-        Surface(
-            shape = RoundedCornerShape(30.dp),
-            color = MaterialTheme.colorScheme.surfaceContainerLowest,
-            shadowElevation = 12.dp,
-            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f)),
-            modifier = Modifier.fillMaxWidth(),
-        ) {
-            Row(
-                Modifier.padding(6.dp),
-                horizontalArrangement = Arrangement.spacedBy(4.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
+private fun AppBottomBar(selected: AppDestination, toolActive: Boolean, onSelect: (AppDestination) -> Unit) {
+    Surface(color = MaterialTheme.colorScheme.surfaceContainerLowest) {
+        Column {
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.7f))
+            Row(Modifier.fillMaxWidth().navigationBarsPadding().padding(horizontal = 12.dp, vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically) {
                 AppDestination.entries.forEach { item ->
-                    val isSelected = !toolActive && selected == item
+                    val active = !toolActive && selected == item
                     val title = if (LocalLanguage.current == "en") item.englishTitle else item.title
-                    val pill by animateColorAsState(
-                        if (isSelected) MaterialTheme.colorScheme.primary else Color.Transparent,
-                        label = "navPill",
-                    )
-                    val content = if (isSelected) MaterialTheme.colorScheme.onPrimary
-                    else MaterialTheme.colorScheme.onSurfaceVariant
-                    Column(
-                        Modifier
-                            .weight(1f)
-                            .clip(RoundedCornerShape(24.dp))
-                            .background(pill)
-                            .selectable(selected = isSelected, role = Role.Tab, onClick = { onSelect(item) })
-                            .heightIn(min = 52.dp)
-                            .padding(horizontal = 4.dp, vertical = 6.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.Center,
-                    ) {
-                        Icon(
-                            if (isSelected) item.selectedIcon else item.icon,
-                            title,
-                            tint = content,
-                            modifier = Modifier.size(22.dp),
-                        )
-                        Text(
-                            title,
-                            color = content,
-                            style = MaterialTheme.typography.labelSmall,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
+                    val tint by animateColorAsState(if (active) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant, label = "destination")
+                    val add = item == AppDestination.SERVICES
+                    Column(Modifier.weight(1f).clip(RoundedCornerShape(14.dp))
+                        .selectable(selected = active, role = Role.Tab, onClick = { onSelect(item) })
+                        .heightIn(min = 64.dp).padding(horizontal = 2.dp, vertical = 4.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(3.dp, Alignment.CenterVertically)) {
+                        Box(Modifier.size(width = 46.dp, height = 32.dp).clip(RoundedCornerShape(11.dp))
+                            .background(when { add -> MaterialTheme.colorScheme.primary; active -> MaterialTheme.colorScheme.primaryContainer; else -> Color.Transparent }),
+                            contentAlignment = Alignment.Center) {
+                            Icon(if (add) Icons.Outlined.Add else if (active) item.selectedIcon else item.icon,
+                                null, tint = if (add) MaterialTheme.colorScheme.onPrimary else tint, modifier = Modifier.size(22.dp))
+                        }
+                        Text(title, color = tint, style = MaterialTheme.typography.labelSmall,
+                            fontWeight = if (active) FontWeight.Bold else FontWeight.Medium,
+                            maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
                 }
             }
@@ -616,66 +536,33 @@ private fun AppBottomBar(
     }
 }
 
-/* --------------------------------------------------------------- tools panel */
-
-/**
- * The right-edge slide-out panel. A Material modal drawer under RTL anchors to the
- * right and its swipe gesture follows, which is exactly the requested interaction:
- * drag in from the right edge, pick something, and it closes itself. Tapping the scrim
- * closes it too — that behaviour is built in.
- */
+/** Full-height toolkit; large row targets and no text clipped by fixed drawer-item heights. */
 @Composable
-private fun ToolsDrawer(
-    active: ToolDestination?,
-    onPick: (ToolDestination) -> Unit,
-    onClose: () -> Unit,
-) {
-    ModalDrawerSheet(
-        drawerContainerColor = MaterialTheme.colorScheme.surface,
-        drawerShape = RoundedCornerShape(topStart = 0.dp, bottomStart = 0.dp, topEnd = 26.dp, bottomEnd = 26.dp),
-        modifier = Modifier.widthIn(max = 330.dp),
-    ) {
-        Column(
-            Modifier
-                .fillMaxHeight()
-                .verticalScroll(rememberScrollState())
-                .statusBarsPadding()
-                .navigationBarsPadding()
-                .padding(horizontal = AppDimens.screenPadding, vertical = 14.dp),
-            verticalArrangement = Arrangement.spacedBy(AppDimens.gap),
-        ) {
+private fun ToolsDrawer(active: ToolDestination?, onPick: (ToolDestination) -> Unit, onClose: () -> Unit) {
+    ModalDrawerSheet(drawerContainerColor = MaterialTheme.colorScheme.background,
+        drawerShape = RoundedCornerShape(topEnd = 28.dp, bottomEnd = 28.dp), modifier = Modifier.widthIn(max = 350.dp)) {
+        Column(Modifier.fillMaxHeight().verticalScroll(rememberScrollState()).navigationBarsPadding()
+            .padding(horizontal = 20.dp, vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Box(
-                    Modifier
-                        .size(40.dp)
-                        .clip(RoundedCornerShape(12.dp))
-                        .background(MaterialTheme.colorScheme.primaryContainer),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Icon(
-                        Icons.Outlined.DirectionsCar, null,
-                        tint = MaterialTheme.colorScheme.onPrimaryContainer,
-                        modifier = Modifier.size(22.dp),
-                    )
+                IconBadge(Icons.Outlined.DirectionsCar, size = 44.dp)
+                Column(Modifier.weight(1f).padding(horizontal = 12.dp)) {
+                    Text(tr("خودرویار", "KhodroYar"), style = MaterialTheme.typography.titleLarge)
+                    Text(tr("همه‌چیز، یک‌جا", "Everything, together"), style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
-                Column(Modifier.weight(1f).padding(horizontal = 10.dp)) {
-                    Text(tr("پنل ابزارها", "Tools panel"), style = MaterialTheme.typography.titleLarge)
-                }
+                IconButton(onClick = onClose) { Icon(Icons.Outlined.Close, tr("بستن پنل", "Close tools")) }
             }
-            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+            Spacer(Modifier.height(8.dp))
+            Text(tr("ابزارهای شما", "Your toolkit"), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
             ToolDestination.entries.forEach { item ->
-                // ActionRow instead of NavigationDrawerItem: the Material item clamps its
-                // own height, which clips the two-line Persian labels.
-                ActionRow(
-                    title = if (LocalLanguage.current == "en") item.englishTitle else item.title,
+                ActionRow(title = if (LocalLanguage.current == "en") item.englishTitle else item.title,
                     subtitle = if (LocalLanguage.current == "en") item.englishSubtitle else item.subtitle,
-                    icon = item.icon,
-                    trailing = if (item == active) "فعال" else "",
-                    onClick = { onPick(item) },
-                )
+                    icon = item.icon, trailing = if (item == active) tr("فعال", "Active") else "", onClick = { onPick(item) })
             }
-            Spacer(Modifier.weight(1f))
-            TextButton(onClick = onClose, modifier = Modifier.fillMaxWidth()) { Text(tr("بستن پنل", "Close panel")) }
+            Spacer(Modifier.height(12.dp))
+            Text(tr("اطلاعات شما روی همین دستگاه می‌ماند؛ ابزارهای آنلاین فقط با تنظیم و اجازهٔ شما کار می‌کنند.",
+                "Your records stay on this device. Online tools require your configuration and consent."),
+                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }

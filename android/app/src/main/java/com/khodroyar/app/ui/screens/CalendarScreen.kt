@@ -235,28 +235,16 @@ fun CalendarScreen(
                     )
                 }
                 Spacer(Modifier.height(12.dp))
-                MetricPair(
-                    first = { m ->
-                        MetricCard("تعداد سرویس", dayServices.size.toString(), Icons.Outlined.Route, m, compact = true)
-                    },
-                    second = { m ->
-                        MetricCard("درآمد سرویس", amount(dayIncome), Icons.Outlined.Payments, m, compact = true)
-                    },
-                )
-                Spacer(Modifier.height(AppDimens.gap))
-                MetricPair(
-                    first = { m ->
-                        MetricCard("کیلومتر", money(dayServices.sumOf { it.km }), Icons.Outlined.Speed, m, compact = true)
-                    },
-                    second = { m ->
-                        MetricCard(
-                            "کارکرد",
-                            "${Analytics.formatHours(dayServices.sumOf { it.hours })} ساعت",
-                            Icons.Outlined.Schedule, m, compact = true,
-                        )
-                    },
-                )
-                Spacer(Modifier.height(12.dp))
+                Text(amount(dayIncome), color = Color.White, style = MaterialTheme.typography.displaySmall,
+                    maxLines = 2, overflow = TextOverflow.Ellipsis)
+                Text("تومان درآمد سرویس", color = Color(0xFFB9CFD0), style = MaterialTheme.typography.labelSmall)
+                HorizontalDivider(Modifier.padding(vertical = 16.dp), color = Color.White.copy(alpha = 0.13f))
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    HeroStat("سرویس", money(dayServices.size), Modifier.weight(1f))
+                    HeroStat("کیلومتر", money(dayServices.sumOf { it.km }), Modifier.weight(1f))
+                    HeroStat("ساعت", Analytics.formatHours(dayServices.sumOf { it.hours }), Modifier.weight(1f))
+                }
+                Spacer(Modifier.height(16.dp))
                 Button(
                     onClick = { onQuickService(selectedDate) },
                     modifier = Modifier.fillMaxWidth().height(AppDimens.buttonHeight),

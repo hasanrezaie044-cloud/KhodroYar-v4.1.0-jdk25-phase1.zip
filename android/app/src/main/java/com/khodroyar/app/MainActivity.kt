@@ -6,7 +6,6 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.runtime.*
-import androidx.core.view.WindowCompat
 import androidx.fragment.app.FragmentActivity
 import com.khodroyar.app.data.prefs.AppSettings
 import com.khodroyar.app.data.prefs.SettingsStore
@@ -58,15 +57,6 @@ class MainActivity : FragmentActivity() {
                 AppSettings.THEME_LIGHT -> false
                 AppSettings.THEME_DARK -> true
                 else -> systemDarkTheme
-            }
-
-            // The header gradient is dark in both themes, so the status-bar icons are
-            // always drawn light to stay legible over it.
-            LaunchedEffect(darkTheme) {
-                WindowCompat.getInsetsController(window, window.decorView).apply {
-                    isAppearanceLightStatusBars = false
-                    isAppearanceLightNavigationBars = !darkTheme
-                }
             }
 
             // Colour theme is a separate axis from light/dark, so both survive

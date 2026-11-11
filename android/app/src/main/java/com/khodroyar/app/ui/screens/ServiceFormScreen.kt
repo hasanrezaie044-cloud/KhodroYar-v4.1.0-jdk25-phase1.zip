@@ -3,6 +3,8 @@ package com.khodroyar.app.ui.screens
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.clickable
+import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -272,36 +274,15 @@ private fun ServiceFormBody(
         ) {
             /* ------------------------------------------------------- live total */
             GradientCard(brush = heroBrush()) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f)) {
-                        Text(
-                            if (editing != null) "ویرایش سرویس" else "ثبت سرویس جدید",
-                            color = Color.White,
-                            style = MaterialTheme.typography.titleLarge,
-                        )
-                        Text(
-                            "$date  ·  ${type.label}  ·  ${carType.label}",
-                            color = Color.White.copy(alpha = 0.82f),
-                            style = MaterialTheme.typography.bodySmall,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                    }
-                    Column(horizontalAlignment = Alignment.End) {
-                        Text(
-                            "مبلغ محاسبه‌شده",
-                            color = Color.White.copy(alpha = 0.82f),
-                            style = MaterialTheme.typography.labelMedium,
-                        )
-                        Text(
-                            money(breakdown.finalAmount),
-                            color = Color.White,
-                            style = MaterialTheme.typography.headlineSmall,
-                            fontWeight = FontWeight.Bold,
-                            maxLines = 1,
-                        )
-                    }
-                }
+                Text(if (editing != null) tr("ویرایش سرویس", "Edit service") else tr("سرویس جدید", "New service"),
+                    color = Color(0xFFB9CFD0), style = MaterialTheme.typography.labelLarge)
+                Text("$date · ${type.label} · ${carType.label}", color = Color(0xFFB9CFD0), style = MaterialTheme.typography.bodySmall,
+                    maxLines = 2, overflow = TextOverflow.Ellipsis)
+                Spacer(Modifier.height(16.dp))
+                Text(money(breakdown.finalAmount), color = Color.White, style = MaterialTheme.typography.displaySmall,
+                    maxLines = 2, overflow = TextOverflow.Ellipsis)
+                Text(tr("تومان · برآورد درآمد این سرویس", "Toman · estimated service income"), color = Color(0xFFA5CFC5),
+                    style = MaterialTheme.typography.labelSmall)
             }
 
             ServiceTypeSection(
@@ -681,26 +662,16 @@ fun FormSection(
 ) {
     var expanded by remember(title) { mutableStateOf(true) }
     SurfaceCard {
-        Surface(
-            onClick = { if (collapsible) expanded = !expanded },
-            color = androidx.compose.ui.graphics.Color.Transparent,
-            modifier = Modifier.fillMaxWidth(),
-        ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(icon, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
-                Spacer(Modifier.width(8.dp))
-                Text(title, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
-                if (collapsible) {
-                    Icon(
-                        if (expanded) Icons.Outlined.ExpandLess else Icons.Outlined.ExpandMore,
-                        if (expanded) "بستن" else "باز کردن",
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-            }
+        Row(Modifier.fillMaxWidth().clip(FieldShape).clickable(enabled = collapsible) { expanded = !expanded },
+            verticalAlignment = Alignment.CenterVertically) {
+            IconBadge(icon, size = 36.dp)
+            Text(title, style = MaterialTheme.typography.titleMedium, maxLines = 2, overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f).padding(horizontal = 10.dp))
+            if (collapsible) Icon(if (expanded) Icons.Outlined.ExpandLess else Icons.Outlined.ExpandMore,
+                if (expanded) "بستن" else "باز کردن", tint = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         if (!collapsible || expanded) {
-            Spacer(Modifier.height(12.dp))
+            Spacer(Modifier.height(18.dp))
             content()
         }
     }
