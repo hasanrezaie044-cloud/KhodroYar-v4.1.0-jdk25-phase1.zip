@@ -1,6 +1,14 @@
 # مدیریت خودرو — Native Android
 
-## Current release: 5.3.0 (versionCode 58)
+## Current release: 5.3.1 (versionCode 59)
+
+A quieter, phone-first Orbit layout: Home keeps the daily overview and a left-to-right
+time axis even in Persian. Annual statistics and the latest five service records are
+now in Reports. Automatic tab tutorials, slogans and duplicate summaries are removed;
+consent, destructive confirmations, units and genuine error messages stay intact.
+Material 3 navigation handles Android insets; compact report filters stack on narrow
+screens/enlarged text. See the [5.3.1 changes](CHANGES_5.3.1.md).
+
 
 **Orbit / مدار: a complete native UI refresh**, with bundled Persian Vazirmatn typography,
 calm light/dark palettes, redesigned navigation, dashboard, forms, conversation and authentication.

@@ -122,9 +122,6 @@ fun SettingsScreen(repository: AppRepository, settings: AppSettings, onToggleThe
         ),
         verticalArrangement = Arrangement.spacedBy(AppDimens.gutter),
     ) {
-        item {
-            ScreenHeader(tr("فضای شما، به سلیقهٔ شما", "Make it yours"), tr("ظاهر، امنیت و تنظیمات خودرویار", "Appearance, security and preferences"))
-        }
         /* ------------------------------------------------------------- profile */
         item { CollapsibleSectionTitle(
             "پروفایل کاربر", icon = Icons.Outlined.Person,
@@ -248,12 +245,6 @@ fun SettingsScreen(repository: AppRepository, settings: AppSettings, onToggleThe
                     },
                     onSelect = { mode -> repository.updateSettings { it.copy(themeMode = mode) } },
                 )
-                Spacer(Modifier.height(8.dp))
-                Text(
-                    "حالت فعلی: ${themeLabel(settings)}",
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    style = MaterialTheme.typography.bodySmall,
-                )
             }
         }
         /* -------------------------------------------------- theme colour picker */
@@ -268,18 +259,8 @@ fun SettingsScreen(repository: AppRepository, settings: AppSettings, onToggleThe
             }
         }
         item {
-            // Privacy mode is controlled from the dashboard now, on purpose.
-            SurfaceCard {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(
-                        if (settings.privacyMode) Icons.Outlined.VisibilityOff else Icons.Outlined.Visibility,
-                        null,
-                        tint = MaterialTheme.colorScheme.primary,
-                    )
-                    Column(Modifier.weight(1f).padding(horizontal = 12.dp)) {
-                        Text("حالت حریم خصوصی", style = MaterialTheme.typography.titleMedium)
-                    }
-                }
+            SwitchRow(tr("حریم خصوصی", "Privacy"), "", settings.privacyMode) { value ->
+                repository.updateSettings { it.copy(privacyMode = value) }
             }
         }
 

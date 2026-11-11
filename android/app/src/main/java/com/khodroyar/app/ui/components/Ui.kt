@@ -221,9 +221,9 @@ fun GradientCard(
 @Composable
 fun CollapsibleSectionTitle(
     title: String, action: String = "", icon: ImageVector? = null,
-    expanded: Boolean, onToggle: () -> Unit, englishTitle: String? = null,
+    expanded: Boolean, onToggle: () -> Unit, englishTitle: String? = null, modifier: Modifier = Modifier,
 ) {
-    Surface(onClick = onToggle, modifier = Modifier.fillMaxWidth(), shape = FieldShape,
+    Surface(onClick = onToggle, modifier = modifier.fillMaxWidth().heightIn(min = 48.dp), shape = FieldShape,
         color = MaterialTheme.colorScheme.surfaceContainerLow) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
             if (icon != null) {
@@ -821,7 +821,7 @@ fun <T> SegmentedSelector(
                 Box(Modifier.weight(1f).clip(RoundedCornerShape(10.dp))
                     .background(if (active) MaterialTheme.colorScheme.surfaceContainerLowest else Color.Transparent)
                     .selectable(selected = active, role = Role.Tab, onClick = { onSelect(option) })
-                    .heightIn(min = 44.dp).padding(horizontal = 4.dp, vertical = 8.dp), contentAlignment = Alignment.Center) {
+                    .heightIn(min = 48.dp).padding(horizontal = 4.dp, vertical = 8.dp), contentAlignment = Alignment.Center) {
                     Text(label(option), style = MaterialTheme.typography.labelMedium,
                         fontWeight = if (active) FontWeight.Bold else FontWeight.Medium,
                         color = if (active) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
@@ -858,7 +858,7 @@ fun DataTable(
                 Row(
                     Modifier
                         .background(MaterialTheme.colorScheme.surfaceContainerHigh)
-                        .padding(vertical = 12.dp),
+                        .heightIn(min = 48.dp).padding(vertical = 10.dp),
                 ) {
                     columns.forEach { column ->
                         Text(
@@ -867,7 +867,7 @@ fun DataTable(
                             color = MaterialTheme.colorScheme.onSurface,
                             style = MaterialTheme.typography.labelMedium,
                             textAlign = if (column.numeric) TextAlign.Center else TextAlign.Start,
-                            maxLines = 1,
+                            maxLines = 2,
                             overflow = TextOverflow.Ellipsis,
                         )
                     }
@@ -879,7 +879,7 @@ fun DataTable(
                                 if (index % 2 == 1) MaterialTheme.colorScheme.surfaceContainer
                                 else MaterialTheme.colorScheme.surfaceContainerLowest
                             )
-                            .padding(vertical = 8.dp),
+                            .heightIn(min = 48.dp).padding(vertical = 10.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         columns.forEachIndexed { i, column ->
@@ -888,7 +888,7 @@ fun DataTable(
                                 modifier = Modifier.width(column.width).padding(horizontal = 6.dp),
                                 style = MaterialTheme.typography.bodySmall,
                                 textAlign = if (column.numeric) TextAlign.Center else TextAlign.Start,
-                                maxLines = 1,
+                                maxLines = if (column.numeric) 1 else 2,
                                 overflow = TextOverflow.Ellipsis,
                             )
                         }
@@ -909,7 +909,7 @@ fun DataTable(
                                 color = MaterialTheme.colorScheme.onPrimaryContainer,
                                 style = MaterialTheme.typography.labelMedium,
                                 textAlign = if (column.numeric) TextAlign.Center else TextAlign.Start,
-                                maxLines = 1,
+                                maxLines = if (column.numeric) 1 else 2,
                                 overflow = TextOverflow.Ellipsis,
                             )
                         }

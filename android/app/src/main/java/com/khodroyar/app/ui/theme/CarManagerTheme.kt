@@ -101,12 +101,12 @@ private val AppShapes = Shapes(extraSmall = RoundedCornerShape(8.dp), small = Ro
     medium = RoundedCornerShape(18.dp), large = RoundedCornerShape(24.dp), extraLarge = RoundedCornerShape(30.dp))
 
 object AppDimens {
-    val screenPadding = 20.dp
+    val screenPadding = 16.dp
     val gutter = 16.dp
     val gap = 12.dp
     val tightGap = 6.dp
-    val cardPadding = 20.dp
-    val sectionSpacing = 20.dp
+    val cardPadding = 16.dp
+    val sectionSpacing = 16.dp
     val tileMinHeight = 112.dp
     val tileCompactMinHeight = 92.dp
     val rowMinHeight = 64.dp

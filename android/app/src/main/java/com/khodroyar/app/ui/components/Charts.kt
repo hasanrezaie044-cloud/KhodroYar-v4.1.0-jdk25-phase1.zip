@@ -80,9 +80,10 @@ fun InsufficientData(message: String, modifier: Modifier = Modifier) {
 fun TrendBarChart(
     points: List<Analytics.TrendPoint>, metric: TrendMetric, modifier: Modifier = Modifier,
     barHeight: Dp = 190.dp, masked: Boolean = false,
+    timelineDirection: LayoutDirection = LocalLayoutDirection.current, showPointSelector: Boolean = true,
 ) = SeriesChart(points.map { it.label }, points.map { it.metricValue(metric) }, modifier, barHeight,
     MaterialTheme.colorScheme.primary, MaterialTheme.colorScheme.secondary, emptySet(), masked, null,
-    { formatMetric(it, metric) + " " + metric.unit }, bars = true)
+    { formatMetric(it, metric) + " " + metric.unit }, bars = true, timelineDirection = timelineDirection, showPointSelector = showPointSelector)
 
 /** Smooth segments have horizontal controls inside each interval: they cannot invent peaks/negative dips. */
 @Composable
@@ -91,13 +92,16 @@ fun SmoothLineChart(
     lineColor: Color = MaterialTheme.colorScheme.primary, markerColor: Color = MaterialTheme.colorScheme.secondary,
     markers: Set<Int> = emptySet(), masked: Boolean = false, goalValue: Double? = null,
     valueText: (Double) -> String = { Analytics.formatNumber(it) },
-) = SeriesChart(labels, values, modifier, height, lineColor, markerColor, markers, masked, goalValue, valueText)
+    timelineDirection: LayoutDirection = LocalLayoutDirection.current, showPointSelector: Boolean = true,
+) = SeriesChart(labels, values, modifier, height, lineColor, markerColor, markers, masked, goalValue, valueText,
+    timelineDirection = timelineDirection, showPointSelector = showPointSelector)
 
 @Composable
 private fun SeriesChart(
     labels: List<String>, values: List<Double>, modifier: Modifier, height: Dp,
     lineColor: Color, markerColor: Color, markers: Set<Int>, masked: Boolean, goalValue: Double?,
     valueText: (Double) -> String, bars: Boolean = false,
+    timelineDirection: LayoutDirection, showPointSelector: Boolean,
 ) {
     if (masked) {
         InsufficientData(tr("نمودار مالی در حالت حریم خصوصی پنهان است", "Financial chart hidden in privacy mode"), modifier)
@@ -109,7 +113,7 @@ private fun SeriesChart(
     }
     val data = remember(values) { values.map(ChartGeometry::finite) }
     val scale = remember(data, goalValue) { ChartGeometry.scale(data, goalValue) }
-    val rtl = LocalLayoutDirection.current == LayoutDirection.Rtl
+    val rtl = timelineDirection == LayoutDirection.Rtl
     var selected by remember(labels, data) { mutableIntStateOf(data.lastIndex) }
     val index = selected.coerceIn(data.indices)
     val label = labels.getOrElse(index) { (index + 1).toString() }
@@ -221,8 +225,9 @@ private fun SeriesChart(
         if (goalValue != null && goalValue > 0 && goalValue.isFinite()) Text("$goalText · ${valueText(goalValue)}",
             style = MaterialTheme.typography.labelSmall, color = goalColor)
         if (markers.isNotEmpty()) Text(markerText, style = MaterialTheme.typography.labelSmall, color = markerColor)
-        // Every point remains selectable at a >=48dp target, even when axis labels are thinned.
-        LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth()) {
+        // Home uses touch + previous/next accessibility actions instead of a second row
+        // of duplicate labels. Other charts can retain explicit >=48dp point targets.
+        if (showPointSelector) LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth()) {
             itemsIndexed(data) { i, v ->
                 Surface(shape = RoundedCornerShape(10.dp), color = if (i == index) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerLow) {
                     Text(labels.getOrElse(i) { "${i + 1}" }, Modifier.selectable(i == index, role = Role.RadioButton, onClick = { selected = i })
@@ -245,9 +250,11 @@ private fun compactAxis(value: Double): String {
 @Composable
 fun TrendLineChart(
     points: List<Analytics.TrendPoint>, metric: TrendMetric, modifier: Modifier = Modifier,
-    masked: Boolean = false, goalValue: Double? = null,
+    masked: Boolean = false, goalValue: Double? = null, height: Dp = 220.dp,
+    timelineDirection: LayoutDirection = LocalLayoutDirection.current, showPointSelector: Boolean = true,
 ) = SmoothLineChart(labels = points.map { it.label }, values = points.map { it.metricValue(metric) }, modifier = modifier,
-    masked = masked, goalValue = goalValue, valueText = { formatMetric(it, metric) + " " + metric.unit })
+    height = height, masked = masked, goalValue = goalValue, valueText = { formatMetric(it, metric) + " " + metric.unit },
+    timelineDirection = timelineDirection, showPointSelector = showPointSelector)
 
 data class DonutSlice(val id: String, val label: String, val value: Double, val color: Color)
 

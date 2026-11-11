@@ -56,10 +56,8 @@ class OrbitUiSmokeTest {
             acceptedTermsVersion = TermsOfUse.VERSION, remindInstallments = false, remindOilChange = false, remindBodyInsurance = false,
             remindVehicleInsurance = false, remindInspection = false, remindBackup = false, autoBackupEnabled = false) }
         AiSettingsStore(context).save(AiSettings())
-        context.getSharedPreferences("car_manager_onboarding", Context.MODE_PRIVATE).edit().apply {
-            listOf("home", "services", "calendar", "reports", "settings").forEach { putBoolean("tab_$it", true) }
-            listOf("fuel", "finance", "maintenance", "rates", "insurance", "traffic", "ai_assistant").forEach { putBoolean("tool_$it", true) }
-        }.commit()
+        // First-use navigation must stay free of automatic tutorial dialogs.
+        context.getSharedPreferences("car_manager_onboarding", Context.MODE_PRIVATE).edit().clear().commit()
         runBlocking {
             withContext(Dispatchers.IO) { AppDatabase.get(context).clearAllTables() }
             val db = AppDatabase.get(context)
@@ -101,8 +99,8 @@ class OrbitUiSmokeTest {
         compose.onAllNodesWithText("2,750,000").assertCountEquals(0)
         shot("02-home-privacy")
         compose.onNodeWithContentDescription("نمایش مبالغ").performClick()
-        compose.onNodeWithTag("dashboard-list").performScrollToNode(hasText("ستونی"))
-        compose.onNodeWithText("ستونی").performClick()
+        compose.onNodeWithTag("dashboard-list").performScrollToNode(hasTestTag("home-bar-toggle"))
+        compose.onNodeWithTag("home-bar-toggle").performClick()
         compose.onNodeWithTag("dashboard-list").performScrollToNode(
             hasContentDescription("نمودار روند؛ برای جزئیات نقطه‌ای را لمس کنید"))
         shot("18-dashboard-bars")
@@ -118,7 +116,7 @@ class OrbitUiSmokeTest {
         compose.onNodeWithText("ترکیب مالی بازه").assertIsDisplayed()
         shot("06-report-donut")
         compose.onNodeWithTag("nav-SETTINGS").performClick()
-        compose.onNodeWithText("فضای شما، به سلیقهٔ شما").assertIsDisplayed()
+        compose.onNodeWithText("ظاهر برنامه").assertIsDisplayed()
         shot("07-settings")
         compose.onNodeWithContentDescription("ابزارها").performClick()
         compose.onNodeWithText("ابزارهای شما").assertIsDisplayed()
@@ -241,6 +239,76 @@ class OrbitUiSmokeTest {
         compose.onNodeWithText("سرویس جدید").assertIsDisplayed()
     }
 
+    @Test fun homeTimelineMovesRightInPersianForBothChartTypes() {
+        render { CarManagerRoot(repository) }
+        compose.waitUntil(15_000) { compose.onAllNodesWithText("2,750,000").fetchSemanticsNodes().isNotEmpty() }
+        val list = compose.onNodeWithTag("dashboard-list")
+        list.performScrollToNode(hasTestTag("home-line-chart"))
+        val plot = compose.onNodeWithContentDescription("نمودار روند؛ برای جزئیات نقطه‌ای را لمس کنید")
+        plot.performTouchInput { click(Offset(4f, height / 2f)) }
+        compose.onNode(hasText("3,500,000 تومان") and hasAnyAncestor(hasTestTag("home-line-chart"))).assertIsDisplayed()
+        plot.performTouchInput { click(Offset(width - 4f, height / 2f)) }
+        compose.onNode(hasText("2,750,000 تومان") and hasAnyAncestor(hasTestTag("home-line-chart"))).assertIsDisplayed()
+        shot("20-home-line-timeline-right")
+        list.performScrollToNode(hasTestTag("home-bar-toggle"))
+        compose.onNodeWithTag("home-bar-toggle").performClick()
+        list.performScrollToNode(hasTestTag("home-bar-chart"))
+        plot.performTouchInput { click(Offset(4f, height / 2f)) }
+        compose.onNode(hasText("3,500,000 تومان") and hasAnyAncestor(hasTestTag("home-bar-chart"))).assertIsDisplayed()
+        plot.performTouchInput { click(Offset(width - 4f, height / 2f)) }
+        compose.onNode(hasText("2,750,000 تومان") and hasAnyAncestor(hasTestTag("home-bar-chart"))).assertIsDisplayed()
+    }
+
+    @Test fun yearlyTotalsAndRecentServicesMoveToReportsWithoutLosingRecords() {
+        render { CarManagerRoot(repository) }
+        compose.waitUntil(15_000) { compose.onAllNodesWithText("2,750,000").fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithTag("dashboard-list").performScrollToNode(hasTestTag("dashboard-end"))
+        compose.onAllNodesWithTag("report-annual-toggle").assertCountEquals(0)
+        compose.onAllNodesWithText("آخرین سرویس‌ها").assertCountEquals(0)
+        compose.onNodeWithTag("nav-REPORTS").performClick()
+        val list = compose.onNodeWithTag("report-list")
+        list.performScrollToNode(hasTestTag("report-annual-toggle"))
+        compose.onNodeWithTag("report-annual-toggle").performClick()
+        list.performScrollToNode(hasTestTag("report-annual-statistics"))
+        compose.waitUntil(15_000) { compose.onAllNodes(hasText("420,000") and hasAnyAncestor(hasTestTag("report-annual-statistics"))).fetchSemanticsNodes().isNotEmpty() }
+        compose.onNode(hasText("42") and hasAnyAncestor(hasTestTag("report-annual-statistics"))).assertIsDisplayed()
+        shot("21-reports-annual-statistics")
+        list.performScrollToNode(hasTestTag("report-annual-toggle"))
+        compose.onNodeWithTag("report-annual-toggle").performClick()
+        list.performScrollToNode(hasTestTag("report-recent-toggle"))
+        compose.onNodeWithTag("report-recent-toggle").performClick()
+        list.performScrollToNode(hasTestTag("report-recent-ui-service-0"))
+        compose.onNodeWithTag("report-recent-ui-service-0").assertIsDisplayed().assertHasClickAction()
+        shot("22-reports-recent-services")
+        compose.onNodeWithTag("report-recent-ui-service-0").performClick()
+        compose.onAllNodesWithText("ویرایش سرویس").onFirst().assertIsDisplayed()
+        val count = runBlocking { AppDatabase.get(context).services().allOnce().size }
+        assertEquals(6, count)
+    }
+
+    @Test fun reportTableAndFiltersStayUsableAt320DpWithLargeText() {
+        render(fontScale = 1.35f) {
+            Box(Modifier.width(320.dp).testTag("compact-app").fillMaxHeight()) { CarManagerRoot(repository) }
+        }
+        compose.onNodeWithTag("compact-app").assertWidthIsEqualTo(320.dp)
+        compose.onNodeWithTag("nav-REPORTS").performClick()
+        val list = compose.onNodeWithTag("report-list")
+        list.performScrollToNode(hasText("از تاریخ"))
+        compose.onNodeWithText("از تاریخ").assertIsDisplayed()
+        compose.onNodeWithText("تا تاریخ").assertIsDisplayed()
+        list.performScrollToNode(hasTestTag("report-summary-table"))
+        compose.onNodeWithTag("report-summary-table").assertIsDisplayed()
+        compose.onNode(hasText("نوع سرویس") and hasAnyAncestor(hasTestTag("report-summary-table"))).assertIsDisplayed()
+        shot("23-report-table-320-large-text")
+        compose.onNodeWithTag("report-summary-table").performTouchInput { swipeRight() }
+        compose.onNode(hasText("مبلغ (تومان)") and hasAnyAncestor(hasTestTag("report-summary-table"))).assertIsDisplayed()
+        shot("24-report-table-scrolled-amount")
+        compose.onNodeWithTag("nav-HOME").performClick()
+        compose.onNodeWithTag("nav-HOME").assertIsSelected()
+        compose.onNodeWithTag("nav-REPORTS").assertIsNotSelected()
+        compose.onAllNodesWithText("آموزش", substring = true).assertCountEquals(0)
+    }
+
     private fun shot(name: String) {
         // Synchronize the rendered Compose frame, not just updated semantics. A raw
         // UiAutomation screenshot can still contain the frame before a chart tap.
@@ -248,7 +316,7 @@ class OrbitUiSmokeTest {
         compose.waitForIdle()
         // ModalBottomSheet/Dialog adds another root; capture the topmost visible
         // surface rather than asking onRoot() to match exactly one window.
-        val node = if (name == "19-home-dark-320-large-text") compose.onNodeWithTag("compact-app") else compose.onAllNodes(isRoot()).onLast()
+        val node = if (name in setOf("19-home-dark-320-large-text", "23-report-table-320-large-text", "24-report-table-scrolled-amount")) compose.onNodeWithTag("compact-app") else compose.onAllNodes(isRoot()).onLast()
         val bitmap = node.captureToImage().asAndroidBitmap()
         // UTP uninstalls the tested APK after a run, removing its app-specific external files.
         // Publish synthetic screenshots to shared Downloads so CI can collect them afterwards.

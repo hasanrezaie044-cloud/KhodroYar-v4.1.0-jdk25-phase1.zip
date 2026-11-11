@@ -13,10 +13,12 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -27,6 +29,7 @@ import com.khodroyar.app.core.rates.FuelType
 import com.khodroyar.app.core.rates.ServiceType
 import com.khodroyar.app.data.backup.BackupFiles
 import com.khodroyar.app.data.repo.AppRepository
+import com.khodroyar.app.data.db.ServiceEntity
 import com.khodroyar.app.export.PdfReportWriter
 import com.khodroyar.app.export.XlsxWriter
 import com.khodroyar.app.ui.components.*
@@ -50,7 +53,7 @@ import java.io.File
  * the PDF and the Excel workbook, so the three can never disagree.
  */
 @Composable
-fun ReportsScreen(repository: AppRepository) {
+fun ReportsScreen(repository: AppRepository, onOpenService: (ServiceEntity) -> Unit = {}) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val toast = LocalToast.current
@@ -62,13 +65,16 @@ fun ReportsScreen(repository: AppRepository) {
     var from by remember { mutableStateOf(monthRange.first) }
     var to by remember { mutableStateOf(monthRange.second) }
     var typeFilter by remember { mutableStateOf<ServiceType?>(null) }
-    var showDetails by remember { mutableStateOf(false) }
+    var showDetails by rememberSaveable { mutableStateOf(false) }
+    var annualExpanded by rememberSaveable { mutableStateOf(false) }
+    var recentExpanded by rememberSaveable { mutableStateOf(false) }
 
     val allServices by repository.services().collectAsState(initial = emptyList())
     val allFuels by repository.fuels().collectAsState(initial = emptyList())
     val allMaintenance by repository.maintenances().collectAsState(initial = emptyList())
     val allPersonalExpenses by repository.personalExpenses().collectAsState(initial = emptyList())
     val allPersonalIncomes by repository.personalIncomes().collectAsState(initial = emptyList())
+    val recent = remember(allServices) { allServices.take(5) }
 
     val services = remember(allServices, from, to, typeFilter) {
         allServices
@@ -303,51 +309,30 @@ fun ReportsScreen(repository: AppRepository) {
         /* ------------------------------------------------------------- filters */
         item {
             FormSection("بازه گزارش", Icons.Outlined.DateRange) {
-                Row(horizontalArrangement = Arrangement.spacedBy(AppDimens.gap)) {
-                    JalaliDateField("از تاریخ", from, { from = it }, Modifier.weight(1f))
-                    JalaliDateField("تا تاریخ", to, { to = it }, Modifier.weight(1f))
+                BoxWithConstraints {
+                    if (maxWidth < 320.dp || LocalDensity.current.fontScale > 1.2f) {
+                        Column(verticalArrangement = Arrangement.spacedBy(AppDimens.gap)) {
+                            JalaliDateField("از تاریخ", from, { from = it })
+                            JalaliDateField("تا تاریخ", to, { to = it })
+                        }
+                    } else {
+                        Row(horizontalArrangement = Arrangement.spacedBy(AppDimens.gap)) {
+                            JalaliDateField("از تاریخ", from, { from = it }, Modifier.weight(1f))
+                            JalaliDateField("تا تاریخ", to, { to = it }, Modifier.weight(1f))
+                        }
+                    }
                 }
                 Spacer(Modifier.height(AppDimens.gap))
-                // Four boxed period cards: This Month, Last Month, This Week, Year
-                Row(
-                    Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(AppDimens.tightGap),
-                ) {
-    val periodTitles = listOf("این ماه", "ماه گذشته", "این هفته", "سال ${ymd.year}")
-                    val periodActions: List<() -> Unit> = listOf(
-                        {
-                            val r = Jalali.monthRange(ymd.year, ymd.month); from = r.first; to = r.second
-                        },
-                        {
-                            val prev = Jalali.addMonths(today, -1)
-                            Jalali.parse(prev)?.let {
-                                val r = Jalali.monthRange(it.year, it.month); from = r.first; to = r.second
-                            }
-                        },
-                        {
-                            val w = Jalali.weekRange(today); from = w.first; to = w.second
-                        },
-                        {
-                            from = Jalali.format(ymd.year, 1, 1)
-                            to = Jalali.format(ymd.year, 12, Jalali.monthLength(ymd.year, 12))
-                        },
-                    )
-                    periodTitles.forEachIndexed { index, title ->
-                        Surface(
-                            shape = MaterialTheme.shapes.medium,
-                            color = MaterialTheme.colorScheme.surfaceContainer,
-                            modifier = Modifier
-                                .weight(1f)
-                                .defaultMinSize(minHeight = 52.dp)
-                                .clickable(onClick = periodActions[index]),
-                        ) {
-                            Box(
-                                Modifier.padding(horizontal = 6.dp, vertical = 10.dp).fillMaxWidth(),
-                                contentAlignment = Alignment.Center,
-                            ) {
-                                Text(title, style = MaterialTheme.typography.labelMedium, maxLines = 2)
-                            }
-                        }
+                val periods = listOf("این ماه", "ماه گذشته", "این هفته", "سال ${ymd.year}")
+                val actions: List<() -> Unit> = listOf(
+                    { val r = Jalali.monthRange(ymd.year, ymd.month); from = r.first; to = r.second },
+                    { Jalali.parse(Jalali.addMonths(today, -1))?.let { val r = Jalali.monthRange(it.year, it.month); from = r.first; to = r.second } },
+                    { val r = Jalali.weekRange(today); from = r.first; to = r.second },
+                    { from = Jalali.format(ymd.year, 1, 1); to = Jalali.format(ymd.year, 12, Jalali.monthLength(ymd.year, 12)) },
+                )
+                Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    periods.forEachIndexed { index, label ->
+                        SuggestionChip(onClick = actions[index], label = { Text(label, maxLines = 1) }, modifier = Modifier.heightIn(min = 48.dp))
                     }
                 }
                 Spacer(Modifier.height(AppDimens.gap))
@@ -380,6 +365,24 @@ fun ReportsScreen(repository: AppRepository) {
                         )
                     }
                 }
+            }
+        }
+
+        item {
+            CollapsibleSectionTitle("آمار سال ${ymd.year}", icon = Icons.Outlined.CalendarToday,
+                expanded = annualExpanded, onToggle = { annualExpanded = !annualExpanded },
+                englishTitle = "Annual statistics · ${ymd.year}", modifier = Modifier.testTag("report-annual-toggle"))
+        }
+        if (annualExpanded) item { AnnualReportStatistics(repository, ymd.year) }
+        item {
+            CollapsibleSectionTitle(tr("آخرین سرویس‌ها", "Recent services"), icon = Icons.Outlined.History,
+                expanded = recentExpanded, onToggle = { recentExpanded = !recentExpanded },
+                modifier = Modifier.testTag("report-recent-toggle"))
+        }
+        if (recentExpanded) {
+            if (recent.isEmpty()) item { EmptyState(tr("سرویسی ثبت نشده", "No services yet"), icon = Icons.Outlined.Route) }
+            else items(recent, key = { "recent-${it.id}" }) { service ->
+                ServiceRow(service, onClick = { onOpenService(service) }, modifier = Modifier.testTag("report-recent-${service.id}"))
             }
         }
 
@@ -465,18 +468,19 @@ fun ReportsScreen(repository: AppRepository) {
         /* ----------------------------------------- summary table by service type */
         item { SectionTitle("خلاصه بر اساس نوع سرویس", "${summary.rows.size} نوع", Icons.Outlined.TableChart) }
         if (summary.rows.isEmpty()) {
-            item { EmptyState("برای این بازه گزارشی نیست", "بازه تاریخ را تغییر دهید.", Icons.Outlined.Assessment) }
+            item { EmptyState("برای این بازه گزارشی نیست", icon = Icons.Outlined.Assessment) }
         } else {
             item {
                 SurfaceCard(contentPadding = 10.dp) {
                     DataTable(
+                        modifier = Modifier.testTag("report-summary-table"),
                         columns = listOf(
                             TableColumn("نوع سرویس", 92.dp, numeric = false),
                             TableColumn("کیلومتر", 76.dp),
                             TableColumn("ساعت", 62.dp),
                             TableColumn("تعداد", 56.dp),
                             TableColumn("عوارضی", 62.dp),
-                            TableColumn("مبلغ", 104.dp),
+                            TableColumn("مبلغ (تومان)", 112.dp),
                         ),
                         rows = summary.rows.map { row ->
                             listOf(
@@ -500,20 +504,6 @@ fun ReportsScreen(repository: AppRepository) {
                 }
             }
 
-            /* ------------------------------------------------------ overall totals */
-            item {
-                SurfaceCard {
-                    Text("جمع سرویس‌ها", style = MaterialTheme.typography.titleMedium)
-                    Spacer(Modifier.height(8.dp))
-                    InfoRow("تعداد / کیلومتر / ساعت", "${summary.totals.count} · ${money(summary.totals.totalKm)} · ${Analytics.formatHours(summary.totals.totalHours)}")
-                    InfoRow(
-                        "درآمد سرویس",
-                        "${amount(summary.totals.totalAmount)} تومان",
-                        emphasis = true,
-                        valueColor = MaterialTheme.colorScheme.primary,
-                    )
-                }
-            }
         }
 
         /* -------------------------------------------------- fuel & maintenance */
@@ -538,7 +528,7 @@ fun ReportsScreen(repository: AppRepository) {
             )
         }
         if (showDetails) {
-            items(services, key = { it.id }) { ServiceRow(it, detailed = true) }
+            items(services, key = { it.id }) { ServiceRow(it, detailed = true, onClick = { onOpenService(it) }) }
         }
     }
 }

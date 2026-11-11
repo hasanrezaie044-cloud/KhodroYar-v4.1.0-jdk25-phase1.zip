@@ -78,18 +78,24 @@ jobs:
       - name: Home preview
         if: always() && github.event_name == 'workflow_dispatch'
         run: '"$RUNNER_TEMP/ui-preview-env/bin/python" tools/ui-previews.py "$RUNNER_TEMP/orbit-ui-screenshots" 01-home-light-fa'
-      - name: Report preview
+      - name: Annual statistics preview
         if: always() && github.event_name == 'workflow_dispatch'
-        run: '"$RUNNER_TEMP/ui-preview-env/bin/python" tools/ui-previews.py "$RUNNER_TEMP/orbit-ui-screenshots" 06-report-donut'
-      - name: Dark chart preview
+        run: '"$RUNNER_TEMP/ui-preview-env/bin/python" tools/ui-previews.py "$RUNNER_TEMP/orbit-ui-screenshots" 21-reports-annual-statistics'
+      - name: Home line chart preview
         if: always() && github.event_name == 'workflow_dispatch'
-        run: '"$RUNNER_TEMP/ui-preview-env/bin/python" tools/ui-previews.py "$RUNNER_TEMP/orbit-ui-screenshots" 13-chart-dark-en'
+        run: '"$RUNNER_TEMP/ui-preview-env/bin/python" tools/ui-previews.py "$RUNNER_TEMP/orbit-ui-screenshots" 20-home-line-timeline-right'
       - name: Bar chart preview
         if: always() && github.event_name == 'workflow_dispatch'
         run: '"$RUNNER_TEMP/ui-preview-env/bin/python" tools/ui-previews.py "$RUNNER_TEMP/orbit-ui-screenshots" 18-dashboard-bars'
       - name: Compact layout preview
         if: always() && github.event_name == 'workflow_dispatch'
         run: '"$RUNNER_TEMP/ui-preview-env/bin/python" tools/ui-previews.py "$RUNNER_TEMP/orbit-ui-screenshots" 19-home-dark-320-large-text'
+      - name: Recent services preview
+        if: always() && github.event_name == 'workflow_dispatch'
+        run: '"$RUNNER_TEMP/ui-preview-env/bin/python" tools/ui-previews.py "$RUNNER_TEMP/orbit-ui-screenshots" 22-reports-recent-services'
+      - name: Compact report table preview
+        if: always() && github.event_name == 'workflow_dispatch'
+        run: '"$RUNNER_TEMP/ui-preview-env/bin/python" tools/ui-previews.py "$RUNNER_TEMP/orbit-ui-screenshots" 23-report-table-320-large-text'
       - name: Upload native screenshots and test reports
         if: always()
         uses: actions/upload-artifact@v4

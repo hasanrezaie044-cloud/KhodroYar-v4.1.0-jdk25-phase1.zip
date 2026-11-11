@@ -557,18 +557,19 @@ fun ServiceRow(
     service: ServiceEntity,
     detailed: Boolean = false,
     onClick: (() -> Unit)? = null,
+    modifier: Modifier = Modifier,
 ) {
-    val base = Modifier.fillMaxWidth().defaultMinSize(minHeight = AppDimens.rowMinHeight)
+    val base = modifier.fillMaxWidth().defaultMinSize(minHeight = AppDimens.rowMinHeight)
     Surface(
         shape = FieldShape,
         color = MaterialTheme.colorScheme.surfaceContainerLowest,
         border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
         modifier = if (onClick == null) base else base.clickable(onClick = onClick),
     ) {
-        Row(Modifier.padding(horizontal = 12.dp, vertical = 11.dp), verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f)) {
+        Column(Modifier.padding(horizontal = 14.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Column {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(service.date, style = MaterialTheme.typography.titleMedium, maxLines = 1)
+                    Text(service.date, Modifier.weight(1f), style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     if (service.attachmentPath.isNotBlank()) {
                         Spacer(Modifier.width(4.dp))
                         Icon(
@@ -613,9 +614,8 @@ fun ServiceRow(
                     )
                 }
             }
-            Spacer(Modifier.width(8.dp))
             Text(
-                amount(service.income),
+                amount(service.income) + " " + tr("تومان", "Toman"),
                 style = MaterialTheme.typography.titleMedium,
                 color = MaterialTheme.colorScheme.primary,
                 maxLines = 1,

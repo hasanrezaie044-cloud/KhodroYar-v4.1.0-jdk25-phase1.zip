@@ -94,7 +94,7 @@ fun TrafficAssistantScreen(repository: AppRepository) {
         Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(AppDimens.screenPadding),
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
-        ScreenHeader("مسیرتان را آگاهانه انتخاب کنید", "مبارکه به اصفهان · سه کریدور · دادهٔ آنلاین نشان")
+        Text("مبارکه — اصفهان", style = MaterialTheme.typography.titleMedium)
         Collapsible(title = "اتصال به نشان", summary = if (settings.neshanApiKey.isBlank()) "کلید تنظیم نشده" else "کلید ذخیره شده",
             initiallyExpanded = settings.neshanApiKey.isBlank()) {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {

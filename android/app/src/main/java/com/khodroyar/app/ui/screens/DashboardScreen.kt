@@ -8,6 +8,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -15,6 +16,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.LayoutDirection
 import com.khodroyar.app.core.analytics.Analytics
 import com.khodroyar.app.core.holidays.IranHolidays
 import com.khodroyar.app.core.jalali.Jalali
@@ -27,19 +29,7 @@ import com.khodroyar.app.ui.components.*
 import com.khodroyar.app.ui.theme.AppDimens
 import com.khodroyar.app.ui.theme.heroBrush
 
-/**
- * Dashboard.
- *
- * Every metric the app already had is preserved. What is new:
- *  * privacy mode is a real control again — the eye button sits on the hero card and
- *    toggles on each tap, instead of being buried in Settings;
- *  * "مقایسه و روند" now has an actual chart, built from stored records for the last
- *    weeks / months / years, with an explicit insufficient-data state instead of
- *    invented numbers;
- *  * the personnel card opens a full details screen instead of a tooltip;
- *  * every tile row goes through [MetricPair], so neighbouring cards are always the
- *    same size regardless of how long the number inside them is.
- */
+/** A daily overview. Yearly totals and recent records live in Reports. */
 @Composable
 fun DashboardScreen(
     repository: AppRepository,
@@ -52,42 +42,20 @@ fun DashboardScreen(
     onAddService: () -> Unit = {},
     onOpenAssistant: () -> Unit = {},
 ) {
-    val sectionOpen = remember { mutableStateOf(setOf("recent")) }
-    fun toggleSection(key: String) {
-        sectionOpen.value = if (key in sectionOpen.value) sectionOpen.value - key else sectionOpen.value + key
-    }
-
+    var personnelExpanded by remember { mutableStateOf(false) }
     val today = remember { Jalali.todayString() }
     val ymd = remember(today) { Jalali.parse(today) ?: Jalali.today() }
-    val yearPrefix = "${ymd.year}/"
     val monthPrefix = "${ymd.year}/${ymd.month.toString().padStart(2, '0')}"
-    val previousMonth = remember(today) { Jalali.addMonths(today, -1) }
-    val previousMonthPrefix = remember(previousMonth) {
-        Jalali.parse(previousMonth)?.let { "${it.year}/${it.month.toString().padStart(2, '0')}" } ?: monthPrefix
-    }
-
-    // All services: needed for the year-over-year comparison, which cannot come from a
-    // single-year query. The per-period totals still come from the SQL aggregates.
     val allServices by repository.services().collectAsState(initial = emptyList())
     val monthTotals by repository.serviceTotals(monthPrefix).collectAsState(initial = ServiceTotals())
-    val previousMonthTotals by repository.serviceTotals(previousMonthPrefix).collectAsState(initial = ServiceTotals())
-    val yearTotals by repository.serviceTotals(yearPrefix).collectAsState(initial = ServiceTotals())
-    val dailyTotals by repository.dailyTotals(yearPrefix).collectAsState(initial = emptyList())
-    val fuelCostYear by repository.fuelCost(yearPrefix).collectAsState(initial = 0.0)
-    val fuelLitersYear by repository.fuelLiters(yearPrefix).collectAsState(initial = 0.0)
-    val maintenanceYear by repository.maintenanceCost(yearPrefix).collectAsState(initial = 0.0)
     val personnel by repository.personnel().collectAsState(initial = emptyList())
+    val maintenanceRecords by repository.maintenances().collectAsState(initial = emptyList())
     val ratesByYear by repository.ratesByYear.collectAsState(initial = RatesByYear.empty())
-
-    val yearServices = remember(allServices, yearPrefix) { allServices.filter { it.date.startsWith(yearPrefix) } }
-    val todaySummary = remember(yearServices, today) { Analytics.daySummary(yearServices, today) }
-    val average = remember(yearServices, today) { Analytics.recentAverage(yearServices, today, 14) }
-    val week = remember(dailyTotals, today) { Analytics.weekTotals(dailyTotals, today) }
-    val recent = remember(allServices) { allServices.take(5) }
+    val todaySummary = remember(allServices, today) { Analytics.daySummary(allServices, today) }
     val holidayTitle = remember(today) { IranHolidays.titleFor(today) }
 
     // Maintenance due statuses based on driven km from registered services.
-    val maintenanceStates = produceState<List<Analytics.ServiceDue>>(initialValue = emptyList(), yearServices, maintenanceYear, ratesByYear, settings) {
+    val maintenanceStates = produceState<List<Analytics.ServiceDue>>(initialValue = emptyList(), allServices, maintenanceRecords, ratesByYear, settings) {
         val rates = ratesByYear.forYear(ymd.year)
         val odo = settings.vehicleCurrentKm
         value = listOf(
@@ -99,11 +67,8 @@ fun DashboardScreen(
         )
     }
 
-    val avgIncomePerService =
-        if (monthTotals.count > 0) monthTotals.totalIncome.toDouble() / monthTotals.count else 0.0
     val goal = settings.monthlyIncomeGoal
     val goalProgress = if (goal > 0) (monthTotals.totalIncome / goal).coerceIn(0.0, 1.0) else 0.0
-    val netProfitYear = yearTotals.totalIncome - fuelCostYear - maintenanceYear
 
     Box(Modifier.fillMaxSize()) {
         LazyColumn(
@@ -121,14 +86,12 @@ fun DashboardScreen(
                 Column(Modifier.weight(1f)) {
                     Text(if (settings.displayName.isNotBlank()) "سلام، ${settings.displayName}" else tr("سلام، خوش آمدید", "Welcome back"),
                         style = MaterialTheme.typography.headlineSmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                    Text(tr("یک نگاه به روز شما", "Your day at a glance"), style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 IconBadge(Icons.Outlined.WbSunny, tint = MaterialTheme.colorScheme.tertiary, size = 44.dp)
             }
         }
         item {
-            GradientCard(brush = heroBrush()) {
+            GradientCard(brush = heroBrush(), contentPadding = 18.dp) {
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
                         Text(tr("درآمد امروز", "Today's income"), color = Color(0xFFB9CFD0), style = MaterialTheme.typography.labelLarge)
@@ -137,14 +100,14 @@ fun DashboardScreen(
                     PrivacyToggle(enabled = settings.privacyMode, onToggle = onTogglePrivacy)
                 }
                 Spacer(Modifier.height(12.dp))
-                Text(amount(todaySummary.totalIncome), color = Color.White, style = MaterialTheme.typography.displayMedium,
+                Text(amount(todaySummary.totalIncome), color = Color.White, style = MaterialTheme.typography.displaySmall,
                     maxLines = 2, overflow = TextOverflow.Ellipsis)
                 Text(tr("تومان", "Toman"), color = Color(0xFFA5CFC5), style = MaterialTheme.typography.labelMedium)
                 holidayTitle?.takeIf { !settings.privacyMode }?.let {
                     Spacer(Modifier.height(8.dp))
                     Text("تعطیل رسمی: $it", color = Color(0xFFFFD6B1), style = MaterialTheme.typography.bodySmall, maxLines = 2)
                 }
-                HorizontalDivider(Modifier.padding(vertical = 18.dp), color = Color.White.copy(alpha = 0.13f))
+                HorizontalDivider(Modifier.padding(vertical = 12.dp), color = Color.White.copy(alpha = 0.13f))
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     HeroStat(tr("سرویس", "Trips"), money(todaySummary.count), Modifier.weight(1f), Icons.Outlined.Route)
                     HeroStat(tr("کیلومتر", "Kilometres"), money(todaySummary.totalKm), Modifier.weight(1f), Icons.Outlined.Speed)
@@ -179,67 +142,13 @@ fun DashboardScreen(
         }
 
         if (!settings.privacyMode) {
-            /* ---------------------------------------------------------- trend */
             item {
-                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    Text(tr("روند عملکرد", "Performance"), Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
-                    TextButton(onClick = onOpenReports) { Text(tr("گزارش کامل", "Full report")) }
-                }
+                TrendSection(allServices = allServices, today = today, onOpenReports = onOpenReports)
             }
-            item {
-                TrendSection(
-                    allServices, today, settings.privacyMode,
-                    todaySummary, average, week, monthTotals, previousMonthTotals, avgIncomePerService,
-                    monthlyGoal = goal,
-                )
-            }
-        }
-
-        /* -------------------------------------------------- annual figures */
-        item { CollapsibleSectionTitle(
-            "آمار سال ${ymd.year}", icon = Icons.Outlined.CalendarToday,
-            expanded = "annual" in sectionOpen.value, onToggle = { toggleSection("annual") },
-            englishTitle = "Annual Statistics"
-        ) }
-        if ("annual" in sectionOpen.value) {
-            item {
-                Column(verticalArrangement = Arrangement.spacedBy(AppDimens.gap)) {
-                    MetricPair(
-                    first = { m -> MetricCard("سرویس", yearTotals.count.toString(), Icons.Outlined.Route, m) },
-                    second = { m -> MetricCard("کیلومتر", money(yearTotals.totalKm), Icons.Outlined.Speed, m) },
-                )
-                MetricPair(
-                    first = { m ->
-                        MetricCard("کارکرد", "${Analytics.formatHours(yearTotals.totalHours)} ساعت", Icons.Outlined.Schedule, m)
-                    },
-                    second = { m -> MetricCard("درآمد", amount(yearTotals.totalIncome), Icons.Outlined.Payments, m) },
-                )
-                MetricPair(
-                    first = { m ->
-                        MetricCard("سوخت", amount(fuelCostYear), Icons.Outlined.LocalGasStation, m, accent = MaterialTheme.colorScheme.secondary)
-                    },
-                    second = { m ->
-                        MetricCard("لیتر", money(fuelLitersYear), Icons.Outlined.WaterDrop, m, accent = MaterialTheme.colorScheme.tertiary)
-                    },
-                )
-                MetricPair(
-                    first = { m ->
-                        MetricCard("تعمیرات", amount(maintenanceYear), Icons.Outlined.Build, m, accent = MaterialTheme.colorScheme.secondary)
-                    },
-                    second = { m ->
-                        MetricCard(
-                            "سود خالص", amount(netProfitYear), Icons.Outlined.TrendingUp, m,
-                            accent = if (netProfitYear >= 0) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
-                        )
-                    },
-                )
-            }
-        }
-
         }
 
         /* -------------------------- collapsible periodic service status */
-        if (maintenanceStates.value.isNotEmpty()) {
+        if (maintenanceStates.value.any { it.nextKm > 0 || it.baseCurrentKm > 0 }) {
             item {
                 val dues = maintenanceStates.value
                 val overdueCount = dues.count { it.isOverdue }
@@ -319,58 +228,26 @@ fun DashboardScreen(
             }
         }
 
-        /* ------------------------------------------------- personnel card */
-        item { CollapsibleSectionTitle(
-            "پرسنل", if (personnel.isEmpty()) "" else "${personnel.size} نفر", Icons.Outlined.Group,
-            expanded = "personnel" in sectionOpen.value, onToggle = { toggleSection("personnel") },
-            englishTitle = "Personnel"
-        ) }
-        if ("personnel" in sectionOpen.value) {
+        if (personnel.isNotEmpty()) {
             item {
-            if (personnel.isEmpty()) {
-                SurfaceCard {
-                    Text(tr("اطلاعات پرسنلی ثبت نشده است", "No personnel information has been added"), style = MaterialTheme.typography.titleMedium)
-                }
-            } else {
-                Column(verticalArrangement = Arrangement.spacedBy(AppDimens.gap)) {
-                    personnel.forEach { person ->
-                        ActionRow(
-                            title = person.name.ifBlank { "پرسنل" },
-                            subtitle = listOf(
-                                person.personnelCode.takeIf { it.isNotBlank() }?.let { "کد $it" } ?: "",
-                                person.costCenter.takeIf { it.isNotBlank() }?.let { "مرکز هزینه $it" } ?: "",
-                            ).filter { it.isNotBlank() }.joinToString(" · ").ifBlank { "مشاهده اطلاعات کامل" },
-                            icon = Icons.Outlined.Badge,
-                            trailing = "مشاهده",
-                            onClick = { onOpenPersonnel(person) },
-                        )
-                    }
-                }
-            }
-        }
-
-        }
-
-        item { CollapsibleSectionTitle(
-            "آخرین سرویس‌ها", icon = Icons.Outlined.History,
-            expanded = "recent" in sectionOpen.value, onToggle = { toggleSection("recent") },
-            englishTitle = "Recent Services"
-        ) }
-        if ("recent" in sectionOpen.value) {
-            if (recent.isEmpty()) {
-            item {
-                EmptyState(
-                    "هنوز سرویسی ثبت نشده",
-                    "",
-                    Icons.Outlined.Route,
+                CollapsibleSectionTitle(
+                    "پرسنل", "${personnel.size}", Icons.Outlined.Group,
+                    expanded = personnelExpanded, onToggle = { personnelExpanded = !personnelExpanded }, englishTitle = "Personnel",
                 )
             }
-            } else {
-                items(recent, key = { it.id }) { ServiceRow(it) }
+            if (personnelExpanded) {
+                items(personnel, key = { "person-${it.id}" }) { person ->
+                    ActionRow(
+                        title = person.name.ifBlank { "پرسنل" },
+                        subtitle = listOf(person.personnelCode, person.costCenter).filter { it.isNotBlank() }.joinToString(" · "),
+                        icon = Icons.Outlined.Badge,
+                        onClick = { onOpenPersonnel(person) },
+                    )
+                }
             }
         }
+        item { Spacer(Modifier.height(1.dp).testTag("dashboard-end")) }
         }
-
     }
 }
 
@@ -390,8 +267,8 @@ private fun PrivacyToggle(enabled: Boolean, onToggle: () -> Unit) {
 private fun DashboardAction(label: String, icon: androidx.compose.ui.graphics.vector.ImageVector, modifier: Modifier, onClick: () -> Unit) {
     Surface(onClick = onClick, modifier = modifier, color = MaterialTheme.colorScheme.surfaceContainerLowest,
         shape = RoundedCornerShape(18.dp), border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) {
-        Column(Modifier.padding(horizontal = 6.dp, vertical = 16.dp), horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Column(Modifier.padding(horizontal = 6.dp, vertical = 12.dp), horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Icon(icon, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(24.dp))
             Text(label, style = MaterialTheme.typography.labelSmall, maxLines = 2, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
         }
@@ -400,127 +277,72 @@ private fun DashboardAction(label: String, icon: androidx.compose.ui.graphics.ve
 
 /* --------------------------------------------------------------- trend block */
 
-/**
- * The chart for "مقایسه و روند".
- *
- * The scale selector answers the three questions asked of it directly: this week vs the
- * previous weeks, this month vs the previous months, and this year vs the previous
- * years. Buckets are filled from stored services only; when fewer than two buckets
- * contain any record there is nothing meaningful to compare, so an explicit
- * insufficient-data state is shown instead of drawing a flat or fabricated line.
- */
+/** Compact native controls; the time axis deliberately advances towards the right in Persian too. */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun TrendSection(
     allServices: List<com.khodroyar.app.data.db.ServiceEntity>,
     today: String,
-    privacyMode: Boolean,
-    todaySummary: Analytics.DaySummary,
-    average: Analytics.Average,
-    week: Analytics.DaySummary,
-    monthTotals: ServiceTotals,
-    previousMonthTotals: ServiceTotals,
-    avgIncomePerService: Double,
-    monthlyGoal: Double = 0.0,
+    onOpenReports: () -> Unit,
 ) {
-    var scale by remember { mutableStateOf(Analytics.TrendScale.MONTH) }
-    var metric by remember { mutableStateOf(TrendMetric.INCOME) }
-    var barView by remember { mutableStateOf(false) }
-
-    val buckets = when (scale) {
-        Analytics.TrendScale.WEEK -> 6
-        Analytics.TrendScale.MONTH -> 6
-        Analytics.TrendScale.YEAR -> 4
+    var scale by rememberSaveable { mutableStateOf(Analytics.TrendScale.MONTH) }
+    var metric by rememberSaveable { mutableStateOf(TrendMetric.INCOME) }
+    var barView by rememberSaveable { mutableStateOf(false) }
+    val points = remember(allServices, scale, today) {
+        Analytics.trend(allServices, scale, if (scale == Analytics.TrendScale.YEAR) 4 else 6, today)
     }
-    val points = remember(allServices, scale, buckets, today) {
-        Analytics.trend(allServices, scale, buckets, today)
-    }
-    val populated = points.count { !it.isEmpty }
-    val current = points.lastOrNull()
-    val previous = points.getOrNull(points.lastIndex - 1)
-    val masked = privacyMode && metric == TrendMetric.INCOME
-
-    SurfaceCard {
-        // Headline: current period's value for the selected metric, the way the
-        // reference dashboards lead with one big number instead of a wall of rows.
-        Text(
-            "${metric.label} — ${current?.label ?: ""}",
-            style = MaterialTheme.typography.labelLarge,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        Spacer(Modifier.height(2.dp))
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(
-                if (masked) "••••••" else formatMetric(current?.metricValue(metric) ?: 0.0, metric) + " " + metric.unit,
-                Modifier.weight(1f),
-                style = MaterialTheme.typography.headlineMedium,
-                color = MaterialTheme.colorScheme.onSurface,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            if (!masked && current != null && previous != null) {
-                DeltaChip(current.metricValue(metric), previous.metricValue(metric))
+    val periodLabels = mapOf(
+        Analytics.TrendScale.WEEK to tr("هفتگی", "Weekly"),
+        Analytics.TrendScale.MONTH to tr("ماهانه", "Monthly"),
+        Analytics.TrendScale.YEAR to tr("سالانه", "Yearly"),
+    )
+    val metricLabels = mapOf(TrendMetric.INCOME to tr("درآمد", "Income"), TrendMetric.KM to tr("کیلومتر", "Distance"),
+        TrendMetric.HOURS to tr("ساعت", "Hours"), TrendMetric.COUNT to tr("تعداد", "Trips"))
+    SurfaceCard(modifier = Modifier.testTag("home-trend")) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Text(tr("روند عملکرد", "Performance"), Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
+            TextButton(onClick = onOpenReports) { Text(tr("گزارش", "Reports")) }
+        }
+        FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp), itemVerticalAlignment = Alignment.CenterVertically) {
+            ChartChoice(Analytics.TrendScale.entries.toList(), scale, { periodLabels.getValue(it) }, { scale = it }, "home-period")
+            ChartChoice(TrendMetric.entries.toList(), metric, { metricLabels.getValue(it) }, { metric = it }, "home-metric")
+            Row {
+                IconToggleButton(checked = !barView, onCheckedChange = { barView = false }, modifier = Modifier.testTag("home-line-toggle")) {
+                    Icon(Icons.Outlined.ShowChart, tr("نمودار خطی", "Line chart"), tint = if (!barView) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                IconToggleButton(checked = barView, onCheckedChange = { barView = true }, modifier = Modifier.testTag("home-bar-toggle")) {
+                    Icon(Icons.Outlined.BarChart, tr("نمودار ستونی", "Bar chart"), tint = if (barView) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
+                }
             }
         }
-        Spacer(Modifier.height(AppDimens.gutter))
-
-        SegmentedSelector(
-            options = listOf(Analytics.TrendScale.WEEK, Analytics.TrendScale.MONTH, Analytics.TrendScale.YEAR),
-            selected = scale,
-            label = {
-                when (it) {
-                    Analytics.TrendScale.WEEK -> "هفتگی"
-                    Analytics.TrendScale.MONTH -> "ماهانه"
-                    Analytics.TrendScale.YEAR -> "سالانه"
-                }
-            },
-            onSelect = { scale = it },
-        )
-        Spacer(Modifier.height(AppDimens.gap))
-        HorizontalChipSelector(
-            options = TrendMetric.entries.toList(),
-            selected = metric,
-            label = { it.label },
-            onSelect = { metric = it },
-        )
-        Spacer(Modifier.height(AppDimens.gutter))
-
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            FilterChip(selected = !barView, onClick = { barView = false }, label = { Text(tr("خطی", "Line")) },
-                leadingIcon = { Icon(Icons.Outlined.ShowChart, null, Modifier.size(16.dp)) })
-            FilterChip(selected = barView, onClick = { barView = true }, label = { Text(tr("ستونی", "Bars")) },
-                leadingIcon = { Icon(Icons.Outlined.BarChart, null, Modifier.size(16.dp)) })
-        }
-        if (populated < 2) {
-            InsufficientData(tr("برای مقایسه، در دست‌کم دو بازه سرویس ثبت کنید", "Record trips in at least two periods to compare"))
+        if (points.count { !it.isEmpty } < 2) {
+            InsufficientData(tr("دادهٔ کافی نیست", "Not enough data"))
         } else if (barView) {
-            TrendBarChart(points = points, metric = metric, masked = masked)
+            TrendBarChart(points, metric, modifier = Modifier.testTag("home-bar-chart"), barHeight = 180.dp,
+                timelineDirection = LayoutDirection.Ltr, showPointSelector = false)
         } else {
-            TrendLineChart(
-                points = points,
-                metric = metric,
-                masked = masked,
-                goalValue = if (scale == Analytics.TrendScale.MONTH && metric == TrendMetric.INCOME && monthlyGoal > 0) monthlyGoal else null,
-            )
-
+            TrendLineChart(points, metric, modifier = Modifier.testTag("home-line-chart"), height = 180.dp,
+                timelineDirection = LayoutDirection.Ltr, showPointSelector = false)
         }
     }
 }
 
 @Composable
-private fun CompareRow(label: String, current: Double, reference: Double) {
-    Row(
-        Modifier.fillMaxWidth().padding(vertical = 3.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text(
-            label,
-            Modifier.weight(1f),
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            maxLines = 2,
-            overflow = TextOverflow.Ellipsis,
-        )
-        Spacer(Modifier.width(8.dp))
-        DeltaChip(current, reference)
+private fun <T> ChartChoice(options: List<T>, selected: T, label: (T) -> String, onSelect: (T) -> Unit, tag: String) {
+    var open by remember { mutableStateOf(false) }
+    Box {
+        TextButton(onClick = { open = true }, modifier = Modifier.testTag(tag).heightIn(min = 48.dp),
+            contentPadding = PaddingValues(horizontal = 8.dp)) {
+            Text(label(selected), style = MaterialTheme.typography.labelLarge)
+            Spacer(Modifier.width(4.dp))
+            Icon(Icons.Outlined.ExpandMore, null, Modifier.size(16.dp))
+        }
+        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+            options.forEach { option ->
+                DropdownMenuItem(text = { Text(label(option)) }, onClick = { onSelect(option); open = false },
+                    trailingIcon = if (option == selected) { { Icon(Icons.Outlined.Check, null, Modifier.size(18.dp)) } } else null)
+            }
+        }
     }
 }

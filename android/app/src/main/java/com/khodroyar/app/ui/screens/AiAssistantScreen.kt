@@ -177,7 +177,7 @@ fun AiAssistantScreen(vm: AiAssistantViewModel = viewModel(), onNavigate: (Agent
             onChange = { input = it.take(AiLimits.MAX_USER_CHARS) },
             enabled = settings.enabled && (vm.pending == null || settings.mode == AiMode.LOCAL) && !vm.savingSettings,
             busy = vm.busy,
-            placeholder = if (settings.mode == AiMode.LOCAL) "راحت بنویس؛ مثلاً «نه، از فردا»" else if (vm.pending != null) "ابتدا عملیات بالا را تأیید یا لغو کنید" else "پیام خود را بنویسید…",
+            placeholder = if (settings.mode == AiMode.LOCAL) "پیام شما…" else if (vm.pending != null) "ابتدا عملیات بالا را تأیید یا لغو کنید" else "پیام خود را بنویسید…",
             onSend = { vm.send(input); if (settings.mode == AiMode.LOCAL || settings.consented) input = "" },
         )
     }
@@ -411,9 +411,9 @@ private fun EmptyState(state: ConnectionState, mode: AiMode, onSettings: () -> U
         Spacer(Modifier.height(6.dp))
         Text(
             when (mode) {
-                AiMode.LOCAL -> "کوتاه و راحت بگو؛ جزئیات ناقص را می‌پرسم. ثبت، گزارش و کارهای تکراری خودرو بدون API انجام می‌شوند. این دستیار تخصصی است، نه چت‌بات عمومی؛ فقط ترافیک تازه اینترنت می‌خواهد."
-                AiMode.ONLINE -> "اتصال از طریق بک‌اند خودرویار؛ آدرس مستقیم GapGPT را در این حالت وارد نکنید. برای اتصال مستقیم، گزینهٔ جداگانهٔ GapGPT در تنظیمات است."
-                AiMode.GAPGPT_DIRECT -> "اتصال مستقیم به Chat Completions گپ‌جی‌پی‌تی؛ به کلید واقعی، اینترنت و اعتبار حساب نیاز دارد. کلید فقط با رمزنگاری گوشی نگهداری می‌شود. ارسال اطلاعات و ثبت/حذف همچنان با رضایت و تأیید شماست."
+                AiMode.LOCAL -> "دستیار تخصصی خودرو · بدون API"
+                AiMode.ONLINE -> "بک‌اند خودرویار · آنلاین"
+                AiMode.GAPGPT_DIRECT -> "GapGPT · اتصال مستقیم"
             },
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
