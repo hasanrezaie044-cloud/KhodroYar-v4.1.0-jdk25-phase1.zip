@@ -72,6 +72,13 @@ class QuickEntries(
     private val ratesFor: suspend (Int) -> Rates,
 ) {
     val receipt: StateFlow<EntryReceipt?> get() = latest
+    val recoveryNotice: StateFlow<String?> get() = settings.quickMileageNotice
+    fun acknowledgeRecoveryNotice() = settings.acknowledgeQuickMileageNotice()
+    suspend fun recover() = withContext(Dispatchers.IO + NonCancellable) {
+        RecordMutations.mutex.withLock { QuickMileageJournal.recover(db, settings) }
+        Unit
+    }
+
 
     suspend fun previewIncome(draft: QuickDraft): Long? = draft.trip?.let { row ->
         val rates = ratesFor(requireNotNull(Jalali.parse(draft.date)).year)
@@ -80,12 +87,12 @@ class QuickEntries(
     }
 
     suspend fun save(draft: QuickDraft, operationId: String, expectedIncome: Long? = null, editing: EntryReceipt? = null): EntryReceipt = withContext(Dispatchers.IO + NonCancellable) {
-        RecordMutations.mutex.withLock {
+        RecordMutations.mutate(db, settings) {
             require(draft.error() == null) { draft.error().orEmpty() }
             require(runCatching { UUID.fromString(operationId) }.isSuccess)
             consumed[operationId]?.let { previous ->
                 check(latest.value?.revision == previous.revision) { "این درخواست قبلاً پردازش شده؛ دوباره ثبت نشد." }
-                return@withLock previous
+                return@mutate previous
             }
             if (editing != null) check(editing.draft.kind == draft.kind && latest.value?.revision == editing.revision && matches(editing)) { "ثبت تغییر کرده است؛ دوباره آن را از فهرست اصلی باز کن." }
             val income = previewIncome(draft)
@@ -99,8 +106,7 @@ class QuickEntries(
                     draft.title.ifBlank { MaintenanceType.fromWire(draft.maintenanceType).label }, draft.amount, draft.km, draft.carType, "", timestamp)
                 QuickKind.SERVICE -> requireNotNull(draft.trip).copy(id = id, date = draft.date, carType = draft.carType, income = requireNotNull(income), timestamp = timestamp, attachmentPath = "", requestNumber = "")
             }
-            var before = settings.current
-            var after = before
+            val before = settings.current
             val mileage = (row as? ServiceEntity)?.takeIf { ServiceType.fromWire(it.type) !in ServiceType.FIXED_AMOUNT_TYPES }?.km
             val previousMileage = (editing?.row as? ServiceEntity)?.takeIf { ServiceType.fromWire(it.type) !in ServiceType.FIXED_AMOUNT_TYPES }?.km ?: 0.0
             if (editing?.odometerAfter != null) check(before.vehicleCurrentKm == editing.odometerAfter) { "کیلومتر خودرو بعد از این ثبت تغییر کرده؛ از ویرایش کامل سرویس استفاده کن." }
@@ -110,28 +116,33 @@ class QuickEntries(
                 val old = editing.tracked
                 check(before.currentKmFor(old.wire) == old.afterCurrent && before.nextKmFor(old.wire) == old.afterNext && trackedType == old.wire) { "تنظیم سرویس دوره‌ای تغییر کرده؛ از فرم کامل تعمیر استفاده کن." }
             }
-            db.withTransaction {
-                if (editing != null) check(matches(editing)) { "رکورد هم‌زمان ویرایش شد؛ تغییری نکرد." }
-                when (row) {
-                    is PersonalExpenseEntity -> if (editing == null) check(db.personalExpenses().insertIfAbsent(row) != -1L) else db.personalExpenses().insert(row)
-                    is FuelEntity -> if (editing == null) check(db.fuels().insertIfAbsent(row) != -1L) else db.fuels().insert(row)
-                    is MaintenanceEntity -> if (editing == null) check(db.maintenances().insertIfAbsent(row) != -1L) else db.maintenances().insert(row)
-                    is ServiceEntity -> if (editing == null) check(db.services().insertIfAbsent(row) != -1L) else db.services().update(row)
-                    else -> error("نوع ثبت معتبر نیست")
+            val touchesOdometer = mileage != null || previousMileage > 0
+            var planned = before
+            if (touchesOdometer) planned = planned.copy(vehicleCurrentKm = (planned.vehicleCurrentKm + (mileage ?: 0.0) - previousMileage).coerceAtLeast(0.0))
+            if (trackedType != null) planned = planned.withTrackedKm(trackedType, draft.km, next)
+            val journal = QuickMileageJournal.plan(draft.kind, id, editing?.row, row, before, planned, touchesOdometer, trackedType)
+            journal?.let { settings.stageQuickMileage(it.encode(), it::beforeMatches) }
+            var recovery = QuickMileageJournal.Recovery.NONE
+            try {
+                db.withTransaction {
+                    if (editing != null) check(matches(editing)) { "رکورد هم‌زمان ویرایش شد؛ تغییری نکرد." }
+                    when (row) {
+                        is PersonalExpenseEntity -> if (editing == null) check(db.personalExpenses().insertIfAbsent(row) != -1L) else db.personalExpenses().insert(row)
+                        is FuelEntity -> if (editing == null) check(db.fuels().insertIfAbsent(row) != -1L) else db.fuels().insert(row)
+                        is MaintenanceEntity -> if (editing == null) check(db.maintenances().insertIfAbsent(row) != -1L) else db.maintenances().insert(row)
+                        is ServiceEntity -> if (editing == null) check(db.services().insertIfAbsent(row) != -1L) else db.services().update(row)
+                        else -> error("نوع ثبت معتبر نیست")
+                    }
                 }
-                check(settings.updateIf({ state -> editing == null || stateMatches(editing, state) }) { state ->
-                    before = state
-                    var value = state
-                    if (mileage != null || previousMileage > 0) value = value.copy(vehicleCurrentKm = (value.vehicleCurrentKm + (mileage ?: 0.0) - previousMileage).coerceAtLeast(0.0))
-                    if (trackedType != null) value = value.withTrackedKm(trackedType, draft.km, next)
-                    after = value
-                    value
-                }) { "کیلومتر هم‌زمان تغییر کرد؛ ثبت قبلی و تنظیمات را دوباره بررسی کن." }
+            } finally {
+                if (journal != null) recovery = QuickMileageJournal.recover(db, settings)
             }
+            check(recovery != QuickMileageJournal.Recovery.CONFLICT) { "رکورد ثبت شد؛ کیلومترِ دستی حفظ شد. فهرست و کیلومتر خودرو را بررسی کن؛ دوباره ثبت نکن." }
+            val after = settings.current
             val change = trackedType?.let { TrackedChange(it, editing?.tracked?.beforeCurrent ?: before.currentKmFor(it), editing?.tracked?.beforeNext ?: before.nextKmFor(it), after.currentKmFor(it), after.nextKmFor(it)) }
             val saved = EntryReceipt(id, draft, row,
-                odometerBefore = if (mileage != null) editing?.odometerBefore ?: before.vehicleCurrentKm else null,
-                odometerAfter = if (mileage != null) after.vehicleCurrentKm else null, tracked = change)
+                odometerBefore = if (touchesOdometer) editing?.odometerBefore ?: before.vehicleCurrentKm else null,
+                odometerAfter = if (touchesOdometer) after.vehicleCurrentKm else null, tracked = change)
             check(matches(saved)) { "نتیجهٔ ثبت در پایگاه‌داده تأیید نشد؛ فهرست اصلی را بررسی کن." }
             consumed[operationId] = saved; if (consumed.size > 256) consumed.remove(consumed.keys.first())
             latest.value = saved
@@ -149,32 +160,35 @@ class QuickEntries(
 
     /** Refuse stale receipts or changed odometer/tracking; never delete an arbitrary last row. */
     suspend fun undo(receipt: EntryReceipt): Boolean = withContext(Dispatchers.IO + NonCancellable) {
-        RecordMutations.mutex.withLock {
-            if (latest.value?.revision != receipt.revision) return@withLock false
+        RecordMutations.mutate(db, settings) {
+            if (latest.value?.revision != receipt.revision) return@mutate false
+            if (!matches(receipt) || !stateMatches(receipt, settings.current)) return@mutate false
+            val before = settings.current
+            var planned = before
+            receipt.odometerBefore?.let { planned = planned.copy(vehicleCurrentKm = it) }
+            receipt.tracked?.let { planned = planned.withTrackedKm(it.wire, it.beforeCurrent, it.beforeNext) }
+            val journal = QuickMileageJournal.plan(receipt.draft.kind, receipt.id, receipt.row, null, before, planned,
+                receipt.odometerAfter != null, receipt.tracked?.wire)
+            journal?.let { settings.stageQuickMileage(it.encode(), it::beforeMatches) }
             val success = try {
                 db.withTransaction {
-                    if (!matches(receipt) || !stateMatches(receipt, settings.current)) return@withTransaction false
+                    if (!matches(receipt)) return@withTransaction false
                     when (receipt.row) {
                         is PersonalExpenseEntity -> db.personalExpenses().deleteById(receipt.id)
                         is FuelEntity -> db.fuels().deleteById(receipt.id)
                         is MaintenanceEntity -> db.maintenances().deleteById(receipt.id)
                         is ServiceEntity -> db.services().deleteById(receipt.id)
                     }
-                    if (!settings.updateIf({ stateMatches(receipt, it) }) { state ->
-                        var value = state
-                        receipt.odometerBefore?.let { value = value.copy(vehicleCurrentKm = it) }
-                        receipt.tracked?.let { t -> value = value.withTrackedKm(t.wire, t.beforeCurrent, t.beforeNext) }
-                        value
-                    }) throw UndoConflict()
                     true
                 }
-            } catch (_: UndoConflict) { false }
+            } finally {
+                if (journal != null) QuickMileageJournal.recover(db, settings)
+            }
             if (success) latest.value = null
             success
         }
     }
 
-    private class UndoConflict : IllegalStateException()
     private fun stateMatches(receipt: EntryReceipt, state: AppSettings): Boolean =
         (receipt.odometerAfter == null || state.vehicleCurrentKm == receipt.odometerAfter) &&
             (receipt.tracked?.let { state.currentKmFor(it.wire) == it.afterCurrent && state.nextKmFor(it.wire) == it.afterNext } != false)

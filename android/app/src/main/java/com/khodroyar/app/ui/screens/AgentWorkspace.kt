@@ -118,7 +118,7 @@ internal fun AutomationManagerSheet(
                             val health = rule.health(Instant.now(), holidays)
                             StatusPill(if (calendarLoaded) health.label else "…", color = when (health) {
                                 AutomationHealth.FAILED -> MaterialTheme.colorScheme.error
-                                AutomationHealth.WAITING -> MaterialTheme.colorScheme.tertiary
+                                AutomationHealth.WAITING, AutomationHealth.LATE -> MaterialTheme.colorScheme.tertiary
                                 else -> MaterialTheme.colorScheme.primary
                             })
                         }

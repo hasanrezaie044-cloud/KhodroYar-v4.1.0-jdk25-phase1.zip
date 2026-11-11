@@ -29,8 +29,9 @@ class ReminderWorker(context: Context, params: WorkerParameters) : CoroutineWork
         // health card is what tells the user this is why they saw nothing.
         if (!Notifications.canPost(ctx)) return Result.success()
 
-        val settings = SettingsStore.get(ctx).current
         val repo = AppRepository(ctx)
+        repo.quickEntries.recover()
+        val settings = SettingsStore.get(ctx).current
         val today = Jalali.todayString()
         val ymd = Jalali.parse(today) ?: return Result.success()
 
@@ -133,6 +134,8 @@ class ReminderWorker(context: Context, params: WorkerParameters) : CoroutineWork
         )
         val overdue = mutableListOf<String>()
         val soon = mutableListOf<String>()
+        val overdueTypes = mutableListOf<String>()
+        val soonTypes = mutableListOf<String>()
         val today = Jalali.todayString()
         val pace = repo.drivingPace(today).first()
         for ((wire, label, interval) in tracked) {
@@ -144,8 +147,12 @@ class ReminderWorker(context: Context, params: WorkerParameters) : CoroutineWork
             )
             val remaining = due.remainingKm ?: continue
             when {
-                due.isOverdue -> overdue += "$label: از حد مجاز ${Analytics.formatNumber(-remaining)} کیلومتر گذشته است"
+                due.isOverdue -> {
+                    overdue += "$label: از حد مجاز ${Analytics.formatNumber(-remaining)} کیلومتر گذشته است"
+                    overdueTypes += wire
+                }
                 due.isDueSoon -> {
+                    soonTypes += wire
                     val eta = MaintenanceForecast.eta(remaining, pace, today, due.nextKm > 0 && (due.baseCurrentKm > 0 || settings.nextKmFor(wire) > 0))
                     soon += "$label: ${Analytics.formatNumber(remaining)} کیلومتر تا موعد" + (eta?.let { " · حدود ${it.days} روز" } ?: "")
                 }
@@ -154,7 +161,7 @@ class ReminderWorker(context: Context, params: WorkerParameters) : CoroutineWork
         if (overdue.isEmpty() && soon.isEmpty()) return
         val title = if (overdue.isNotEmpty()) "هشدار: عبور از حد کیلومتر سرویس" else "یادآور سرویس دوره‌ای"
         val body = (overdue + soon).joinToString("\n")
-        Notifications.post(ctx, Notifications.ID_OIL, Notifications.CHANNEL_REMINDER, title, body)
+        Notifications.post(ctx, Notifications.ID_OIL, Notifications.CHANNEL_REMINDER, title, body, maintenanceTypes = overdueTypes + soonTypes)
     }
 
     /** 14 days before, 3 days before, and after expiry — the legacy thresholds. */

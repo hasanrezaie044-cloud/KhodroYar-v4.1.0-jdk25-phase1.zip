@@ -59,13 +59,13 @@ fun DashboardScreen(
     }.collectAsState(initial = emptyList())
     val monthTotals by repository.serviceTotals(monthPrefix).collectAsState(initial = ServiceTotals())
     val personnel by repository.personnel().collectAsState(initial = emptyList())
-    val maintenanceRecords by repository.maintenances().collectAsState(initial = emptyList())
+    val maintenanceRevision by remember { repository.maintenanceInputsChanged() }.collectAsState(initial = 0)
     val ratesByYear by repository.ratesByYear.collectAsState(initial = RatesByYear.empty())
     val todaySummary by remember(today) { repository.serviceTotals(today) }.collectAsState(initial = ServiceTotals())
     val holidayTitle = remember(today) { IranHolidays.titleFor(today) }
 
     // Maintenance due statuses based on driven km from registered services.
-    val maintenanceStates = produceState<List<Analytics.ServiceDue>>(initialValue = emptyList(), dailyTrendRows, maintenanceRecords, ratesByYear, settings) {
+    val maintenanceStates = produceState<List<Analytics.ServiceDue>>(initialValue = emptyList(), maintenanceRevision, ratesByYear, settings) {
         val rates = ratesByYear.forYear(ymd.year)
         val odo = settings.vehicleCurrentKm
         value = listOf(

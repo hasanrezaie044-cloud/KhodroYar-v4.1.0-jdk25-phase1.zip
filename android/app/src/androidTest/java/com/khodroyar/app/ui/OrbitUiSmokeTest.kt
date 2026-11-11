@@ -56,6 +56,8 @@ class OrbitUiSmokeTest {
         }
         WorkManager.getInstance(context).cancelAllWork().result.get()
         QuickEntries.invalidate()
+        SettingsStore.get(context).acknowledgeQuickMileageNotice()
+        check(SettingsStore.get(context).pendingQuickMileage.isNullOrBlank()) { "An earlier journal test did not finish recovery" }
         repository = AppRepository(context)
         repository.updateSettings { AppSettings(userFirstName = "آرمان", userLastName = "آزمایشی", monthlyIncomeGoal = 20_000_000.0,
             acceptedTermsVersion = TermsOfUse.VERSION, remindInstallments = false, remindOilChange = false, remindBodyInsurance = false,
@@ -330,12 +332,18 @@ class OrbitUiSmokeTest {
         compose.onNodeWithTag("quick-review").assertExists()
         assertEquals(1, runBlocking { AppDatabase.get(context).personalExpenses().allOnce().size })
         shot("26-quick-entry-review")
+        compose.onNodeWithContentDescription("بازگشت").performClick()
+        compose.onNodeWithTag("quick-title").assertExists()
+        compose.onAllNodesWithTag("quick-review").assertCountEquals(0)
+        assertEquals(1,runBlocking { AppDatabase.get(context).personalExpenses().allOnce().size })
+        compose.onNodeWithTag("quick-confirm").performClick()
         compose.onNodeWithTag("quick-confirm").performClick()
         compose.waitUntil(15_000) { repository.quickEntries.receipt.value != null }
         assertEquals(2, runBlocking { AppDatabase.get(context).personalExpenses().allOnce().size })
         val id = repository.quickEntries.receipt.value!!.id
         compose.onNodeWithTag("dashboard-list").performScrollToNode(hasTestTag("edit-quick-entry"))
         compose.onNodeWithTag("edit-quick-entry").performClick()
+        compose.waitUntil(15_000) { compose.onAllNodesWithTag("quick-title").fetchSemanticsNodes().isNotEmpty() }
         compose.onNodeWithTag("quick-amount").performScrollTo().performTextReplacement("80000")
         compose.onNodeWithTag("quick-confirm").performClick()
         compose.onNodeWithTag("quick-confirm").performClick()
@@ -414,6 +422,17 @@ class OrbitUiSmokeTest {
         shot("30-maintenance-direct-form")
     }
 
+    @Test fun maintenanceNotificationTargetOpensOnlyTheSelectedUnsavedType() {
+        val type = com.khodroyar.app.core.finance.MaintenanceType.BRAKE_PAD
+        assertEquals(type, com.khodroyar.app.notifications.Notifications.maintenanceTypeFromTarget(com.khodroyar.app.notifications.Notifications.maintenanceTarget(type)))
+        assertNull(com.khodroyar.app.notifications.Notifications.maintenanceTypeFromTarget("maintenance:delete-all"))
+        var handled=false
+        render { CarManagerRoot(repository, launchTarget=com.khodroyar.app.notifications.Notifications.maintenanceTarget(type), onLaunchHandled={handled=true}) }
+        compose.onNodeWithText("نوع تعمیر: لنت ترمز").assertIsDisplayed()
+        assertTrue(handled)
+        assertEquals(1,runBlocking { AppDatabase.get(context).maintenances().allOnce().size })
+    }
+
     @Test fun trackedQuickMaintenanceUndoRestoresOnlyItsTrackingAndRefusesLaterChanges() = runBlocking {
         repository.updateSettings { it.copy(vehicleCurrentKm = 100000.0, oilCurrentKm = 90000.0, oilNextKm = 101000.0) }
         val draft = QuickDraft(QuickKind.MAINTENANCE, amount = 650000.0, maintenanceType = "oil-change", km = 100000.0)
@@ -469,6 +488,57 @@ class OrbitUiSmokeTest {
         assertTrue(fresh.summary.contains("60,000"))
         assertTrue(tools.execute(fresh.call).ok);assertTrue(tools.execute(fresh.call).ok)
         assertEquals(3,db.personalExpenses().allOnce().size)
+    }
+
+    @Test fun interruptedQuickTripRecoversCommittedMileageOnlyOnceAndAbortedWriteDoesNothing() = runBlocking {
+        val db=AppDatabase.get(context);val settings=SettingsStore.get(context)
+        val row=db.services().byId("ui-service-0")!!.copy(id=java.util.UUID.randomUUID().toString())
+        val before=settings.current;val after=before.copy(vehicleCurrentKm=80.0)
+        val journal=QuickMileageJournal.plan(QuickKind.SERVICE,row.id,null,row,before,after,true,null)!!
+        settings.stageQuickMileage(journal.encode(),journal::beforeMatches)
+        // Simulate process death after a Room commit but before the preferences handoff.
+        db.services().insert(row);QuickEntries.invalidate()
+        repository.quickEntries.recover();repository.quickEntries.recover()
+        assertEquals(80.0,repository.settingsNow.vehicleCurrentKm,0.0)
+        assertNull(settings.pendingQuickMileage)
+        val abortedRow=row.copy(id=java.util.UUID.randomUUID().toString())
+        val aborted=QuickMileageJournal.plan(QuickKind.SERVICE,abortedRow.id,null,abortedRow,settings.current,settings.current.copy(vehicleCurrentKm=160.0),true,null)!!
+        settings.stageQuickMileage(aborted.encode(),aborted::beforeMatches)
+        // No Room commit: recovery removes the journal without adding mileage.
+        repository.quickEntries.recover()
+        assertEquals(80.0,repository.settingsNow.vehicleCurrentKm,0.0)
+        assertNull(settings.pendingQuickMileage)
+    }
+
+    @Test fun interruptedUndoRecoversAndManualMileageCorrectionWinsOverAJournal() = runBlocking {
+        val db=AppDatabase.get(context);val settings=SettingsStore.get(context)
+        val row=db.services().byId("ui-service-0")!!
+        repository.updateSettings { it.copy(vehicleCurrentKm=80.0) }
+        val undo=QuickMileageJournal.plan(QuickKind.SERVICE,row.id,row,null,settings.current,settings.current.copy(vehicleCurrentKm=0.0),true,null)!!
+        settings.stageQuickMileage(undo.encode(),undo::beforeMatches)
+        db.services().deleteById(row.id)
+        repository.quickEntries.recover()
+        assertEquals(0.0,repository.settingsNow.vehicleCurrentKm,0.0)
+        val saved=row.copy(id=java.util.UUID.randomUUID().toString())
+        val insert=QuickMileageJournal.plan(QuickKind.SERVICE,saved.id,null,saved,settings.current,settings.current.copy(vehicleCurrentKm=80.0),true,null)!!
+        settings.stageQuickMileage(insert.encode(),insert::beforeMatches)
+        db.services().insert(saved)
+        repository.updateSettings { it.copy(vehicleCurrentKm=90000.0) }
+        repository.quickEntries.recover()
+        assertEquals(90000.0,repository.settingsNow.vehicleCurrentKm,0.0)
+        assertNotNull(db.services().byId(saved.id));assertNull(settings.pendingQuickMileage)
+        assertNotNull(repository.quickEntries.recoveryNotice.value)
+        repository.quickEntries.acknowledgeRecoveryNotice()
+    }
+
+    @Test fun laterMaintenanceWriterInvalidatesUndoEvenIfReplacementMileageIsTheSame() = runBlocking {
+        repository.updateSettings { it.copy(vehicleCurrentKm=100000.0) }
+        val draft=QuickDraft(QuickKind.MAINTENANCE,amount=650000.0,maintenanceType="oil-change",km=100000.0)
+        val receipt=repository.quickEntries.save(draft,java.util.UUID.randomUUID().toString())
+        repository.addMaintenance(Jalali.todayString(),"oil-change","تعویض روغن",700000.0,100000.0,"soren","")
+        assertFalse(repository.quickEntries.undo(receipt))
+        assertEquals(110000.0,repository.settingsNow.oilNextKm,0.0)
+        assertNotNull(AppDatabase.get(context).insights().maintenance(receipt.id))
     }
 
     @Test fun twelveThousandRecordsUseBoundedSqlAndRenderHomeWithMeasuredEvidence() {

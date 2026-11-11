@@ -99,7 +99,11 @@ fun CarManagerRoot(
         val target = launchTarget ?: return@LaunchedEffect
         overlay = null
         quick = null
-        when (target) {
+        val maintenanceType = Notifications.maintenanceTypeFromTarget(target)
+        if (maintenanceType != null) {
+            tool = ToolDestination.MAINTENANCE
+            overlay = Overlay.FastEntry(QuickKind.MAINTENANCE, maintenanceType.wire)
+        } else when (target) {
             Notifications.TARGET_AGENT -> tool = ToolDestination.AI_ASSISTANT
             Notifications.TARGET_MAINTENANCE -> tool = ToolDestination.MAINTENANCE
             Notifications.TARGET_FINANCE -> tool = ToolDestination.FINANCE
@@ -117,6 +121,17 @@ fun CarManagerRoot(
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     val snackbarHost = remember { SnackbarHostState() }
     val toast = rememberToastController(snackbarHost)
+
+    // Complete an interrupted Room/preferences handoff before the next quick/manual writer.
+    LaunchedEffect(repository) {
+        try { repository.quickEntries.recover() }
+        catch (e: kotlinx.coroutines.CancellationException) { throw e }
+        catch (_: Exception) { toast.show("ثبت سریع قبلی کامل بررسی نشد؛ رکورد و کیلومتر خودرو را بررسی کن.") }
+    }
+    val mileageNotice by repository.quickEntries.recoveryNotice.collectAsState()
+    LaunchedEffect(mileageNotice) {
+        mileageNotice?.let { toast.show(it); repository.quickEntries.acknowledgeRecoveryNotice() }
+    }
 
     // Reminder schedule follows the switches, and is re-synced on every cold start.
     LaunchedEffect(settings.anyReminderEnabled) { ReminderScheduler.sync(context) }
@@ -216,7 +231,7 @@ fun CarManagerRoot(
                         subtitle = subtitle,
                         privacyMode = settings.privacyMode,
                         showBack = overlay != null || tool != null || agentReturn,
-                        onBack = { if (agentReturn) { overlay = null; tool = ToolDestination.AI_ASSISTANT; agentReturn = false } else if (overlay != null) overlay = null else tool = null },
+                        onBack = { if (overlay is Overlay.FastEntry) { (context as? androidx.activity.ComponentActivity)?.onBackPressedDispatcher?.onBackPressed() } else if (agentReturn) { overlay = null; tool = ToolDestination.AI_ASSISTANT; agentReturn = false } else if (overlay != null) overlay = null else tool = null },
                         onOpenTools = { scope.launch { drawerState.open() } },
                         onSearch = { overlay = Overlay.Search },
                         onQuick = { overlay = Overlay.FastEntry() },
@@ -229,10 +244,12 @@ fun CarManagerRoot(
                     ) { target ->
                         when (target) {
                             /* ------------------------------------------- overlays */
-                            is Overlay.FastEntry -> QuickEntryScreen(repository, initialKind = target.kind,
-                                initialMaintenanceType = target.maintenanceType, editing = target.editing,
-                                onFullService = { date -> overlay = Overlay.NewServiceOn(date) },
-                                onDone = { overlay = null })
+                            is Overlay.FastEntry -> key(target.kind, target.maintenanceType, target.editing?.revision) {
+                                QuickEntryScreen(repository, initialKind = target.kind,
+                                    initialMaintenanceType = target.maintenanceType, editing = target.editing,
+                                    onFullService = { date -> overlay = Overlay.NewServiceOn(date) },
+                                    onDone = { overlay = null })
+                            }
                             is Overlay.EditService -> ServiceFormScreen(
                                 repository = repository,
                                 initialDate = target.service.date,
@@ -353,7 +370,7 @@ fun CarManagerRoot(
          * while the user is merely navigating: it is the last branch, reached only when
          * nothing is open and we are already on the home tab.
          */
-        BackHandler {
+        BackHandler(enabled = overlay !is Overlay.FastEntry || drawerState.isOpen) {
             when {
                 drawerState.isOpen -> scope.launch { drawerState.close() }
                 agentReturn -> { overlay = null; tool = ToolDestination.AI_ASSISTANT; agentReturn = false }

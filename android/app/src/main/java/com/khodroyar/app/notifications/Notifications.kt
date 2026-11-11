@@ -20,6 +20,7 @@ import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
 import com.khodroyar.app.MainActivity
 import com.khodroyar.app.R
+import com.khodroyar.app.core.finance.MaintenanceType
 import java.util.concurrent.TimeUnit
 
 /**
@@ -179,6 +180,12 @@ object Notifications {
     const val TARGET_SERVICES = "services"
     const val TARGET_BACKUP = "backup"
 
+    /** Closed, internal destination; notification extras never select arbitrary screens or execute writes. */
+    fun maintenanceTarget(type: MaintenanceType): String = "$TARGET_MAINTENANCE:${type.wire}"
+    fun maintenanceTypeFromTarget(target: String): MaintenanceType? = MaintenanceType.entries.firstOrNull {
+        target == maintenanceTarget(it)
+    }
+
     private const val GROUP_KEY = "khodroyar.notifications"
     private const val BRAND_COLOR = 0xFF5B4BDB.toInt()
 
@@ -234,11 +241,13 @@ object Notifications {
         return PendingIntent.getActivity(context, requestCode, intent, flags)
     }
 
-    fun post(context: Context, id: Int, channel: String, title: String, body: String) {
+    fun post(context: Context, id: Int, channel: String, title: String, body: String, maintenanceTypes: List<String> = emptyList()) {
         if (!canPost(context)) return
         ensureChannels(context)
         val isSummary = channel == CHANNEL_SUMMARY
         val look = lookFor(id)
+        val parts = if (id == ID_OIL) maintenanceTypes.distinct().mapNotNull { wire -> MaintenanceType.TRACKED.firstOrNull { it.wire == wire } } else emptyList()
+        val target = parts.firstOrNull()?.let(::maintenanceTarget) ?: look.target
         val lines = body.split('\n').filter { it.isNotBlank() }
 
         // What shows on a locked screen: no amounts, no names — the details appear
@@ -276,8 +285,13 @@ object Notifications {
             .setAutoCancel(true)
             .setWhen(System.currentTimeMillis())
             .setShowWhen(true)
-            .setContentIntent(contentIntent(context, id, look.target))
-            .addAction(0, "مشاهده", contentIntent(context, id + 5000, look.target))
+            .setContentIntent(contentIntent(context, id, target))
+            .apply {
+                if (parts.isEmpty()) addAction(0, "مشاهده", contentIntent(context, id + 5000, target))
+                else parts.take(3).forEach { part ->
+                    addAction(0, "ثبت ${part.label}", contentIntent(context, id + 5000 + part.ordinal, maintenanceTarget(part)))
+                }
+            }
             .setCategory(if (isSummary) NotificationCompat.CATEGORY_STATUS else NotificationCompat.CATEGORY_REMINDER)
             .setPriority(if (isSummary) NotificationCompat.PRIORITY_LOW else NotificationCompat.PRIORITY_HIGH)
             .setDefaults(if (isSummary) 0 else Notification.DEFAULT_ALL)

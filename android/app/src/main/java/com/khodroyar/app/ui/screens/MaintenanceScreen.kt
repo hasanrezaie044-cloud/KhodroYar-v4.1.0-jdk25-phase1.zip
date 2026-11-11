@@ -47,7 +47,7 @@ fun MaintenanceScreen(
     val cost by repository.maintenanceCost("$year/").collectAsState(initial = 0.0)
     val settings by repository.settings.collectAsState(initial = repository.settingsNow)
     val ratesByYear by repository.ratesByYear.collectAsState(initial = RatesByYear.empty())
-    val allServices by repository.services().collectAsState(initial = emptyList())
+    val serviceRevision by remember { repository.maintenanceInputsChanged() }.collectAsState(initial = 0)
     val vehicleKm = settings.vehicleCurrentKm
     var editingVehicleKm by remember { mutableStateOf(false) }
     var vehicleKmText by remember(vehicleKm) {
@@ -58,7 +58,7 @@ fun MaintenanceScreen(
     // Due status: remaining = nextReplacementKm - vehicleCurrentKm
     val trackedItems by produceState(
         initialValue = emptyList<Pair<MaintenanceType, Analytics.ServiceDue>>(),
-        records, allServices, rates, settings,
+        records, serviceRevision, rates, settings,
     ) {
         val types = listOf(
             MaintenanceType.OIL_CHANGE to rates.oilChangeKmInterval,

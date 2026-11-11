@@ -66,7 +66,7 @@ fun QuickEntryScreen(
         kmText = value.km.takeIf { it > 0 }?.trimNumber().orEmpty()
         tripKmText = value.trip?.km?.trimNumber().orEmpty(); tripHoursText = value.trip?.hours?.trimNumber().orEmpty(); error = null
     }
-    BackHandler(enabled = reviewing || busy) { if (!busy) { review = null; error = null } }
+    BackHandler { if (!busy) { if (reviewing) { review = null; error = null } else onDone() } }
 
     Column(Modifier.fillMaxSize().testTag("quick-entry-screen")) {
         Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).clearFocusOnTap()
