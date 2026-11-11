@@ -150,7 +150,8 @@ private fun SeriesChart(
                 val axis = 52.dp.toPx()
                 val left = if (rtl) 10.dp.toPx() else axis
                 val right = size.width - if (rtl) axis else 10.dp.toPx()
-                ChartGeometry.nearestIndex((tap.x - left) / (right - left).coerceAtLeast(1f), data.size, rtl)?.let { selected = it }
+                val inset = if (bars) 14.dp.toPx() else 0f
+                ChartGeometry.nearestIndex((tap.x - left - inset) / (right - left - 2 * inset).coerceAtLeast(1f), data.size, rtl)?.let { selected = it }
             }
         }) {
             val axis = 52.dp.toPx()
@@ -160,7 +161,8 @@ private fun SeriesChart(
             val bottom = size.height - 32.dp.toPx()
             val plotW = (right - left).coerceAtLeast(1f)
             val plotH = (bottom - top).coerceAtLeast(1f)
-            fun px(i: Int) = left + ChartGeometry.xFraction(i, data.size, rtl) * plotW
+            val barInset = if (bars) 14.dp.toPx() else 0f
+            fun px(i: Int) = left + barInset + ChartGeometry.xFraction(i, data.size, rtl) * (plotW - 2 * barInset).coerceAtLeast(1f)
             fun py(v: Double) = bottom - scale.fraction(v) * plotH
             val zeroY = py(0.0)
             scale.ticks.forEach { tick ->

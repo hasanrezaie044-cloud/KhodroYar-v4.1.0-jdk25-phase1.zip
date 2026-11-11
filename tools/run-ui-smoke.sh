@@ -18,8 +18,8 @@ if ! adb pull /sdcard/Android/data/com.khodroyar.app/files/orbit-ui/. "$SCREENSH
 fi
 COUNT=$(find "$SCREENSHOTS" -type f -name '*.png' | wc -l)
 echo "::notice title=Native UI screenshots::$COUNT PNGs captured from API 35 emulator"
-if [ "$COUNT" -lt 17 ]; then
-    echo "::error::Expected 17 native UI screenshots; found $COUNT"
+if [ "$COUNT" -lt 19 ]; then
+    echo "::error::Expected 19 native UI screenshots; found $COUNT"
     RESULT=1
 fi
 exit "$RESULT"

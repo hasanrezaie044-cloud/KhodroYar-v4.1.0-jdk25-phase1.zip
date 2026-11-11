@@ -29,7 +29,7 @@ class MainActivity : FragmentActivity() {
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
-        // Draw behind the system bars so the app's own gradient header fills the
+        // Draw behind the system bars so the app's themed toolbar fills the
         // cutout / status-bar strip instead of leaving an empty band there. The bars
         // themselves keep working exactly as the system intends; only the background
         // behind them belongs to us now.

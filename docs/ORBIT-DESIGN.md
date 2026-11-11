@@ -36,7 +36,7 @@ No database migration, permission addition, provider request change, automation 
 - `bash VERIFY.sh`, `git diff --check`, `cd backend && npm test`.
 - Real JDK 25 Android compilation, JVM regression tests and signed release/permission/package/version/100 MB gates in `.github/workflows/android-release.yml`.
 - New JVM suites: display geometry (20 cases), report partitions (4), palette wire compatibility and text contrast (4, across all 16 light/dark palette combinations).
-- Seven native Compose smoke tests in `src/androidTest`: real repository fixtures and tab/tool navigation, privacy, RTL point selection at 320dp/1.35× text, signed-value LTR/dark chart selection, donut selection, empty states, native password input/biometric callback and explicit terms consent. Seventeen PNGs are captured by Android's screenshot API, not drawn as mockups.
+- Eight native Compose smoke tests in `src/androidTest`: real repository fixtures and tab/tool navigation, privacy, RTL point selection at 320dp/1.35× text, signed-value LTR/dark chart selection, donut selection, empty states, native password input/biometric callback, explicit terms consent and usable dark navigation at 320dp/enlarged text. Nineteen PNGs are captured by Android's screenshot API, not drawn as mockups.
 - `.github/workflows/android-release.yml` also calls `android-ui-smoke.yml` from the same ref, so the new workflow can be exercised on an open PR branch before it exists on the default branch. JUnit failures and missing screenshots fail the UI job. The runner gathers PNGs **before** the emulator shuts down.
 - Fixtures refuse to run on a physical phone; they replace data only in a disposable API 35 emulator. No screenshot contains personal data or credentials.
 

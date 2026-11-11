@@ -10,6 +10,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.unit.Density
@@ -95,6 +96,9 @@ class OrbitUiSmokeTest {
         compose.onAllNodesWithText("2,750,000").assertCountEquals(0)
         shot("02-home-privacy")
         compose.onNodeWithContentDescription("نمایش مبالغ").performClick()
+        compose.onNodeWithTag("dashboard-list").performScrollToNode(hasText("ستونی"))
+        compose.onNodeWithText("ستونی").performClick()
+        shot("18-dashboard-bars")
         compose.onNodeWithTag("nav-SERVICES").performClick()
         compose.onNodeWithText("سرویس جدید").assertIsDisplayed()
         shot("03-service-form")
@@ -200,7 +204,7 @@ class OrbitUiSmokeTest {
         compose.runOnIdle { assertTrue(fingerprint) }
         compose.onNode(hasSetTextAction()).performTextInput("12345")
         compose.runOnIdle { assertEquals("12345", pin) }
-        compose.onNode(isPassword()).assertExists()
+        compose.onNode(SemanticsMatcher.keyIsDefined(SemanticsProperties.Password)).assertExists()
         shot("16-login-native-password")
     }
 
@@ -213,6 +217,19 @@ class OrbitUiSmokeTest {
         shot("17-agreement-large-text")
         compose.onNodeWithText("می‌پذیرم و ادامه").performClick()
         compose.runOnIdle { assertTrue(accepted) }
+    }
+
+    @Test fun darkNavigationStaysUsableAt320DpAndEnlargedFont() {
+        render(dark = true, fontScale = 1.35f) {
+            Box(Modifier.widthIn(max = 320.dp).fillMaxHeight()) { CarManagerRoot(repository) }
+        }
+        compose.waitUntil(15_000) { compose.onAllNodesWithText("2,750,000").fetchSemanticsNodes().isNotEmpty() }
+        listOf("HOME", "SERVICES", "CALENDAR", "REPORTS", "SETTINGS").forEach {
+            compose.onNodeWithTag("nav-$it").assertIsDisplayed().assertHasClickAction()
+        }
+        shot("19-home-dark-320-large-text")
+        compose.onNodeWithTag("nav-SERVICES").performClick()
+        compose.onNodeWithText("سرویس جدید").assertIsDisplayed()
     }
 
     private fun shot(name: String) {

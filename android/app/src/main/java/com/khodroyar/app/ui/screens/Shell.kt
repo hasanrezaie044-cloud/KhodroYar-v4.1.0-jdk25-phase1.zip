@@ -42,6 +42,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
@@ -65,21 +66,7 @@ import com.khodroyar.app.ui.theme.AppDimens
 import com.khodroyar.app.ui.theme.LocalDarkTheme
 import kotlinx.coroutines.launch
 
-/**
- * Application shell: RTL layout direction, bottom navigation, the right-edge tools
- * drawer, full-screen overlays and the app-wide toast host.
- *
- * What changed here:
- *  * the floating service-registration FAB is gone — registration is a real tab with a
- *    real full-screen form ([ServiceFormScreen]);
- *  * "بیشتر" became "تنظیمات", and the tools it used to launch live in a right-edge
- *    slide-out panel that opens with a swipe (RTL puts a Material drawer on the right,
- *    and the swipe direction follows);
- *  * the top app area is a gradient header drawn *behind* the status bar, so the notch
- *    strip is part of the design instead of an empty band;
- *  * one back handler owns the whole hierarchy, so the exit confirmation only appears
- *    when back would actually leave the app.
- */
+/** RTL/LTR shell, theme-aware chrome, anchored navigation, toolkit, overlays and agent return routing. */
 @Composable
 fun CarManagerRoot(
     repository: AppRepository,
@@ -91,6 +78,7 @@ fun CarManagerRoot(
     val context = LocalContext.current
     SystemChrome(dark = LocalDarkTheme.current)
     val scope = rememberCoroutineScope()
+    val keyboardVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
     val settings by repository.settings.collectAsState(initial = repository.settingsNow)
 
     val agentRules by remember { AutomationStore.get(context) }.rules.collectAsState()
@@ -221,7 +209,7 @@ fun CarManagerRoot(
                     }
                 },
                 bottomBar = {
-                    AppBottomBar(
+                    if (!keyboardVisible) AppBottomBar(
                         selected = destination,
                         toolActive = tool != null,
                         onSelect = { picked ->
@@ -334,7 +322,7 @@ fun CarManagerRoot(
                                 },
                                 onOpenTraffic = { tool = ToolDestination.TRAFFIC },
                                 onAddService = { destination = AppDestination.SERVICES; tool = null },
-                                onOpenAssistant = { tool = ToolDestination.AI_ASSISTANT },
+                                onOpenAssistant = { agentReturn = false; tool = ToolDestination.AI_ASSISTANT },
                             )
                             AppDestination.SERVICES -> ServicesScreen(repository)
                             AppDestination.CALENDAR -> CalendarScreen(
@@ -358,7 +346,7 @@ fun CarManagerRoot(
                                 },
                                 onOpenTraffic = { tool = ToolDestination.TRAFFIC },
                                 onAddService = { destination = AppDestination.SERVICES; tool = null },
-                                onOpenAssistant = { tool = ToolDestination.AI_ASSISTANT },
+                                onOpenAssistant = { agentReturn = false; tool = ToolDestination.AI_ASSISTANT },
                             )
                         }
                     }
@@ -514,7 +502,9 @@ private fun AppBottomBar(selected: AppDestination, toolActive: Boolean, onSelect
                 verticalAlignment = Alignment.CenterVertically) {
                 AppDestination.entries.forEach { item ->
                     val active = !toolActive && selected == item
-                    val title = if (LocalLanguage.current == "en") item.englishTitle else item.title
+                    val title = if (LocalLanguage.current == "en") {
+                        if (item == AppDestination.SERVICES) "Add" else item.englishTitle
+                    } else item.title
                     val tint by animateColorAsState(if (active) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant, label = "destination")
                     val add = item == AppDestination.SERVICES
                     Column(Modifier.weight(1f).testTag("nav-${item.name}").clip(RoundedCornerShape(14.dp))
@@ -529,7 +519,7 @@ private fun AppBottomBar(selected: AppDestination, toolActive: Boolean, onSelect
                         }
                         Text(title, color = tint, style = MaterialTheme.typography.labelSmall,
                             fontWeight = if (active) FontWeight.Bold else FontWeight.Medium,
-                            maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            maxLines = 2, overflow = TextOverflow.Ellipsis)
                     }
                 }
             }
