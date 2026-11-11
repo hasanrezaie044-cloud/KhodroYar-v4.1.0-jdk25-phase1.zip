@@ -4,6 +4,16 @@ set -uo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SCREENSHOTS="${RUNNER_TEMP:-/tmp}/orbit-ui-screenshots"
 mkdir -p "$SCREENSHOTS"
+# The emulator can expose a hardware keyboard. Keep the real software IME
+# enabled so the show-IME / system-Back regression tests exercise it, not a
+# runner-dependent "keyboard suppressed" state. Do not skip those assertions.
+adb shell settings put secure show_ime_with_hard_keyboard 1 || exit 1
+IME_WITH_HARD_KEYBOARD=$(adb shell settings get secure show_ime_with_hard_keyboard | tr -d '\r')
+if [ "$IME_WITH_HARD_KEYBOARD" != "1" ]; then
+    echo "::error::Could not enable the software keyboard on the disposable emulator"
+    exit 1
+fi
+echo "::notice title=Emulator IME setup::show_ime_with_hard_keyboard=$IME_WITH_HARD_KEYBOARD"
 cd "$ROOT/android"
 set +e
 ./gradlew connectedDebugAndroidTest --stacktrace 2>&1 | tee "${RUNNER_TEMP:-/tmp}/khodroyar-ui-tests.log"

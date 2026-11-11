@@ -348,7 +348,13 @@ class OrbitUiSmokeTest {
         compose.onNodeWithTag("quick-title").performScrollTo().performTextReplacement("پارکینگ")
         compose.onNodeWithTag("quick-amount").performScrollTo().performTextReplacement("75000")
         compose.onNodeWithTag("quick-amount").performScrollTo().performClick()
-        compose.waitUntil(15_000) { imeVisible }
+        try {
+            compose.waitUntil(15_000) { imeVisible }
+        } catch (e: Throwable) {
+            shot("debug-quick-edit-state")
+            val focused = compose.onAllNodes(hasTestTag("quick-amount") and isFocused()).fetchSemanticsNodes().size
+            throw AssertionError("Software IME did not open after tapping amount; focused fields=$focused", e)
+        }
         pressSystemBack()
         try {
             compose.waitUntil(15_000) { !imeVisible }
