@@ -74,8 +74,33 @@ class LocalServiceDialogueTest {
         assertEquals("request", clock.args.getString("service_type"))
     }
 
+    @Test fun calendarExclusionsDoNotSelectOrConflictWithTheServiceTariff() {
+        for ((suffix, frequency) in listOf("بجز تعطیل" to "workdays", "به جز تعطیل" to "workdays", "غیر تعطیل" to "workdays", "حتی تعطیل" to "daily")) {
+            val unspecified = tool(engine(), "هر روز ساعت ۸ صبح سرویس ثبت کن $suffix")
+            assertEquals("create_service_rule", unspecified.name)
+            assertEquals(frequency, unspecified.args.getString("frequency"))
+            assertFalse("A calendar qualifier is not a tariff: $suffix", unspecified.args.has("service_type"))
+            val requested = tool(engine(), "هر روز ساعت ۸ صبح سرویس درخواستی ثبت کن $suffix")
+            assertEquals(frequency, requested.args.getString("frequency"))
+            assertEquals("request", requested.args.getString("service_type"))
+            assertEquals("08:00", requested.args.getString("time"))
+        }
+    }
+
+    @Test fun nightTariffInTheSameSentenceCannotChangeTheClockMeridiem() {
+        for ((clock, time) in listOf("ساعت ۸ صبح" to "08:00", "۰۸:۰۰" to "08:00", "ساعت ۹ شب" to "21:00", "ساعت ۱۲ بامداد" to "00:00")) {
+            val c = tool(engine(), "هر روز $clock سرویس شب ثبت کن حتی تعطیل")
+            assertEquals("night", c.args.getString("service_type"))
+            assertEquals("daily", c.args.getString("frequency"))
+            assertEquals(time, c.args.getString("time"))
+        }
+        val recurringNight = tool(engine(), "هر شب ساعت ۹ سرویس درخواستی ثبت کن")
+        assertEquals("request", recurringNight.args.getString("service_type"))
+        assertEquals("21:00", recurringNight.args.getString("time"))
+    }
+
     @Test fun negatedUnsupportedAndConflictingCategoriesAskInsteadOfChoosingNight() {
-        for (correction in listOf("نه سرویس شب نبود", "سرویس روز بود", "نوعش روز بود", "سرویس شب یا تعطیل بود", "سرویس شب و درخواستی بود")) {
+        for (correction in listOf("نه سرویس شب نبود", "سرویس غیر شب بود", "سرویس غیر تعطیل بود", "نوعش غیر تعطیل بود", "سرویس روز بود", "نوعش روز بود", "سرویس شب یا تعطیل بود", "سرویس شب و درخواستی بود")) {
             val e = engine()
             tool(e, "سرویس درخواستی امروز را ثبت کن")
             val answer = reply(e, correction)

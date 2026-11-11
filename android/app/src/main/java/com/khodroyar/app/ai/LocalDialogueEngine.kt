@@ -195,12 +195,17 @@ class LocalDialogueEngine(
         val introduced = Regex("(?<![\\p{L}])(?:نوع(?:\\s+سرویس)?ش?|سرویس(?:م)?|سفر(?:م)?)\\s+(?:از نوع\\s+)?(.+)").find(clean)
         val bare = clean.replace(Regex("\\s+(?:بود|بوده|است|باشه|نبود|نیست)$"), "").trim()
         val bareCategory = serviceCategories.any { (_, names) -> bare in names }
-        val field = introduced?.groupValues?.get(1) ?: if (bareCategory || waiting == "service_type") clean else return null
+        val rawField = introduced?.groupValues?.get(1) ?: if (bareCategory || waiting == "service_type") clean else return null
+        // Calendar inclusion/exclusion does not specify a tariff. A directly negated
+        // category ("سرویس غیر تعطیل") is ambiguous instead of becoming HOLIDAY.
+        val calendarQualifiers = if (Regex("^غیر\\s*").containsMatchIn(rawField)) "حتی|به جز|بجز" else "حتی|به جز|بجز|غیر"
+        val field = rawField.replace(Regex("(?<![\\p{L}])(?:$calendarQualifiers)\\s+تعطیل(?:ات|ی)?(?![\\p{L}])"), " ")
+        val negated = Regex("(?<![\\p{L}])(?:غیر\\s*|نه\\s+)").containsMatchIn(field)
         val choices = serviceCategories.filter { (_, names) -> names.any { name ->
             Regex("(?<![\\p{L}])${Regex.escape(name)}(?![\\p{L}])").containsMatchIn(field)
         } }
-        if (choices.isEmpty() && waiting != "service_type" && !has(clean, "نوع", "سرویس روز", "سفر روز", "حقوق", "مرخصی")) return null
-        if (choices.size != 1 || has(field, "نبود", "نیست", "نیس", "حقوق", "مرخصی")) {
+        if (choices.isEmpty() && !negated && waiting != "service_type" && !has(clean, "نوع", "سرویس روز", "سفر روز", "حقوق", "مرخصی")) return null
+        if (choices.size != 1 || negated || has(field, "نبود", "نیست", "نیس", "حقوق", "مرخصی")) {
             return ServiceCategoryInput(clarification = "نوع سرویس کدام است: شب، تعطیل، درخواستی، در اختیار، ثابت یا مأموریت؟ بقیهٔ درخواست حفظ شده؛ هنوز چیزی ثبت نشده.")
         }
         return ServiceCategoryInput(type = choices.single().first)
@@ -229,8 +234,16 @@ class LocalDialogueEngine(
         if (tm != null || hour != null) {
             var h = (tm ?: hour)!!.groupValues[1].toInt()
             val minute = if (tm != null) tm.groupValues[2].toInt() else if (hour!!.groupValues.getOrNull(2).orEmpty().isNotBlank()) 30 else 0
-            if (has(t, "عصر", "شب", "بعد از ظهر", "بعدازظهر") && h in 1..11) h += 12
-            if (has(t, "صبح", "بامداد") && h == 12) h = 0
+            // A service tariff's "شب" elsewhere in the sentence must not turn
+            // "ساعت ۸ صبح" / "08:00" into 20:00. Read only the clock's period or
+            // an explicit recurring period ("هر شب" normalizes to "هر روز شب").
+            val clockPeriod = if (d.kind == Kind.SERVICE) {
+                val afterClock = t.substring((tm ?: hour)!!.range.last + 1)
+                Regex("^\\s*(بعد از ظهر|بعدازظهر|بامداد|صبح|عصر|شب)(?![\\p{L}])").find(afterClock)?.groupValues?.get(1)
+                    ?: Regex("(?<![\\p{L}])هر روز\\s+(صبح|عصر|شب)(?![\\p{L}])").find(t)?.groupValues?.get(1).orEmpty()
+            } else t
+            if (has(clockPeriod, "عصر", "شب", "بعد از ظهر", "بعدازظهر") && h in 1..11) h += 12
+            if (has(clockPeriod, "صبح", "بامداد") && h == 12) h = 0
             val value = "$h".padStart(2, '0') + ":" + "$minute".padStart(2, '0')
             if (!validTime(value)) return question(d, "زمان معتبر نیست؛ مثلاً ۲۱:۰۰ یا ساعت ۹ شب بنویس.", "time", listOf("ساعت ۸ صبح", "ساعت ۹ شب"))
             d.time = value
