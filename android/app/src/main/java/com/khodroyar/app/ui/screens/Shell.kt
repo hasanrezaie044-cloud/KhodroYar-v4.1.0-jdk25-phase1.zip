@@ -78,6 +78,8 @@ fun CarManagerRoot(
     SystemChrome(dark = LocalDarkTheme.current)
     val scope = rememberCoroutineScope()
     val keyboardVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
+    val focus = androidx.compose.ui.platform.LocalFocusManager.current
+    val keyboard = androidx.compose.ui.platform.LocalSoftwareKeyboardController.current
     val settings by repository.settings.collectAsState(initial = repository.settingsNow)
 
     val agentRules by remember { AutomationStore.get(context) }.rules.collectAsState()
@@ -235,7 +237,15 @@ fun CarManagerRoot(
                         subtitle = subtitle,
                         privacyMode = settings.privacyMode,
                         showBack = overlay != null || tool != null || agentReturn,
-                        onBack = { if (overlay is Overlay.FastEntry) { (context as? androidx.activity.ComponentActivity)?.onBackPressedDispatcher?.onBackPressed() } else if (agentReturn) { overlay = null; tool = ToolDestination.AI_ASSISTANT; agentReturn = false } else if (overlay != null) overlay = null else tool = null },
+                        onBack = {
+                            when {
+                                keyboardVisible -> { focus.clearFocus(force = true); keyboard?.hide() }
+                                overlay is Overlay.FastEntry -> (context as? androidx.activity.ComponentActivity)?.onBackPressedDispatcher?.onBackPressed()
+                                agentReturn -> { overlay = null; tool = ToolDestination.AI_ASSISTANT; agentReturn = false }
+                                overlay != null -> overlay = null
+                                else -> tool = null
+                            }
+                        },
                         onOpenTools = { scope.launch { drawerState.open() } },
                         onSearch = { overlay = Overlay.Search },
                         onQuick = { overlay = Overlay.FastEntry() },
@@ -376,6 +386,7 @@ fun CarManagerRoot(
          */
         BackHandler(enabled = overlay !is Overlay.FastEntry || drawerState.isOpen) {
             when {
+                keyboardVisible -> { focus.clearFocus(force = true); keyboard?.hide() }
                 drawerState.isOpen -> scope.launch { drawerState.close() }
                 agentReturn -> { overlay = null; tool = ToolDestination.AI_ASSISTANT; agentReturn = false }
                 overlay != null -> overlay = null

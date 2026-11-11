@@ -38,6 +38,7 @@ fun QuickEntryScreen(
     val scope = rememberCoroutineScope()
     val focus = androidx.compose.ui.platform.LocalFocusManager.current
     val keyboard = androidx.compose.ui.platform.LocalSoftwareKeyboardController.current
+    val keyboardVisible = WindowInsets.ime.getBottom(androidx.compose.ui.platform.LocalDensity.current) > 0
     val settings by repository.settings.collectAsState(initial = repository.settingsNow)
     val expenses by remember { repository.insights.recentExpenses() }.collectAsState(initial = emptyList())
     val fuels by remember { repository.insights.recentFuels() }.collectAsState(initial = emptyList())
@@ -67,7 +68,16 @@ fun QuickEntryScreen(
         kmText = value.km.takeIf { it > 0 }?.trimNumber().orEmpty()
         tripKmText = value.trip?.km?.trimNumber().orEmpty(); tripHoursText = value.trip?.hours?.trimNumber().orEmpty(); error = null
     }
-    BackHandler { if (!busy) { if (reviewing) { review = null; error = null } else onDone() } }
+    // The OS normally consumes Back for the IME. Also handle dispatcher/toolbar
+    // Back explicitly: never discard a draft just because its keyboard is open.
+    BackHandler {
+        when {
+            keyboardVisible -> { focus.clearFocus(force = true); keyboard?.hide() }
+            busy -> Unit
+            reviewing -> { review = null; error = null }
+            else -> onDone()
+        }
+    }
 
     Column(Modifier.fillMaxSize().testTag("quick-entry-screen")) {
         Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).clearFocusOnTap()

@@ -346,10 +346,14 @@ class OrbitUiSmokeTest {
         compose.onNodeWithTag("quick-amount").performScrollTo().performTextReplacement("75000")
         compose.onNodeWithTag("quick-amount").performScrollTo().performClick()
         compose.waitUntil(15_000) { imeVisible }
-        val automation=InstrumentationRegistry.getInstrumentation().uiAutomation
-        automation.injectInputEvent(KeyEvent(KeyEvent.ACTION_DOWN,KeyEvent.KEYCODE_BACK),true)
-        automation.injectInputEvent(KeyEvent(KeyEvent.ACTION_UP,KeyEvent.KEYCODE_BACK),true)
-        compose.waitUntil(15_000) { !imeVisible }
+        pressSystemBack()
+        try {
+            compose.waitUntil(15_000) { !imeVisible }
+        } catch (e: Throwable) {
+            shot("debug-quick-edit-state")
+            val forms = compose.onAllNodesWithTag("quick-entry-screen").fetchSemanticsNodes().size
+            throw AssertionError("System Back left IME visible; quick forms=$forms", e)
+        }
         compose.onNodeWithTag("quick-title").assertExists()
         compose.onNodeWithTag("quick-amount").assertTextContains("75,000")
         compose.onNodeWithTag("quick-title").performScrollTo()
@@ -395,6 +399,15 @@ class OrbitUiSmokeTest {
         compose.onNodeWithTag("confirm-quick-undo").performClick()
         compose.waitUntil(15_000) { repository.quickEntries.receipt.value == null }
         assertNull(runBlocking { AppDatabase.get(context).insights().expense(id) })
+        assertEquals(1, runBlocking { AppDatabase.get(context).personalExpenses().allOnce().size })
+        compose.waitUntil(15_000) { compose.onAllNodesWithTag("dismiss-snackbar").fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithTag("dismiss-snackbar").performClick()
+        compose.onNodeWithTag("dashboard-list").performScrollToNode(hasTestTag("home-quick-add"))
+        compose.onNodeWithTag("home-quick-add").performClick()
+        compose.onNodeWithTag("quick-entry-screen").assertIsDisplayed()
+        pressSystemBack()
+        compose.waitUntil(15_000) { compose.onAllNodesWithTag("quick-entry-screen").fetchSemanticsNodes().isEmpty() }
+        compose.onNodeWithTag("nav-HOME").assertIsSelected()
         assertEquals(1, runBlocking { AppDatabase.get(context).personalExpenses().allOnce().size })
     }
 
@@ -653,6 +666,13 @@ class OrbitUiSmokeTest {
         val renderMs = android.os.SystemClock.elapsedRealtime()-renderStarted
         shot("33-home-12000-records")
         writeTextArtifact("performance-12000.json", """{"environment":"API35 x86_64 debug emulator; not a phone benchmark","records":12000,"aggregateQueryMs":$queryMs,"homeFirstDataMs":$renderMs,"mileageRows":${daily.size}}""")
+    }
+
+    private fun pressSystemBack() {
+        // Use instrumentation's complete system-key event, not a dispatcher shortcut
+        // (which would bypass the input method) or an un-sourced synthetic key pair.
+        compose.waitForIdle()
+        InstrumentationRegistry.getInstrumentation().sendKeyDownUpSync(KeyEvent.KEYCODE_BACK)
     }
 
     private tailrec fun Context.hostActivity(): Activity? = when (this) {
