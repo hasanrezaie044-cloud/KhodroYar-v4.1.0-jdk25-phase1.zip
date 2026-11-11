@@ -70,6 +70,12 @@ jobs:
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none
           script: bash tools/run-ui-smoke.sh
+      - name: Publish bounded synthetic previews for visual review
+        if: always() && github.event_name == 'workflow_dispatch'
+        run: |
+          python3 -m venv "$RUNNER_TEMP/ui-preview-env"
+          "$RUNNER_TEMP/ui-preview-env/bin/pip" --disable-pip-version-check -q install Pillow==12.0.0
+          "$RUNNER_TEMP/ui-preview-env/bin/python" tools/ui-previews.py "$RUNNER_TEMP/orbit-ui-screenshots"
       - name: Upload native screenshots and test reports
         if: always()
         uses: actions/upload-artifact@v4
