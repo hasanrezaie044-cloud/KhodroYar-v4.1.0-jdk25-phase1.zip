@@ -19,6 +19,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.khodroyar.app.ai.AgentSection
@@ -84,16 +85,17 @@ internal fun AutomationManagerSheet(
     var holidays by remember { mutableStateOf<Set<String>>(emptySet()) }
     var calendarLoaded by remember { mutableStateOf(false) }
     var canNotify by remember { mutableStateOf(Notifications.canPost(context)) }
+    var healthAt by remember { mutableStateOf(Instant.now()) }
     val permission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { canNotify = it && Notifications.canPost(context) }
     LaunchedEffect(Unit) {
         holidays = AppRepository(context).manualHolidayDatesOnce()
         calendarLoaded = true
     }
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
-        Column(Modifier.fillMaxWidth().fillMaxHeight(0.88f).verticalScroll(rememberScrollState()).padding(horizontal = 20.dp),
+        Column(Modifier.testTag("automation-sheet-content").fillMaxWidth().fillMaxHeight(0.88f).verticalScroll(rememberScrollState()).padding(horizontal = 20.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp)) {
             Text("کارهای خودکار من", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-            BackgroundExecutionCard()
+            BackgroundExecutionCard(onRefresh = { healthAt = Instant.now(); canNotify = Notifications.canPost(context) })
             if (storageError) Text("فایل قانون‌ها قابل خواندن نیست؛ برای ایمنی چیزی فعال نمی‌شود. اطلاعات مالی دست‌نخورده است.", color = MaterialTheme.colorScheme.error)
             if (!canNotify) {
                 Surface(color = MaterialTheme.colorScheme.errorContainer, shape = RoundedCornerShape(14.dp)) {
@@ -115,7 +117,7 @@ internal fun AutomationManagerSheet(
                     Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Text(rule.title, modifier = Modifier.weight(1f), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                            val health = rule.health(Instant.now(), holidays)
+                            val health = rule.health(healthAt, holidays)
                             StatusPill(if (calendarLoaded) health.label else "…", color = when (health) {
                                 AutomationHealth.FAILED -> MaterialTheme.colorScheme.error
                                 AutomationHealth.WAITING, AutomationHealth.LATE -> MaterialTheme.colorScheme.tertiary
@@ -125,7 +127,7 @@ internal fun AutomationManagerSheet(
                         Text(AppAgentTools.ruleSummary(rule), style = MaterialTheme.typography.bodyMedium)
                         HorizontalDivider()
                         Text("آخرین نتیجه: ${rule.lastMessage}", style = MaterialTheme.typography.bodySmall)
-                        if (rule.enabled && calendarLoaded) Text("اجرای بعدی: ${rule.schedule.nextRun(Instant.now(), holidays, rule.lastDate) ?: "بازه تمام شده یا روزی در محدوده نیست"}", style = MaterialTheme.typography.bodySmall)
+                        if (rule.enabled && calendarLoaded) Text("اجرای بعدی: ${rule.schedule.nextRun(healthAt, holidays, rule.lastDate) ?: "بازه تمام شده یا روزی در محدوده نیست"}", style = MaterialTheme.typography.bodySmall)
                         Text("شناسه: ${rule.id.take(8)} · ${if (rule.kind == RuleKind.TRAFFIC) "نیاز به اینترنت و نشان" else "بدون اینترنت و API هوش مصنوعی"}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                             OutlinedButton(onClick = { onToggle(rule) }, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text(if (rule.enabled) "توقف قانون" else "فعال‌سازی دوباره") }

@@ -31,7 +31,7 @@ import kotlinx.coroutines.withContext
 
 /** Point-in-time diagnostics, refreshed on resume/tap. No polling, new permissions or battery exemption request. */
 @Composable
-internal fun BackgroundExecutionCard() {
+internal fun BackgroundExecutionCard(onRefresh: () -> Unit = {}) {
     val context = LocalContext.current
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     var refresh by remember { mutableIntStateOf(0) }
@@ -44,6 +44,7 @@ internal fun BackgroundExecutionCard() {
         lifecycle.addObserver(observer); onDispose { lifecycle.removeObserver(observer) }
     }
     LaunchedEffect(refresh) {
+        onRefresh()
         batteryLimited = !(context.getSystemService(Context.POWER_SERVICE) as PowerManager).isIgnoringBatteryOptimizations(context.packageName)
         backgroundRestricted = Build.VERSION.SDK_INT >= 28 && (context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager).isBackgroundRestricted
         notifications = Notifications.canPost(context)

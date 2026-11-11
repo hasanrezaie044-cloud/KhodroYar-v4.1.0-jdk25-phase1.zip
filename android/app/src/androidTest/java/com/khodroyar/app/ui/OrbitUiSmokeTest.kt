@@ -1,5 +1,9 @@
 package com.khodroyar.app.ui
 
+import android.app.Activity
+import android.content.ContextWrapper
+import android.view.KeyEvent
+import android.view.WindowManager
 import android.content.Context
 import android.content.ContentValues
 import android.provider.MediaStore
@@ -11,6 +15,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.asAndroidBitmap
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.testTag
@@ -51,6 +56,7 @@ class OrbitUiSmokeTest {
     @get:Rule val compose = createComposeRule()
     private val context get() = InstrumentationRegistry.getInstrumentation().targetContext
     private lateinit var repository: AppRepository
+    @Volatile private var imeVisible = false
 
     @Before fun fixture() {
         check(Build.HARDWARE.contains("ranchu") || Build.HARDWARE.contains("goldfish") || Build.FINGERPRINT.contains("generic")) {
@@ -88,6 +94,15 @@ class OrbitUiSmokeTest {
     private fun render(dark: Boolean = false, rtl: Boolean = true, fontScale: Float = 1f, content: @Composable () -> Unit) {
         compose.setContent {
             val density = LocalDensity.current
+            val activity = LocalContext.current.hostActivity()
+            val imeBottom = WindowInsets.ime.getBottom(density)
+            SideEffect { imeVisible = imeBottom > 0 }
+            DisposableEffect(activity) {
+                val previous = activity?.window?.attributes?.softInputMode
+                // Match MainActivity's manifest instead of the test host's adjust-pan default.
+                activity?.window?.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
+                onDispose { previous?.let { activity?.window?.setSoftInputMode(it) } }
+            }
             CompositionLocalProvider(LocalDensity provides Density(density.density, fontScale),
                 LocalLayoutDirection provides if (rtl) LayoutDirection.Rtl else LayoutDirection.Ltr,
                 LocalLanguage provides if (rtl) "fa" else "en") {
@@ -329,6 +344,15 @@ class OrbitUiSmokeTest {
         compose.onNodeWithTag("home-quick-add").performClick()
         compose.onNodeWithTag("quick-title").performScrollTo().performTextReplacement("پارکینگ")
         compose.onNodeWithTag("quick-amount").performScrollTo().performTextReplacement("75000")
+        compose.onNodeWithTag("quick-amount").performScrollTo().performClick()
+        compose.waitUntil(15_000) { imeVisible }
+        val automation=InstrumentationRegistry.getInstrumentation().uiAutomation
+        automation.injectInputEvent(KeyEvent(KeyEvent.ACTION_DOWN,KeyEvent.KEYCODE_BACK),true)
+        automation.injectInputEvent(KeyEvent(KeyEvent.ACTION_UP,KeyEvent.KEYCODE_BACK),true)
+        compose.waitUntil(15_000) { !imeVisible }
+        compose.onNodeWithTag("quick-title").assertExists()
+        compose.onNodeWithTag("quick-amount").assertTextContains("75,000")
+        compose.onNodeWithTag("quick-title").performScrollTo()
         shot("25-quick-entry-320-large-text")
         compose.onNodeWithTag("quick-confirm").performClick()
         compose.onNodeWithTag("quick-review").assertExists()
@@ -451,6 +475,8 @@ class OrbitUiSmokeTest {
 
     @Test fun maintenanceForecastUsesHistoryAndOpensTheCorrectReplacementForm() {
         runBlocking {
+            val unknown=repository.maintenanceDue("brake-pad","لنت ترمز",30000,currentOdometer=0.0,nextKmOverride=150000.0)
+            assertNull(unknown.remainingKm);assertEquals(150000.0,unknown.nextKm,0.0)
             val db = AppDatabase.get(context); val base = db.services().byId("ui-service-0")!!
             listOf(7,14,27).forEach { days -> db.services().insert(base.copy(id = "pace-$days", date = Jalali.addDays(Jalali.todayString(),-days), km = 140.0)) }
         }
@@ -514,6 +540,7 @@ class OrbitUiSmokeTest {
         render { AutomationManagerSheet(listOf(rule), false, {}, {}, {}, {}, {}) }
         compose.onNodeWithTag("background-health").assertIsDisplayed()
         compose.waitUntil(15_000) { compose.onAllNodesWithText("ناموفق").fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithText("ناموفق").performScrollTo().assertIsDisplayed()
         shot("32-automation-health")
     }
 
@@ -628,6 +655,12 @@ class OrbitUiSmokeTest {
         writeTextArtifact("performance-12000.json", """{"environment":"API35 x86_64 debug emulator; not a phone benchmark","records":12000,"aggregateQueryMs":$queryMs,"homeFirstDataMs":$renderMs,"mileageRows":${daily.size}}""")
     }
 
+    private tailrec fun Context.hostActivity(): Activity? = when (this) {
+        is Activity -> this
+        is ContextWrapper -> baseContext.hostActivity()
+        else -> null
+    }
+
     private fun writeTextArtifact(name: String, text: String) {
         val resolver=context.contentResolver
         val uri=requireNotNull(resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI,ContentValues().apply {
@@ -645,7 +678,7 @@ class OrbitUiSmokeTest {
         compose.waitForIdle()
         // ModalBottomSheet/Dialog adds another root; capture the topmost visible
         // surface rather than asking onRoot() to match exactly one window.
-        val node = if (name in setOf("19-home-dark-320-large-text", "23-report-table-320-large-text", "24-report-table-scrolled-amount", "25-quick-entry-320-large-text", "26-quick-entry-review", "27-recent-entry-edit-undo")) compose.onNodeWithTag("compact-app") else compose.onAllNodes(isRoot()).onLast()
+        val node = if (name == "32-automation-health") compose.onNodeWithTag("automation-sheet-content") else if (name in setOf("19-home-dark-320-large-text", "23-report-table-320-large-text", "24-report-table-scrolled-amount", "25-quick-entry-320-large-text", "26-quick-entry-review", "27-recent-entry-edit-undo")) compose.onNodeWithTag("compact-app") else compose.onAllNodes(isRoot()).onLast()
         val bitmap = node.captureToImage().asAndroidBitmap()
         // UTP uninstalls the tested APK after a run, removing its app-specific external files.
         // Publish synthetic screenshots to shared Downloads so CI can collect them afterwards.

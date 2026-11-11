@@ -30,12 +30,12 @@ class ReminderWorker(context: Context, params: WorkerParameters) : CoroutineWork
         if (!Notifications.canPost(ctx)) return Result.success()
 
         val repo = AppRepository(ctx)
-        repo.quickEntries.recover()
-        val settings = SettingsStore.get(ctx).current
         val today = Jalali.todayString()
         val ymd = Jalali.parse(today) ?: return Result.success()
 
         try {
+            repo.quickEntries.recover()
+            val settings = SettingsStore.get(ctx).current
             if (settings.remindDailySummary) dailySummary(ctx, repo, today)
             if (settings.remindWeeklySummary && Jalali.dayOfWeek(ymd.year, ymd.month, ymd.day) == 6) {
                 weeklySummary(ctx, repo, today)
@@ -53,6 +53,8 @@ class ReminderWorker(context: Context, params: WorkerParameters) : CoroutineWork
                 expiry(ctx, Notifications.ID_INSPECTION, "معاینه فنی", settings.inspectionDate)
             }
             if (settings.remindBackup) backupReminder(ctx, settings.lastBackupAt, settings.backupIntervalDays)
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
         } catch (_: Exception) {
             // A reminder must never crash the app or lose the schedule. Unlike before,
             // an unexpected failure now asks WorkManager to retry with backoff instead

@@ -37,7 +37,7 @@ internal fun FinancialComparisonSection(repository: AppRepository, from: String,
             IconBadge(Icons.Outlined.CompareArrows, tint = MaterialTheme.colorScheme.primary)
             Column(Modifier.weight(1f)) {
                 Text(tr("مقایسهٔ مالی", "Financial comparison"), style = MaterialTheme.typography.titleMedium)
-                Text(tr("همهٔ ثبت‌ها", "All recorded categories"), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(tr("همهٔ ثبت‌ها · تومان", "All recorded categories · Toman"), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             window?.let { StatusPill("${it.days} ${tr("روز", "days")}") }
         }

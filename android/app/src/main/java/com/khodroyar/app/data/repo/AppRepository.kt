@@ -385,7 +385,7 @@ class AppRepository(context: Context) {
         val last = latestMaintenance(typeWire)
         val driven = drivenKmSinceMaintenance(typeWire)
         val base = baseCurrentKm.takeIf { it > 0 } ?: last?.km?.takeIf { it > 0 } ?: 0.0
-        if (base <= 0 && nextKmOverride <= 0 || currentOdometer <= 0 && base > 0) return com.khodroyar.app.core.analytics.Analytics.ServiceDue(
+        if ((base <= 0 && nextKmOverride <= 0) || currentOdometer <= 0) return com.khodroyar.app.core.analytics.Analytics.ServiceDue(
             label, last?.km, interval, currentOdometer, null, false, false, driven,
             nextKm = nextKmOverride.takeIf { it > 0 } ?: if (base > 0 && interval > 0) base + interval else 0.0,
             baseCurrentKm = base)
