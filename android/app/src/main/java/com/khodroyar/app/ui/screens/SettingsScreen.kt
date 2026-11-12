@@ -526,10 +526,8 @@ fun SettingsScreen(repository: AppRepository, settings: AppSettings, onToggleThe
         item { CollapsibleSectionTitle("درباره برنامه", icon = Icons.Outlined.Info, expanded = "about" in sectionOpen.value, onToggle = { toggleSection("about") }, englishTitle = "About") }
         if ("about" in sectionOpen.value) {
         item { AboutCard() }
-        item { BazaarUpdateSettingsCard() }
         item { TermsLinkCard() }
         item { FontLicenseLink() }
-        item { OfflineModelLicenseLink() }
     }
 
         }

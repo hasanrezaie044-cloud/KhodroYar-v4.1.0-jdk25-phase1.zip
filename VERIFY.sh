@@ -31,7 +31,7 @@ echo
 # 4. Check database entities
 echo "4. Database Schema"
 grep -q "InsuranceEntity::class" android/app/src/main/java/com/khodroyar/app/data/db/AppDatabase.kt && echo "  ✓ Insurance entity registered" || { echo "  ✗ Insurance entity missing"; fail=1; }
-grep -q "version = 6" android/app/src/main/java/com/khodroyar/app/data/db/AppDatabase.kt && echo "  ✓ Database version 6 (unchanged in 5.5.1)" || { echo "  ✗ DB version wrong"; fail=1; }
+grep -q "version = 6" android/app/src/main/java/com/khodroyar/app/data/db/AppDatabase.kt && echo "  ✓ Database version 6 (unchanged in 5.4.0)" || { echo "  ✗ DB version wrong"; fail=1; }
 grep -q "InsuranceDao" android/app/src/main/java/com/khodroyar/app/data/db/Daos.kt && echo "  ✓ Insurance DAO exists" || { echo "  ✗ Insurance DAO missing"; fail=1; }
 grep -q "MIGRATION_5_6" android/app/src/main/java/com/khodroyar/app/data/db/AppDatabase.kt && echo "  ✓ Migrations wired (up to 5→6)" || { echo "  ✗ Migration missing"; fail=1; }
 echo
@@ -68,8 +68,8 @@ echo
 
 # 9. Check version info
 echo "9. Version Information"
-grep -q "versionCode 62" android/app/build.gradle && echo "  ✓ versionCode 62" || { echo "  ✗ versionCode wrong"; fail=1; }
-grep -q "versionName '5.5.1'" android/app/build.gradle && echo "  ✓ versionName 5.5.1" || { echo "  ✗ versionName wrong"; fail=1; }
+grep -q "versionCode 60" android/app/build.gradle && echo "  ✓ versionCode 60" || { echo "  ✗ versionCode wrong"; fail=1; }
+grep -q "versionName '5.4.0'" android/app/build.gradle && echo "  ✓ versionName 5.4.0" || { echo "  ✗ versionName wrong"; fail=1; }
 echo
 
 # 10. Check no debug signing for release
@@ -86,14 +86,6 @@ if grep -rIl -E "sk-[A-Za-z0-9_-]{20,}|GAPGPT_API_KEY=[^[:space:]]+" --exclude-d
 else
   echo "  ✓ No API key pattern in sources"
 fi
-echo
-
-echo "12. Offline ALBERT & Bazaar update safety"
-[ -f "android/app/src/main/java/com/khodroyar/app/ai/albert/PersianAlbertEngine.kt" ] && echo "  ✓ On-device model engine source present (not an inference test)" || { echo "  ✗ Engine missing"; fail=1; }
-grep -q "onnxruntime-android:1.23.2" android/app/build.gradle && echo "  ✓ CPU runtime pinned" || { echo "  ✗ Runtime missing"; fail=1; }
-grep -q "isNewer" android/app/src/main/java/com/khodroyar/app/updates/BazaarUpdatesViewModel.kt && echo "  ✓ Code-based update gate present" || { echo "  ✗ Update gate missing"; fail=1; }
-[ -f "android/app/src/main/aidl/com/farsitel/bazaar/IUpdateCheckService.aidl" ] && echo "  ✓ Official Bazaar service interface present" || { echo "  ✗ AIDL missing"; fail=1; }
-python3 -m py_compile tools/offline-albert/*.py && echo "  ✓ Build tooling Python syntax (not model execution)" || { echo "  ✗ Model tooling syntax"; fail=1; }
 echo
 
 echo "=== RESULT ==="

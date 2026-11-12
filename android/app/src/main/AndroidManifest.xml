@@ -40,11 +40,6 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
-    <!-- Narrow package visibility for Bazaar's official version-check IPC. No QUERY_ALL_PACKAGES. -->
-    <queries>
-        <package android:name="com.farsitel.bazaar" />
-    </queries>
-
     <uses-feature android:name="android.hardware.fingerprint" android:required="false" />
 
     <application

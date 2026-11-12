@@ -33,10 +33,7 @@ class AiAssistantViewModel(app: Application) : AndroidViewModel(app) {
     private val direct = DirectGapGptProvider(settingsStore::load, keyStore)
     private val provider = AiProviderRouter({ settingsStore.load().mode }, backend, direct)
     private val orchestrator = AgentOrchestrator(provider, tools, settingsStore)
-    private val albert = com.khodroyar.app.ai.albert.PersianAlbertEngine(app)
-    private val local = LocalAssistant(tools, dialogue = LocalDialogueEngine(rules = { automationStore.rules.value }), model = albert)
-    var localModelStatus by mutableStateOf(com.khodroyar.app.ai.albert.PersianAlbertEngine.Status.NOT_LOADED)
-        private set
+    private val local = LocalAssistant(tools, dialogue = LocalDialogueEngine(rules = { automationStore.rules.value }))
 
     var localContext by mutableStateOf(LocalDialogueContext())
         private set
@@ -86,12 +83,7 @@ class AiAssistantViewModel(app: Application) : AndroidViewModel(app) {
     private var keyRevision = 0
 
     val activeModel: String get() = when (settings.mode) {
-        AiMode.LOCAL -> when (localModelStatus) {
-            com.khodroyar.app.ai.albert.PersianAlbertEngine.Status.MEMORY_LIMITED -> "حالت سبک · حافظهٔ آزاد کم است"
-            com.khodroyar.app.ai.albert.PersianAlbertEngine.Status.UNAVAILABLE -> "حالت سبک · ALBERT در دسترس نیست"
-            com.khodroyar.app.ai.albert.PersianAlbertEngine.Status.NOT_LOADED -> "ALBERT فارسی · هنوز بارگذاری نشده"
-            com.khodroyar.app.ai.albert.PersianAlbertEngine.Status.READY -> "ALBERT فارسی · بارگذاری‌شده، آفلاین"
-        }
+        AiMode.LOCAL -> "ایجنت داخلی · بدون API هوش مصنوعی"
         AiMode.ONLINE -> settings.model.ifBlank { serverModel }
         AiMode.GAPGPT_DIRECT -> "GapGPT مستقیم · ${GapGptDirectContract.selectedModel(settings)}"
     }
@@ -351,10 +343,7 @@ class AiAssistantViewModel(app: Application) : AndroidViewModel(app) {
                 val step = if (mode == AiMode.LOCAL) local.run(snapshot.last().text) else orchestrator.run(snapshot)
                 coroutineContext.ensureActive()
                 if (run != generation) return@launch
-                if (mode == AiMode.LOCAL) {
-                    localContext = local.dialogue.context
-                    localModelStatus = albert.status
-                }
+                if (mode == AiMode.LOCAL) localContext = local.dialogue.context
                 if (mode == AiMode.GAPGPT_DIRECT && step !is AgentStep.Failure) connection = ConnectionState.ONLINE
                 when (step) {
                     is AgentStep.Reply -> add(ChatRole.ASSISTANT, step.text)
@@ -425,17 +414,6 @@ class AiAssistantViewModel(app: Application) : AndroidViewModel(app) {
         generation++
         job?.cancel()
         busy = false
-    }
-
-    fun onWorkspaceHidden() {
-        // Approved mutations finish and are verified; interpretation can be cancelled.
-        if (!executingAction) stop()
-        viewModelScope.launch { albert.releaseMemory(); localModelStatus = albert.status }
-    }
-
-    override fun onCleared() {
-        albert.close()
-        super.onCleared()
     }
 
     private fun add(role: ChatRole, text: String) {

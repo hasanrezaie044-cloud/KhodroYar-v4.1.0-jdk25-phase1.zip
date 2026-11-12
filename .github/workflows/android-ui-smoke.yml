@@ -7,29 +7,14 @@ on:
       ref:
         required: false
         type: string
-      prepared_model:
-        description: 'Calling release workflow already produced this run’s ALBERT artifact'
-        required: false
-        type: boolean
-        default: false
 
 concurrency:
   group: khodroyar-ui-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  prepare-model:
-    if: ${{ inputs.prepared_model != true }}
-    permissions:
-      contents: read
-    uses: ./.github/workflows/offline-albert.yml
-    with:
-      ref: ${{ inputs.ref || github.sha }}
-
   ui-smoke:
     name: Compose UI · API 35 emulator
-    needs: prepare-model
-    if: ${{ !cancelled() && (needs.prepare-model.result == 'success' || inputs.prepared_model == true) }}
     runs-on: ubuntu-latest
     timeout-minutes: 35
     permissions:
@@ -37,7 +22,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.ref || github.sha }}
+          ref: ${{ inputs.ref || github.ref }}
       - name: Set up JDK 25
         uses: actions/setup-java@v4
         with:
@@ -46,16 +31,7 @@ jobs:
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
         with:
-          packages: 'platforms;android-36 build-tools;36.0.0 platform-tools ndk;28.2.13676358 cmake;3.22.1'
-      - name: Read verified offline ALBERT assets from this run
-        uses: actions/download-artifact@v4
-        with:
-          name: khodroyar-offline-albert
-          path: android/.cache/offline-assets
-      - name: Verify model artifact and prepare pinned native SentencePiece source
-        run: |
-          python3 tools/offline-albert/verify_assets.py
-          python3 tools/offline-albert/prepare_sentencepiece.py
+          packages: 'platforms;android-36 build-tools;36.0.0 platform-tools'
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
@@ -143,7 +119,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.ref || github.sha }}
+          ref: ${{ inputs.ref || github.ref }}
       - name: Read this run's native screenshots
         uses: actions/download-artifact@v4
         with:
@@ -168,34 +144,3 @@ jobs:
       - name: Quick edit failure diagnostics
         if: always()
         run: '"$RUNNER_TEMP/feature-preview-env/bin/python" tools/ui-previews.py "$RUNNER_TEMP/native-feature-review" debug-quick-edit-state'
-
-  offline-feature-previews:
-    name: ALBERT and Bazaar native visual review
-    needs: ui-smoke
-    if: always() && github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ inputs.ref || github.sha }}
-      - uses: actions/download-artifact@v4
-        with:
-          name: khodroyar-orbit-native-ui
-          path: ${{ runner.temp }}/offline-feature-review
-      - name: Set up bounded native preview encoder
-        run: |
-          python3 -m venv "$RUNNER_TEMP/offline-preview-env"
-          "$RUNNER_TEMP/offline-preview-env/bin/pip" --disable-pip-version-check -q install Pillow==12.0.0
-      - name: Dismissible Bazaar warning in compact Persian layout
-        run: '"$RUNNER_TEMP/offline-preview-env/bin/python" tools/ui-previews.py "$RUNNER_TEMP/offline-feature-review" 34-bazaar-update-rtl-320'
-      - name: Manual Bazaar check and listing link
-        run: '"$RUNNER_TEMP/offline-preview-env/bin/python" tools/ui-previews.py "$RUNNER_TEMP/offline-feature-review" 35-bazaar-update-settings'
-      - name: Bazaar not installed is not an update warning
-        run: '"$RUNNER_TEMP/offline-preview-env/bin/python" tools/ui-previews.py "$RUNNER_TEMP/offline-feature-review" 36-bazaar-not-installed'
-      - name: Actual offline ALBERT request awaiting approval
-        run: '"$RUNNER_TEMP/offline-preview-env/bin/python" tools/ui-previews.py "$RUNNER_TEMP/offline-feature-review" 37-offline-albert-approval'
-      - name: Reported night-service conversation with a fresh corrected approval
-        run: '"$RUNNER_TEMP/offline-preview-env/bin/python" tools/ui-previews.py "$RUNNER_TEMP/offline-feature-review" 38-night-service-correction'

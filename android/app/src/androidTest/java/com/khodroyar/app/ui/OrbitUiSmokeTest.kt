@@ -9,7 +9,6 @@ import android.content.ContentValues
 import android.provider.MediaStore
 import android.graphics.Bitmap
 import android.os.Build
-import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -75,9 +74,6 @@ class OrbitUiSmokeTest {
         // First-use navigation must stay free of automatic tutorial dialogs.
         context.getSharedPreferences("car_manager_onboarding", Context.MODE_PRIVATE).edit().clear().commit()
         runBlocking {
-            // The real ALBERT chat test persists history by design. A different
-            // first-use/navigation fixture must not depend on JUnit method order.
-            ConversationRepository(context).clearAll()
             withContext(Dispatchers.IO) { AppDatabase.get(context).clearAllTables() }
             val db = AppDatabase.get(context)
             val today = Jalali.todayString()
@@ -95,18 +91,15 @@ class OrbitUiSmokeTest {
         }
     }
 
-    private fun render(dark: Boolean = false, rtl: Boolean = true, fontScale: Float = 1f, edgeToEdge: Boolean = false, content: @Composable () -> Unit) {
+    private fun render(dark: Boolean = false, rtl: Boolean = true, fontScale: Float = 1f, content: @Composable () -> Unit) {
         compose.setContent {
             val density = LocalDensity.current
             val activity = LocalContext.current.hostActivity()
             val imeBottom = WindowInsets.ime.getBottom(density)
             SideEffect { imeVisible = imeBottom > 0 }
-            DisposableEffect(activity, edgeToEdge) {
+            DisposableEffect(activity) {
                 val previous = activity?.window?.attributes?.softInputMode
-                // The IME regression opts into MainActivity's edge-to-edge setup
-                // so fitting decor cannot consume IME insets before Compose. Other
-                // isolated component fixtures retain their established viewport.
-                if (edgeToEdge) (activity as? androidx.activity.ComponentActivity)?.enableEdgeToEdge()
+                // Match MainActivity's manifest instead of the test host's adjust-pan default.
                 activity?.window?.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
                 onDispose { previous?.let { activity?.window?.setSoftInputMode(it) } }
             }
@@ -344,26 +337,14 @@ class OrbitUiSmokeTest {
     }
 
     @Test fun quickExpenseRequiresReviewSupportsCorrectionAndConfirmedUndoAtLargeFont() {
-        render(fontScale = 1.35f, edgeToEdge = true) {
+        render(fontScale = 1.35f) {
             Box(Modifier.width(320.dp).testTag("compact-app").fillMaxHeight()) { CarManagerRoot(repository) }
         }
         compose.onNodeWithTag("dashboard-list").performScrollToNode(hasTestTag("home-quick-add"))
         compose.onNodeWithTag("home-quick-add").performClick()
-        compose.onNodeWithTag("quick-title").performScrollTo().performClick()
-        compose.onNodeWithTag("quick-title").performTextReplacement("پارکینگ")
-        // Focus through an actual tap BEFORE semantic text injection. The tag
-        // includes supporting text; tap the editor, not its lower support area.
-        compose.onNodeWithTag("quick-amount").performScrollTo().performTouchInput {
-            click(Offset(width / 2f, height / 3f))
-        }
-        try {
-            compose.waitUntil(15_000) { imeVisible }
-        } catch (e: Throwable) {
-            shot("debug-quick-edit-state")
-            val focused = compose.onAllNodes(hasTestTag("quick-amount") and isFocused()).fetchSemanticsNodes().size
-            throw AssertionError("Software IME did not open after tapping amount; focused fields=$focused; ${imeDiagnostics()}", e)
-        }
-        compose.onNodeWithTag("quick-amount").performTextReplacement("75000")
+        compose.onNodeWithTag("quick-title").performScrollTo().performTextReplacement("پارکینگ")
+        compose.onNodeWithTag("quick-amount").performScrollTo().performTextReplacement("75000")
+        compose.onNodeWithTag("quick-amount").performScrollTo().performClick()
         compose.waitUntil(15_000) { imeVisible }
         pressSystemBack()
         try {
@@ -687,170 +668,6 @@ class OrbitUiSmokeTest {
         writeTextArtifact("performance-12000.json", """{"environment":"API35 x86_64 debug emulator; not a phone benchmark","records":12000,"aggregateQueryMs":$queryMs,"homeFirstDataMs":$renderMs,"mileageRows":${daily.size}}""")
     }
 
-    @Test fun offlineModelNoticeAndRuntimeLicenceOpenWithoutNetworkOrModelLoading() {
-        render { Column(Modifier.padding(16.dp)) { OfflineModelLicenseLink() } }
-        compose.onNodeWithText("مدل آفلاین و مجوزها").performClick()
-        compose.onNodeWithText("Model & modifications").performClick()
-        compose.waitUntil(10_000) { compose.onAllNodesWithText("KhodroYar 5.5 · Offline Persian task interpretation").fetchSemanticsNodes().isNotEmpty() }
-        compose.onNodeWithText("KhodroYar 5.5 · Offline Persian task interpretation").assertIsDisplayed()
-        compose.onNodeWithText("بازگشت").performClick()
-        compose.onNodeWithText("ONNX Runtime · MIT").performClick()
-        compose.waitUntil(10_000) { compose.onAllNodesWithText("MIT License").fetchSemanticsNodes().isNotEmpty() }
-        compose.onNodeWithText("MIT License").assertIsDisplayed()
-    }
-
-    @Test fun realOfflineAlbertChatShowsReviewWithoutWritingAnyExpense() {
-        lateinit var vm: AiAssistantViewModel
-        render(fontScale = 1.2f) {
-            val current: AiAssistantViewModel = androidx.lifecycle.viewmodel.compose.viewModel()
-            SideEffect { vm = current }
-            Box(Modifier.width(320.dp).fillMaxHeight().testTag("offline-agent-workspace")) { AiAssistantScreen(current) }
-        }
-        compose.waitUntil(20_000) { vm.connection == ConnectionState.LOCAL }
-        val before = runBlocking { AppDatabase.get(context).personalExpenses().allOnce().size }
-        compose.runOnIdle { vm.newChat(); vm.send("پول قهوه امروز پنجاه هزار تومان رو یادداشت کن") }
-        compose.waitUntil(60_000) { !vm.busy && vm.pending != null }
-        assertEquals(com.khodroyar.app.ai.albert.PersianAlbertEngine.Status.READY, vm.localModelStatus)
-        assertEquals("add_expense", vm.pending!!.call.spec.name)
-        assertEquals(50_000.0, vm.pending!!.call.dbl("amount")!!, 0.0)
-        compose.onNodeWithTag("agent-confirm").assertIsDisplayed().assertIsEnabled()
-        compose.waitForIdle()
-        // assertIsDisplayed alone accepts a partly clipped button. Check the
-        // WHOLE action, without test-assisted scrolling, at 320 dp / 1.2x text.
-        val viewport = compose.onNodeWithTag("agent-message-list").getUnclippedBoundsInRoot()
-        for (tag in listOf("agent-confirm", "agent-cancel")) {
-            val action = compose.onNodeWithTag(tag).getUnclippedBoundsInRoot()
-            assertTrue("$tag must be fully above the input bar", action.top >= viewport.top && action.bottom <= viewport.bottom + 1.dp)
-        }
-        assertEquals(before, runBlocking { AppDatabase.get(context).personalExpenses().allOnce().size })
-        shot("37-offline-albert-approval")
-        compose.onNodeWithTag("agent-cancel").performClick()
-        compose.waitUntil(10_000) { vm.pending == null }
-        compose.runOnIdle { vm.onWorkspaceHidden() }
-        compose.waitUntil(10_000) { vm.localModelStatus == com.khodroyar.app.ai.albert.PersianAlbertEngine.Status.NOT_LOADED }
-        assertEquals(before, runBlocking { AppDatabase.get(context).personalExpenses().allOnce().size })
-    }
-
-    @Test fun reportedNightServiceCorrectionRebuildsTheCardAndOnlyApprovalWritesTheReviewedType() {
-        saveAgentServicePreset()
-        lateinit var vm: AiAssistantViewModel
-        render {
-            val current: AiAssistantViewModel = androidx.lifecycle.viewmodel.compose.viewModel()
-            SideEffect { vm = current }
-            Box(Modifier.width(320.dp).fillMaxHeight().testTag("offline-agent-workspace")) { AiAssistantScreen(current) }
-        }
-        compose.waitUntil(20_000) { vm.connection == ConnectionState.LOCAL }
-        assertEquals(com.khodroyar.app.ai.albert.PersianAlbertEngine.Status.NOT_LOADED, vm.localModelStatus)
-        assertTrue(vm.activeModel.contains("هنوز بارگذاری نشده"))
-        val before = runBlocking { AppDatabase.get(context).services().allOnce() }
-        compose.runOnIdle { vm.send("امشب ی سرویس رفتم ثبت کن") }
-        compose.waitUntil(60_000) { !vm.busy && vm.pending != null }
-        val initial = vm.pending!!.call
-        assertEquals("request", AutomationCodec.templateFromJson(org.json.JSONObject(initial.str("service_snapshot")!!)).type)
-        compose.runOnIdle { vm.send("ن سرویس شب بود") }
-        compose.waitUntil(20_000) { !vm.busy && vm.pending?.call?.str("service_type") == "night" }
-        val revised = vm.pending!!.call
-        assertEquals(com.khodroyar.app.ai.albert.PersianAlbertEngine.Status.READY, vm.localModelStatus)
-        assertTrue(vm.activeModel.contains("بارگذاری‌شده"))
-        assertNotEquals(initial.str("operation_id"), revised.str("operation_id"))
-        assertEquals(Jalali.todayString(), revised.str("date"))
-        val snapshot = AutomationCodec.templateFromJson(org.json.JSONObject(revised.str("service_snapshot")!!))
-        assertEquals("night", snapshot.type); assertEquals(80.0, snapshot.km, 0.0)
-        assertEquals("request", repository.settingsNow.autoServiceType)
-        assertEquals(before.size, runBlocking { AppDatabase.get(context).services().allOnce().size })
-        compose.onNodeWithTag("agent-confirm").performScrollTo().assertIsDisplayed()
-        shot("38-night-service-correction")
-        compose.onNodeWithTag("agent-confirm").performClick()
-        compose.waitUntil(20_000) { !vm.busy && vm.pending == null }
-        val after = runBlocking { AppDatabase.get(context).services().allOnce() }
-        assertEquals(before.size + 1, after.size)
-        val saved = after.single { row -> before.none { it.id == row.id } }
-        assertEquals("night", saved.type); assertEquals(revised.str("date"), saved.date)
-        assertEquals(snapshot.km, saved.km, 0.0); assertEquals(snapshot.hours, saved.hours, 0.0)
-        assertEquals(snapshot.origin, saved.origin); assertEquals(snapshot.destination, saved.destination)
-        assertEquals(80.0, repository.settingsNow.vehicleCurrentKm, 0.0)
-        assertEquals("request", repository.settingsNow.autoServiceType)
-    }
-
-    @Test fun missingServicePresetKeepsTheNightCorrectionAndAsksForRealFieldsWithoutWriting() = runBlocking {
-        val assistant = LocalAssistant(AppAgentTools(context, repository))
-        val before = AppDatabase.get(context).services().allOnce().size
-        assertTrue(assistant.run("امشب ی سرویس رفتم ثبت کن") is AgentStep.Reply)
-        val correction = assistant.run("ن سرویس شب بود") as AgentStep.Reply
-        assertTrue(correction.text.contains("سرویس شب")); assertTrue(correction.text.contains("کیلومتر"))
-        assertFalse(correction.text.contains("ربط ندادم"))
-        assertEquals(before, AppDatabase.get(context).services().allOnce().size)
-        saveAgentServicePreset()
-        val review = assistant.run("الگو را ذخیره کردم") as AgentStep.Confirm
-        assertEquals("night", AutomationCodec.templateFromJson(org.json.JSONObject(review.pending.call.str("service_snapshot")!!)).type)
-        assertEquals(before, AppDatabase.get(context).services().allOnce().size)
-    }
-
-    private fun saveAgentServicePreset() {
-        repository.updateSettings { it.copy(autoServicePresetSaved = true, autoServiceType = "request", autoServiceCarType = "soren",
-            autoServiceOrigin = "مبارکه", autoServiceDestination = "اصفهان", autoServiceKm = 80.0, autoServiceHours = 2.0,
-            autoServiceStartTime = "20:00", autoServiceEndTime = "22:00", autoServiceTollCount = 1) }
-    }
-
-    @Test fun newerBazaarVersionHasDismissibleCompactRtlWarningAndManualRecheck() {
-        context.getSharedPreferences("bazaar_update_notice", 0).edit().clear().commit()
-        var checks = 0
-        val updates = com.khodroyar.app.updates.BazaarUpdatesViewModel(context.applicationContext as android.app.Application,
-            com.khodroyar.app.updates.BazaarVersionSource { checks++; com.khodroyar.app.updates.BazaarVersionResult.Reported(com.khodroyar.app.BuildConfig.VERSION_CODE + 1L) })
-        render(fontScale = 1.35f) {
-            Column(Modifier.width(320.dp).padding(12.dp)) {
-                BazaarUpdateHost(updates)
-                BazaarUpdateSettingsCard(updates)
-            }
-        }
-        compose.waitUntil(10_000) { updates.state.value.showPrompt }
-        compose.onNodeWithTag("bazaar-update-open").assertIsDisplayed()
-        compose.onNodeWithTag("bazaar-update-later").assertIsDisplayed()
-        shot("34-bazaar-update-rtl-320")
-        compose.onNodeWithTag("bazaar-update-later").performClick()
-        compose.onNodeWithTag("bazaar-update-dialog").assertDoesNotExist()
-        compose.runOnIdle { updates.onForeground() }
-        assertEquals(1, checks)
-        shot("35-bazaar-update-settings")
-        compose.onNodeWithTag("bazaar-update-check").performClick()
-        compose.waitUntil(10_000) { updates.state.value.showPrompt }
-        assertEquals(2, checks)
-        compose.onNodeWithTag("bazaar-update-later").performClick()
-        context.getSharedPreferences("bazaar_update_notice", 0).edit().clear().commit()
-    }
-
-    @Test fun missingBazaarOrUnavailableVersionNeverDisplaysAFakeUpdateWarning() {
-        val updates = com.khodroyar.app.updates.BazaarUpdatesViewModel(context.applicationContext as android.app.Application,
-            com.khodroyar.app.updates.BazaarVersionSource { com.khodroyar.app.updates.BazaarVersionResult.Unavailable(com.khodroyar.app.updates.BazaarVersionResult.Reason.NOT_INSTALLED) })
-        render { Column(Modifier.padding(16.dp)) { BazaarUpdateHost(updates); BazaarUpdateSettingsCard(updates) } }
-        compose.waitUntil(10_000) { updates.state.value.outcome == com.khodroyar.app.updates.BazaarUpdatesViewModel.Outcome.BAZAAR_MISSING }
-        compose.onNodeWithTag("bazaar-update-dialog").assertDoesNotExist()
-        compose.onNodeWithText("برای بررسی خودکار، برنامهٔ کافه‌بازار باید نصب باشد.").assertIsDisplayed()
-        shot("36-bazaar-not-installed")
-        val actual = runBlocking { com.khodroyar.app.updates.BazaarVersionService(context).check() }
-        assertEquals(com.khodroyar.app.updates.BazaarVersionResult.Unavailable(com.khodroyar.app.updates.BazaarVersionResult.Reason.NOT_INSTALLED), actual)
-    }
-
-    @Test fun bazaarBrowserFallbackTargetsOnlyTheExistingAppPage() {
-        val attempts = mutableListOf<android.content.Intent>()
-        assertTrue(com.khodroyar.app.updates.BazaarListing.open { intent ->
-            attempts += intent
-            if (attempts.size == 1) throw android.content.ActivityNotFoundException("Bazaar absent")
-        })
-        assertEquals("com.farsitel.bazaar", attempts[0].`package`)
-        assertEquals("bazaar://details?id=com.khodroyar.app", attempts[0].data.toString())
-        assertNull(attempts[1].`package`)
-        assertEquals("https://cafebazaar.ir/app/com.khodroyar.app", attempts[1].data.toString())
-        assertFalse(com.khodroyar.app.updates.BazaarListing.open { throw android.content.ActivityNotFoundException("No browser") })
-    }
-
-    private fun imeDiagnostics(): String = runCatching {
-        val descriptor = InstrumentationRegistry.getInstrumentation().uiAutomation.executeShellCommand("dumpsys input_method")
-        android.os.ParcelFileDescriptor.AutoCloseInputStream(descriptor).bufferedReader().use { it.readText() }
-            .lineSequence().filter { line -> listOf("mInputShown", "mShowRequested", "mImeWindowVis", "mCurFocusedWindow", "mCurMethodId").any { key -> line.contains(key) } }
-            .take(12).joinToString("; ") { it.trim().take(240) }
-    }.getOrDefault("IME diagnostics unavailable")
-
     private fun pressSystemBack() {
         // Use instrumentation's complete system-key event, not a dispatcher shortcut
         // (which would bypass the input method) or an un-sourced synthetic key pair.
@@ -881,19 +698,8 @@ class OrbitUiSmokeTest {
         compose.waitForIdle()
         // ModalBottomSheet/Dialog adds another root; capture the topmost visible
         // surface rather than asking onRoot() to match exactly one window.
-        val node = when {
-            name == "32-automation-health" -> compose.onNodeWithTag("automation-sheet-content")
-            name == "34-bazaar-update-rtl-320" -> compose.onNodeWithTag("bazaar-update-dialog")
-            name in setOf("37-offline-albert-approval", "38-night-service-correction") -> compose.onNodeWithTag("offline-agent-workspace")
-            name in setOf("19-home-dark-320-large-text", "23-report-table-320-large-text", "24-report-table-scrolled-amount", "25-quick-entry-320-large-text", "26-quick-entry-review", "27-recent-entry-edit-undo") -> compose.onNodeWithTag("compact-app")
-            else -> compose.onAllNodes(isRoot()).onLast()
-        }
-        // On IME failure include the real system keyboard/window, which a
-        // Compose-only capture deliberately excludes. Normal previews stay Compose.
-        val bitmap = if (name == "debug-quick-edit-state") {
-            InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot()
-                ?: node.captureToImage().asAndroidBitmap()
-        } else node.captureToImage().asAndroidBitmap()
+        val node = if (name == "32-automation-health") compose.onNodeWithTag("automation-sheet-content") else if (name in setOf("19-home-dark-320-large-text", "23-report-table-320-large-text", "24-report-table-scrolled-amount", "25-quick-entry-320-large-text", "26-quick-entry-review", "27-recent-entry-edit-undo")) compose.onNodeWithTag("compact-app") else compose.onAllNodes(isRoot()).onLast()
+        val bitmap = node.captureToImage().asAndroidBitmap()
         // UTP uninstalls the tested APK after a run, removing its app-specific external files.
         // Publish synthetic screenshots to shared Downloads so CI can collect them afterwards.
         check(Build.VERSION.SDK_INT >= 29)

@@ -1,9 +1,6 @@
 # Local tooling, build outputs and private runtime configuration
 .gradle/
 android/.gradle/
-# Reproducible model/native build caches, never phone data or checked-in binaries.
-android/.cache/
-**/.cxx/
 **/build/
 node_modules/
 **/__pycache__/
