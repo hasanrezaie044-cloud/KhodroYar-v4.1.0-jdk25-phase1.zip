@@ -1,0 +1,275 @@
+{
+  "verifiedRun": 43214409318,
+  "runUrl": "https://github.com/hasanrezaie044-cloud/KhodroYar-v4.1.0-jdk25-phase1.zip/actions/runs/43214409318",
+  "compiledCommit": "b119cadca51fb9bf4840ed428a659d5fe56e9280",
+  "branch": "arena/8969fd2b-khodroyar-v4-1-0-jdk25-phase1",
+  "workflowConclusion": "success",
+  "releaseArtifactId": 13943491480,
+  "releaseDownloadUrl": "https://github.com/hasanrezaie044-cloud/KhodroYar-v4.1.0-jdk25-phase1.zip/actions/runs/43214409318/artifacts/13943491480",
+  "final": {
+    "file": "android/app/build/outputs/apk/release/app-release.apk",
+    "applicationId": "com.khodroyar.app",
+    "versionCode": 63,
+    "versionName": "5.6.0",
+    "bytes": 3184648,
+    "sha256": "1c3829ce6d738b25b4e6796152dab72c9306794a51d5fefa29adaecc846b410e",
+    "certificateSha256": [
+      "03bfbc3575667403c3259fae345f3eb1ad3045373cb62123be376ef4898caaf0"
+    ],
+    "zipAlignment16KiBVerified": true
+  },
+  "baselines": [
+    {
+      "file": ".verification/baselines/provided-source/app-release.apk",
+      "applicationId": "com.khodroyar.app",
+      "versionCode": 54,
+      "versionName": "5.1.9",
+      "bytes": 3259434,
+      "sha256": "e686537861deb33fb8b3e2bed080e9f750a2301fe6199d25120fa086cc65159d",
+      "certificateSha256": [
+        "03bfbc3575667403c3259fae345f3eb1ad3045373cb62123be376ef4898caaf0"
+      ],
+      "zipAlignment16KiBVerified": false,
+      "differenceBytes": -74786,
+      "differencePercent": -2.294
+    },
+    {
+      "file": ".verification/baselines/pre-albert/app-release.apk",
+      "applicationId": "com.khodroyar.app",
+      "versionCode": 60,
+      "versionName": "5.4.0",
+      "bytes": 3666121,
+      "sha256": "bfd04a12b214b7924b8c98a07ea2547f5da80aa1982a4235a23084f0ce42dcc9",
+      "certificateSha256": [
+        "03bfbc3575667403c3259fae345f3eb1ad3045373cb62123be376ef4898caaf0"
+      ],
+      "zipAlignment16KiBVerified": false,
+      "differenceBytes": -481473,
+      "differencePercent": -13.133
+    },
+    {
+      "file": ".verification/baselines/albert/app-release.apk",
+      "applicationId": "com.khodroyar.app",
+      "versionCode": 62,
+      "versionName": "5.5.1",
+      "bytes": 77962115,
+      "sha256": "58ef24fd3b8f9e37b3349b7ad75f07b33de685ec5851af8d5332a0c7374c54d7",
+      "certificateSha256": [
+        "03bfbc3575667403c3259fae345f3eb1ad3045373cb62123be376ef4898caaf0"
+      ],
+      "zipAlignment16KiBVerified": false,
+      "differenceBytes": -74777467,
+      "differencePercent": -95.915
+    }
+  ],
+  "comparisonConvention": "app minus company",
+  "roomSchemaVersion": 6,
+  "optionalOcr": {
+    "file": "android/ocr/build/outputs/apk/release/ocr-release.apk",
+    "applicationId": "com.khodroyar.ocr",
+    "versionCode": 63,
+    "versionName": "5.6.0",
+    "bytes": 29019941,
+    "sha256": "48adaa7826b4880b4da89e3b5c0680e8c74db3f7eedd201a98d5e6bc1481d930",
+    "certificateSha256": [
+      "03bfbc3575667403c3259fae345f3eb1ad3045373cb62123be376ef4898caaf0"
+    ],
+    "zipAlignment16KiBVerified": true
+  },
+  "unitTests": {
+    "suites": 6,
+    "tests": 101,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "nativeTests": {
+    "tests": 4,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "files": [
+      "android/app/build/outputs/androidTest-results/connected/debug/TEST-emulator-5554 - 15-_app-.xml",
+      "android/ocr/build/outputs/androidTest-results/connected/debug/TEST-emulator-5554 - 15-_ocr-.xml"
+    ],
+    "problems": []
+  },
+  "jobs": [
+    {
+      "name": "Signed APK Release (JDK 25)",
+      "conclusion": "success",
+      "steps": [
+        {
+          "name": "Set up job",
+          "conclusion": "success"
+        },
+        {
+          "name": "Checkout current ref",
+          "conclusion": "success"
+        },
+        {
+          "name": "Set up JDK 25",
+          "conclusion": "success"
+        },
+        {
+          "name": "Set up Android SDK",
+          "conclusion": "success"
+        },
+        {
+          "name": "Setup Gradle",
+          "conclusion": "success"
+        },
+        {
+          "name": "Validate original signing secrets",
+          "conclusion": "success"
+        },
+        {
+          "name": "Decode original keystore outside checkout",
+          "conclusion": "success"
+        },
+        {
+          "name": "Read actual resulting version",
+          "conclusion": "success"
+        },
+        {
+          "name": "Static checks, permission audit, credential scan",
+          "conclusion": "success"
+        },
+        {
+          "name": "Compile Kotlin, KSP, Compose and run JVM unit tests",
+          "conclusion": "success"
+        },
+        {
+          "name": "Preserve unit test evidence",
+          "conclusion": "success"
+        },
+        {
+          "name": "Build signed main and optional OCR APKs (R8)",
+          "conclusion": "success"
+        },
+        {
+          "name": "Read actual pre-ALBERT baseline APK",
+          "conclusion": "success"
+        },
+        {
+          "name": "Read actual latest ALBERT baseline APK",
+          "conclusion": "success"
+        },
+        {
+          "name": "Build unmodified provided source as size reference",
+          "conclusion": "success"
+        },
+        {
+          "name": "Verify package, version, signatures, size and embedded credentials",
+          "conclusion": "success"
+        },
+        {
+          "name": "Android lint (existing and new diagnostics)",
+          "conclusion": "success"
+        },
+        {
+          "name": "Package verified, clearly named release files and optional language data",
+          "conclusion": "success"
+        },
+        {
+          "name": "Publish signed APKs and verification evidence",
+          "conclusion": "success"
+        },
+        {
+          "name": "Publish R8 mapping",
+          "conclusion": "success"
+        },
+        {
+          "name": "Release summary",
+          "conclusion": "success"
+        },
+        {
+          "name": "Remove temporary signing file",
+          "conclusion": "success"
+        },
+        {
+          "name": "Post Setup Gradle",
+          "conclusion": "success"
+        },
+        {
+          "name": "Post Set up JDK 25",
+          "conclusion": "success"
+        },
+        {
+          "name": "Post Checkout current ref",
+          "conclusion": "success"
+        },
+        {
+          "name": "Complete job",
+          "conclusion": "success"
+        }
+      ]
+    },
+    {
+      "name": "Native Persian OCR and document import (API 35)",
+      "conclusion": "success",
+      "steps": [
+        {
+          "name": "Set up job",
+          "conclusion": "success"
+        },
+        {
+          "name": "Run actions/checkout@v4",
+          "conclusion": "success"
+        },
+        {
+          "name": "Run actions/setup-java@v4",
+          "conclusion": "success"
+        },
+        {
+          "name": "Run android-actions/setup-android@v3",
+          "conclusion": "success"
+        },
+        {
+          "name": "Run gradle/actions/setup-gradle@v4",
+          "conclusion": "success"
+        },
+        {
+          "name": "Verify official optional Persian data",
+          "conclusion": "success"
+        },
+        {
+          "name": "Enable KVM",
+          "conclusion": "success"
+        },
+        {
+          "name": "Compile native instrumentation tests",
+          "conclusion": "success"
+        },
+        {
+          "name": "Run genuinely local OCR and PDF/image import on emulator",
+          "conclusion": "success"
+        },
+        {
+          "name": "Summarize executed native tests",
+          "conclusion": "success"
+        },
+        {
+          "name": "Publish native results",
+          "conclusion": "success"
+        },
+        {
+          "name": "Post Run gradle/actions/setup-gradle@v4",
+          "conclusion": "success"
+        },
+        {
+          "name": "Post Run actions/setup-java@v4",
+          "conclusion": "success"
+        },
+        {
+          "name": "Post Run actions/checkout@v4",
+          "conclusion": "success"
+        },
+        {
+          "name": "Complete job",
+          "conclusion": "success"
+        }
+      ]
+    }
+  ]
+}

@@ -22,6 +22,11 @@ parity is proven, and exactly what is and is not done.
 
 ## Current release and offline reconciliation
 
+The [5.6.0 release report](docs/RELEASE-v5.6.0.md) contains the verified CI run,
+signed-APK download, actual APK-size comparisons, original-certificate continuity,
+executed test results and remaining limitations. Machine-readable evidence is in
+[`docs/release-verification.json`](docs/release-verification.json).
+
 The source of truth for the release version is `android/version.properties`, not the
 repository/archive name. See `docs/version-lineage.json` for the inspected source and
 previous release lineage. The original lightweight command assistant is restored from
