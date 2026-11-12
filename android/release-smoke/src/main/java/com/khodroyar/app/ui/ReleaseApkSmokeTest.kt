@@ -9,6 +9,8 @@ import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Typeface
 import android.os.Build
+import android.os.SystemClock
+import android.net.ConnectivityManager
 import android.provider.MediaStore
 import android.text.Layout
 import android.text.StaticLayout
@@ -98,13 +100,32 @@ class ReleaseApkSmokeTest {
         context.contentResolver.openOutputStream(uri)!!.use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
         bitmap.recycle()
         val extracted = JSONObject()
+        val offline = JSONObject()
+        val initiallyAirplaneMode = device.executeShellCommand("settings get global airplane_mode_on").trim() == "1"
+        val connectivity = requireNotNull(context.getSystemService(ConnectivityManager::class.java))
+        fun verifyOffline(): JSONObject {
+            val deadline = SystemClock.uptimeMillis() + 15000
+            var state = JSONObject()
+            do {
+                val airplane = device.executeShellCommand("settings get global airplane_mode_on").trim()
+                val wifi = device.executeShellCommand("settings get global wifi_on").trim()
+                val connected = connectivity.activeNetwork != null
+                state = JSONObject().put("airplane_mode", airplane).put("wifi_on", wifi).put("active_network", connected)
+                if (airplane == "1" && wifi == "0" && !connected) return state
+                SystemClock.sleep(250)
+            } while (SystemClock.uptimeMillis() < deadline)
+            throw AssertionError("Emulator is not actually offline: $state")
+        }
         var passed = false
         try {
             // Emulator permission only, not a new application permission or a bypass on a phone.
             device.executeShellCommand("pm grant com.khodroyar.app android.permission.POST_NOTIFICATIONS")
+            // Android can keep the legacy global mobile_data preference at 1
+            // while the per-subscription radio is disabled. Verify actual lack of
+            // connectivity plus airplane mode/Wi-Fi instead of trusting that flag.
+            device.executeShellCommand("cmd connectivity airplane-mode enable")
             device.executeShellCommand("svc wifi disable"); device.executeShellCommand("svc data disable")
-            assertEquals("0", device.executeShellCommand("settings get global wifi_on").trim())
-            assertEquals("0", device.executeShellCommand("settings get global mobile_data").trim())
+            offline.put("before", verifyOffline())
             context.startActivity(requireNotNull(context.packageManager.getLaunchIntentForPackage(targetPackage)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
             stage("real launcher opened, radios disabled")
             tagged("terms-agree").click(); tagged("terms-continue").click()
@@ -147,7 +168,8 @@ class ReleaseApkSmokeTest {
             scrollTo(By.res("report-review-confirm"), "work-report-list").click()
             tagged("report-compare").click()
             find(By.text("شرکت: 2 سرویس · 120.5 کیلومتر · 3.5 ساعت"))
-            stage("mandatory review and actual comparison passed")
+            offline.put("after", verifyOffline())
+            stage("mandatory review and actual comparison passed; still offline")
             val screenshot = File(context.cacheDir, "signed-release-offline-ocr.png")
             assertTrue(device.takeScreenshot(screenshot))
             publishSyntheticEvidence(context, "KhodroYar-Release-Smoke", screenshot.name, "image/png", screenshot.readBytes())
@@ -155,7 +177,7 @@ class ReleaseApkSmokeTest {
             passed = true
         } finally {
             val trace = JSONObject().put("environment", "API35 x86_64 emulator; original signed non-debuggable R8 APK; gesture navigation; not physical Samsung proof")
-                .put("passed", passed).put("stages", JSONArray(stages)).put("extracted", extracted)
+                .put("passed", passed).put("stages", JSONArray(stages)).put("extracted", extracted).put("offline", offline)
                 .put("target_package", targetPackage).put("target_debuggable", false)
                 .put("instrumentation_package", context.packageName)
                 .put("target_uid", targetInfo.uid).put("instrumentation_uid", android.os.Process.myUid())
@@ -163,6 +185,7 @@ class ReleaseApkSmokeTest {
             val hierarchy = ByteArrayOutputStream()
             device.dumpWindowHierarchy(hierarchy)
             publishSyntheticEvidence(context, "KhodroYar-Release-Smoke", "last-window.xml", "text/xml", hierarchy.toByteArray())
+            device.executeShellCommand("cmd connectivity airplane-mode ${if (initiallyAirplaneMode) "enable" else "disable"}")
             device.executeShellCommand("svc wifi enable"); device.executeShellCommand("svc data enable")
             context.contentResolver.delete(uri, null, null)
         }

@@ -137,6 +137,8 @@ assert evidence['target_package'] == 'com.khodroyar.app'
 assert evidence['target_debuggable'] is False
 assert evidence['instrumentation_package'] != evidence['target_package']
 assert evidence['target_uid'] != evidence['instrumentation_uid'], 'Test must run outside the production process'
+for phase in ('before', 'after'):
+    assert evidence['offline'][phase] == dict(airplane_mode='1', wifi_on='0', active_network=False), 'Actual offline state is required'
 PY
 then
   RESULT=1
