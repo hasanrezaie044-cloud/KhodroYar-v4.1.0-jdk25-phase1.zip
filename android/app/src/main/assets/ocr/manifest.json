@@ -1,28 +1,35 @@
 {
-  "repository": "tesseract-ocr/tessdata_fast",
-  "commit": "87416418657359cb625c412a48b6e1d6d41c29bd",
+  "version": 2,
   "license": "Apache-2.0",
   "files": [
     {
       "name": "fas.traineddata",
-      "bytes": 431500,
-      "sha256": "db1c0a91208aff00d3cf1ed2c1d23f76419afd5f024688b4f71adc3f2ce4a505",
-      "git_blob": "1a17ee02076107e73abd15d2038389150c8f824f"
+      "repository": "tesseract-ocr/tessdata_best",
+      "commit": "e12c65a915945e4c28e237a9b52bc4a8f39a0cec",
+      "bytes": 3325955,
+      "sha256": "99e420969b5ddd2cb135b416316a7ed417c59c4faf9e0d28941348f6448114df",
+      "git_blob": "326a26e8522dce12596fc0de314710c5cc7055d0"
     },
     {
       "name": "ara.traineddata",
+      "repository": "tesseract-ocr/tessdata_fast",
+      "commit": "87416418657359cb625c412a48b6e1d6d41c29bd",
       "bytes": 1432056,
       "sha256": "e3206d3dc87fd50c24a0fb9f01838615911d25168f4e64415244b67d2bb3e729",
       "git_blob": "c8d129c67821c1592cac46836686b057ecc203dc"
     },
     {
       "name": "eng.traineddata",
+      "repository": "tesseract-ocr/tessdata_fast",
+      "commit": "87416418657359cb625c412a48b6e1d6d41c29bd",
       "bytes": 4113088,
       "sha256": "7d4322bd2a7749724879683fc3912cb542f19906c83bcc1a52132556427170b2",
       "git_blob": "bbef4675053b5b468cdb477053e28b1c698ba08e"
     },
     {
       "name": "LICENSE",
+      "repository": "tesseract-ocr/tessdata_fast",
+      "commit": "87416418657359cb625c412a48b6e1d6d41c29bd",
       "bytes": 11358,
       "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
       "git_blob": "d645695673349e3947e8e5ae42332d0ac3164cd7"

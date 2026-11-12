@@ -37,7 +37,7 @@ class ServiceCommandDialogue(private val today: () -> String) {
     fun discard() { draft = null; waiting = ""; context = LocalDialogueContext() }
     fun completed(call: ValidatedCall, success: Boolean) {
         if (call.spec.name !in ServiceCommandSpecs.names || !success) return
-        last = Scope(requireNotNull(call.str("start_date")), requireNotNull(call.str("end_date")), requireNotNull(call.str("service_type")))
+        last = Scope(requireNotNull(call.str("start_date")), requireNotNull(call.str("end_date")), call.str("new_type") ?: requireNotNull(call.str("service_type")))
         draft = null; waiting = ""; context = LocalDialogueContext("سرویس‌های بازه", "${last!!.start} تا ${last!!.end}", listOf("گزارش همونا رو بده", "جستجوی همون سرویس‌ها"))
     }
     fun parse(raw: String): LocalIntent? {

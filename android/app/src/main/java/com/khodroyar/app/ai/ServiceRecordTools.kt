@@ -9,14 +9,16 @@ import kotlinx.coroutines.CancellationException
 
 /** Existing app repository + existing approval gate, including app-owned optimistic snapshots. */
 class ServiceRecordTools(private val repository: AppRepository) : AgentToolRunner {
-    override suspend fun prepare(call: ValidatedCall): ValidatedCall = try {
+    override suspend fun prepare(call: ValidatedCall): ValidatedCall {
         require(call.spec.name in ServiceCommandSpecs.names)
         if (call.spec.kind == ToolKind.READ) return call
+        return try {
         val plan = repository.serviceBatches.prepare(call.spec.name, requireNotNull(call.str("start_date")), requireNotNull(call.str("end_date")),
             requireNotNull(call.str("service_type")), call.int("per_day"), call.str("days") == "workdays", call.dbl("km"), call.dbl("hours"), call.str("new_type")).copy(reportAfter = call.str("report_after") == "on")
         ValidatedCall(call.spec, call.args + ("service_plan" to plan))
     } catch (e: CancellationException) { throw e }
     catch (e: IllegalArgumentException) { throw AgentUserException(e.message ?: "اطلاعات سرویس کامل نیست؛ چیزی تغییر نکرد.") }
+    }
 
     private fun plan(call: ValidatedCall): ServiceBatchPlan = (call.args["service_plan"] as? ServiceBatchPlan)
         ?.takeIf { it.action == call.spec.name } ?: throw AgentUserException("پیش‌نمایش معتبر موجود نیست؛ درخواست را دوباره بدهید.")
@@ -33,7 +35,8 @@ class ServiceRecordTools(private val repository: AppRepository) : AgentToolRunne
             val result = "$n سرویس طبق همین پیش‌نمایش در پایگاه‌داده تأیید و بازخوانی شد.\n${p.start} تا ${p.end}\n" +
                 "رکوردهای بعد: ${p.created.size} سرویس · ${p.created.sumOf { it.km }} کیلومتر · ${p.created.sumOf { it.hours }} ساعت\n" +
                 "این اعداد فقط رکوردهای تغییرکرده‌اند؛ برای کل بازه بگو «گزارش همونا رو بده». ثبت‌های موجود دوباره ایجاد نشدند."
-            val report = if (p.reportAfter) read(ValidatedCall(requireNotNull(AgentToolRegistry.find("report_services_range")), call.args)).text else ""
+            val report = if (p.reportAfter) read(ValidatedCall(requireNotNull(AgentToolRegistry.find("report_services_range")),
+                call.args + ("service_type" to (call.str("new_type") ?: requireNotNull(call.str("service_type")))))).text else ""
             ToolOutcome(true, result + if (report.isNotEmpty()) "\n\nگزارش پس از عملیات:\n$report" else "")
         }
     } catch (e: CancellationException) { throw e }

@@ -10,10 +10,24 @@ on:
         type: choice
         options: [release, ui-only]
         default: release
+      delivery_upload_url:
+        description: 'Ciphertext receiver URL (public, NEVER the user download URL)'
+        required: false
+        type: string
+      delivery_public_key:
+        description: 'Public RSA PEM for end-to-end encrypted private APK delivery'
+        required: false
+        type: string
   workflow_call:
     inputs:
       ref:
         description: 'Git ref to build'
+        required: false
+        type: string
+      delivery_upload_url:
+        required: false
+        type: string
+      delivery_public_key:
         required: false
         type: string
     secrets:
@@ -43,6 +57,7 @@ jobs:
     if: ${{ inputs.mode != 'ui-only' }}
     name: Signed APK Release (JDK 25)
     runs-on: ubuntu-latest
+    timeout-minutes: 55
     permissions:
       contents: read
     outputs:
@@ -146,7 +161,7 @@ jobs:
         run: |
           chmod +x ./gradlew
           set +e
-          ./gradlew clean assembleRelease --stacktrace 2>&1 | tee "$RUNNER_TEMP/khodroyar-release.log"
+          ./gradlew clean assembleRelease assembleReleaseAndroidTest -PkhodroyarTestBuildType=release --stacktrace 2>&1 | tee "$RUNNER_TEMP/khodroyar-release.log"
           BUILD_EXIT=${PIPESTATUS[0]}
           set -e
           python3 ../tools/annotate-build-errors.py "$RUNNER_TEMP/khodroyar-release.log"
@@ -215,9 +230,63 @@ jobs:
           fi
           CERT=$("$ANDROID_HOME/build-tools/${ANDROID_BUILD_TOOLS}/apksigner" verify --print-certs android/app/build/outputs/apk/release/app-release.apk | sed -n 's/^Signer #1 certificate SHA-256 digest: //p')
           test "$CERT" = "03bfbc3575667403c3259fae345f3eb1ad3045373cb62123be376ef4898caaf0" || { echo "Signing identity changed"; exit 1; }
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          path = Path('android/app/build/outputs/apk/release/verification.json')
+          proof = json.loads(path.read_text())
+          proof.update(package='com.khodroyar.app', version_name='${{ steps.version.outputs.version_name }}',
+              version_code=int('${{ steps.version.outputs.version_code }}'), head_sha=os.environ['GITHUB_SHA'],
+              certificate_sha256='03bfbc3575667403c3259fae345f3eb1ad3045373cb62123be376ef4898caaf0',
+              debuggable=False, zipalign_16kb='passed', room_version=6,
+              baseline='797d7061c5f669cf4fa3e7361c0b3c2dca10490c')
+          path.write_text(json.dumps(proof, indent=2) + '\n')
+          PY
 
-      # Do NOT upload an installable APK to artifacts in this public source repo.
-      # The owner explicitly declined public APK publication; private transfer is separate.
+      - name: Enable KVM for actual signed release verification
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Verify real OCR in the signed non-debuggable R8 APK
+        uses: reactivecircus/android-emulator-runner@v2
+        env:
+          ANDROID_KEYSTORE_PATH: ${{ steps.keystore.outputs.path }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        with:
+          api-level: 35
+          arch: x86_64
+          target: google_apis
+          profile: pixel_2
+          ram-size: 3072M
+          heap-size: 512M
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none
+          script: bash tools/run-release-smoke.sh
+
+      - name: Upload signed-release runtime test evidence (not the APK)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: khodroyar-signed-release-test-evidence
+          path: |
+            android/app/build/outputs/androidTest-results/connected
+            ${{ runner.temp }}/khodroyar-release-smoke
+          if-no-files-found: ignore
+          retention-days: 14
+
+      # Never upload an installable APK to artifacts in this public source repo.
+      - name: End-to-end encrypted private delivery (no additional repository secret)
+        env:
+          KHODROYAR_ENCRYPTED_APK_UPLOAD_URL: ${{ inputs.delivery_upload_url }}
+          KHODROYAR_DELIVERY_PUBLIC_KEY: ${{ inputs.delivery_public_key }}
+        run: |
+          python3 -m pip install --disable-pip-version-check --target "$RUNNER_TEMP/khodroyar-delivery-deps" 'cryptography==46.0.3'
+          PYTHONPATH="$RUNNER_TEMP/khodroyar-delivery-deps" python3 tools/test-private-delivery.py
+          PYTHONPATH="$RUNNER_TEMP/khodroyar-delivery-deps" python3 tools/send-private-apk.py android/app/build/outputs/apk/release/app-release.apk android/app/build/outputs/apk/release/verification.json
 
       - name: Upload R8 mapping
         if: always()

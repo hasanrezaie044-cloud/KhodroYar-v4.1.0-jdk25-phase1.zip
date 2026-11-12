@@ -5,7 +5,8 @@ Tesseract 5.5.1; Leptonica 1.85.0; libpng 1.6.48; libjpeg 9f.
 Unmodified native library dependency. JNI names retained for release R8.
 Upstream source: https://github.com/adaptech-cz/Tesseract4Android/tree/15c534717b1cb58261b58d4e4c1200c7f81f668c
 
-Persian / Arabic / English tessdata_fast (Apache-2.0), commit 87416418657359cb625c412a48b6e1d6d41c29bd.
+Persian tessdata_best (Apache-2.0), commit e12c65a915945e4c28e237a9b52bc4a8f39a0cec.
+Arabic / English tessdata_fast (Apache-2.0), commit 87416418657359cb625c412a48b6e1d6d41c29bd.
 The traineddata and full model licence are bundled under assets/ocr; no runtime download.
 
 This software is based in part on the work of the Independent JPEG Group.

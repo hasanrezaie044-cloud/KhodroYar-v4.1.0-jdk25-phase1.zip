@@ -14,7 +14,9 @@ def audit(path):
     libraries = []
     with zipfile.ZipFile(path) as z:
         assert z.testzip() is None, 'APK ZIP CRC failure'
-        manifest = json.loads(z.read('assets/ocr/manifest.json'))
+        expected_manifest = (Path(__file__).resolve().parents[1] / 'android/app/src/main/assets/ocr/manifest.json').read_bytes()
+        assert z.read('assets/ocr/manifest.json') == expected_manifest, 'Packaged OCR provenance differs from verified source'
+        manifest = json.loads(expected_manifest)
         for entry in manifest['files']:
             data = z.read('assets/ocr/' + entry['name'])
             assert len(data) == entry['bytes'], entry['name']

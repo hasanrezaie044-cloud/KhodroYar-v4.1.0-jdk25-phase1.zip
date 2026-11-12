@@ -23,8 +23,9 @@ resource (`res/raw/vazirmatn_license.txt`) as well as in source.
 - Included upstream native dependencies: Tesseract **5.5.1** (Apache-2.0), Leptonica **1.85.0**
   (BSD-style), libpng **1.6.48** (PNG Reference Library licence), libjpeg **9f** (IJG licence).
   This software is based in part on the work of the Independent JPEG Group.
-- `fas`, `ara`, `eng` **tessdata_fast** (Apache-2.0), pinned commit
-  `87416418657359cb625c412a48b6e1d6d41c29bd` from https://github.com/tesseract-ocr/tessdata_fast .
+- `fas` **tessdata_best** (Apache-2.0), pinned commit `e12c65a915945e4c28e237a9b52bc4a8f39a0cec`
+  from https://github.com/tesseract-ocr/tessdata_best ; `ara` and `eng` **tessdata_fast** (Apache-2.0),
+  pinned commit `87416418657359cb625c412a48b6e1d6d41c29bd` from https://github.com/tesseract-ocr/tessdata_fast .
   Full model licence and byte/hash provenance are bundled at `assets/ocr/LICENSE` and
   `assets/ocr/manifest.json`. `tools/verify-ocr-assets.py` checks every source asset;
   `tools/audit-ocr-apk.py` checks the actual packaged bytes.

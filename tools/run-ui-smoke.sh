@@ -6,11 +6,12 @@ SCREENSHOTS="${RUNNER_TEMP:-/tmp}/orbit-ui-screenshots"
 mkdir -p "$SCREENSHOTS"
 cd "$ROOT/android"
 # Exercise actual software IME rather than relying on a hidden hardware keyboard.
+adb shell cmd overlay enable-exclusive --category com.android.internal.systemui.navbar.threebutton
 adb shell settings put secure show_ime_with_hard_keyboard 1
 adb shell input keyevent KEYCODE_WAKEUP
 adb shell wm dismiss-keyguard || true
 set +e
-./gradlew connectedDebugAndroidTest --stacktrace 2>&1 | tee "${RUNNER_TEMP:-/tmp}/khodroyar-ui-tests.log"
+./gradlew connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.notClass=com.khodroyar.app.ui.ReleaseApkSmokeTest --stacktrace 2>&1 | tee "${RUNNER_TEMP:-/tmp}/khodroyar-ui-tests.log"
 RESULT=${PIPESTATUS[0]}
 set -e
 python3 "$ROOT/tools/annotate-build-errors.py" "${RUNNER_TEMP:-/tmp}/khodroyar-ui-tests.log"
@@ -18,6 +19,12 @@ if ! python3 "$ROOT/tools/summarize-tests.py" "$ROOT/android/app/build/outputs/a
     RESULT=1
 fi
 if ! adb pull /sdcard/Download/KhodroYar-UI-Smoke/. "$SCREENSHOTS/"; then
+    RESULT=1
+fi
+if adb pull /sdcard/Android/data/com.khodroyar.app/files/native-evidence/. "$SCREENSHOTS/offline-ocr/"; then
+    python3 "$ROOT/tools/annotate-ocr-evidence.py" "$SCREENSHOTS/offline-ocr/offline-ocr.json" || RESULT=1
+else
+    echo "::error::Missing real native OCR fixture evidence"
     RESULT=1
 fi
 COUNT=$(find "$SCREENSHOTS" -type f -name '*.png' | wc -l)

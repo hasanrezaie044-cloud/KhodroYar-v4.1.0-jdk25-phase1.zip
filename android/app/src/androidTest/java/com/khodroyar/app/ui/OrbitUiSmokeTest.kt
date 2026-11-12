@@ -342,6 +342,8 @@ class OrbitUiSmokeTest {
     }
 
     @Test fun imeAndNavigationKeepServiceActionsVisibleAtSamsungSizedLargeText() {
+        assertEquals("Three-button navigation must really be enabled", 0,
+            android.provider.Settings.Secure.getInt(context.contentResolver, "navigation_mode", -1))
         render(fontScale = 1.35f, edgeToEdge = true) {
             Box(Modifier.width(320.dp).fillMaxHeight().testTag("ime-app-window")) { CarManagerRoot(repository) }
         }
@@ -363,7 +365,7 @@ class OrbitUiSmokeTest {
         compose.waitUntil(15000) { !imeVisible }
         compose.onNodeWithTag("nav-REPORTS").performClick()
         compose.onNodeWithTag("report-list").performScrollToNode(hasTestTag("open-work-report"))
-        compose.onNodeWithText("مقایسهٔ کارکرد شرکت").performClick()
+        compose.onNode(hasText("مقایسهٔ کارکرد شرکت") and hasAnyAncestor(hasTestTag("open-work-report"))).performClick()
         compose.onNodeWithTag("work-report-screen").assertIsDisplayed()
         compose.onNodeWithTag("report-import").assertIsDisplayed()
         shot("35-integrated-work-report-entry")

@@ -87,7 +87,7 @@ object WorkReportParser {
         val groups = mutableListOf<MutableList<OcrWord>>()
         words.filter { it.text.isNotBlank() }.sortedBy { it.y }.forEach { w ->
             val line = groups.lastOrNull()
-            val height = (w.bottom - w.top).coerceAtLeast(.008f)
+            val height = maxOf((w.bottom - w.top).coerceAtLeast(.008f), line?.maxOfOrNull { it.bottom - it.top } ?: 0f)
             if (line != null && kotlin.math.abs(line.map { it.y }.average() - w.y) <= height * .6) line.add(w)
             else groups.add(mutableListOf(w))
         }

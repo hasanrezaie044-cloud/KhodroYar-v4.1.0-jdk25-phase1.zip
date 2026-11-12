@@ -117,4 +117,12 @@ class WorkReportTest {
         assertEquals(DayStatus.MATCH, WorkDayComparison(zero.date, zero, zero.copy(km = BigDecimal("0.0000000001"))).status)
     }
 
+    @Test fun numericReReadsUseExplicitHeadersAndDoNotGuessHeaderlessColumnOrder() {
+        val regions = ReportTableGeometry.regions(page().words)
+        assertEquals(4, regions.size)
+        assertEquals(NumericField.entries.toSet(), regions.map { it.field }.toSet())
+        assertTrue(regions.first { it.field == NumericField.COUNT }.let { it.left < .62f && it.right > .62f && it.right < .86f })
+        assertTrue(ReportTableGeometry.regions(page(header = false).words).isEmpty())
+    }
+
 }

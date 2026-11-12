@@ -210,6 +210,13 @@ class NativeEnhancementTest {
             val rows = WorkReportParser.extract(recognized)
             println("Synthetic offline OCR text: ${recognized.map { it.text }}")
             println("Synthetic OCR rows: $rows")
+            println("Synthetic OCR words: ${recognized.map { it.words }}")
+            println("Synthetic numeric regions: ${recognized.map { ReportTableGeometry.regions(it.words) }}")
+            val evidence = JSONObject().put("environment", "synthetic fixture, API35 emulator, bundled native engine, radios disabled")
+                .put("pages", org.json.JSONArray().apply { recognized.forEach { page -> put(JSONObject().put("text", page.text)
+                    .put("words", org.json.JSONArray().apply { page.words.forEach { w -> put(JSONObject().put("text", w.text).put("x", w.x.toDouble()).put("y", w.y.toDouble()).put("confidence", w.confidence.toDouble())) } })) } })
+                .put("rows", org.json.JSONArray().apply { rows.forEach { row -> put(JSONObject().put("date", row.date).put("count", row.count).put("km", row.km).put("hours", row.hours).put("included", row.included).put("duplicate", row.duplicateOf != null).put("raw", row.raw)) } })
+            File(context.getExternalFilesDir(null), "native-evidence/offline-ocr.json").also { it.parentFile!!.mkdirs() }.writeText(evidence.toString(2))
             val selected = rows.filter { it.included }
             assertEquals("Three data rows; second PDF page is a duplicate. Raw: $rows", 3, selected.size)
             assertEquals(listOf("1403/01/01", "1403/01/02", "1403/01/03"), selected.map { it.date }.sorted())
