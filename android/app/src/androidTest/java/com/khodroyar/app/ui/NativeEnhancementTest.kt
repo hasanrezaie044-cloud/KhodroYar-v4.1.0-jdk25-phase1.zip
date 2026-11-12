@@ -36,6 +36,7 @@ import com.khodroyar.app.ui.theme.CarManagerTheme
 import com.khodroyar.app.workreport.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import org.junit.Assert.*
@@ -55,7 +56,7 @@ class NativeEnhancementTest {
     private val settings get() = SettingsStore.get(context)
 
     @Before fun reset() = runBlocking {
-        check(Build.HARDWARE.contains("ranchu") || Build.HARDWARE.contains("goldfish") || Build.FINGERPRINT.contains("generic"))
+        check(Build.HARDWARE.contains("ranchu") || Build.HARDWARE.contains("goldfish"))
         WorkManager.getInstance(context).cancelAllWork().result.get()
         repo = AppRepository(context)
         repo.quickEntries.recover()
@@ -263,6 +264,40 @@ class NativeEnhancementTest {
             pdf.delete(); image.delete()
         }
     }
+    @Test fun cancellationAndConcurrentStopNeverUseARecycledNativeEngine() {
+        runBlocking {
+            val image = File(context.cacheDir, "exports/work-report-cancel-synthetic.png").also { it.parentFile!!.mkdirs() }
+            val bitmap = Bitmap.createBitmap(2000, 1000, Bitmap.Config.ARGB_8888)
+            drawFixture(Canvas(bitmap))
+            image.outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }; bitmap.recycle()
+            val documents = ReportDocuments(context)
+            val pages = documents.import(listOf(FileProvider.getUriForFile(context, "com.khodroyar.app.fileprovider", image)), emptyList())
+            val engine = OfflineReportOcr(context)
+            val ready = kotlinx.coroutines.CompletableDeferred<Unit>()
+            val proceed = java.util.concurrent.CountDownLatch(1)
+            val job = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.currentCoroutineContext()).launch(Dispatchers.IO) {
+                engine.recognize(pages, true) {
+                    if (it.startsWith("صفحهٔ")) {
+                        ready.complete(Unit)
+                        check(proceed.await(30, java.util.concurrent.TimeUnit.SECONDS))
+                    }
+                }
+            }
+            try {
+                kotlinx.coroutines.withTimeout(30000) { ready.await() } // The real bundled JNI engine is initialised.
+                val stopping = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.currentCoroutineContext()).launch(Dispatchers.Default) {
+                    repeat(2000) { engine.stop(); kotlinx.coroutines.yield() }
+                }
+                job.cancel(); proceed.countDown(); job.join(); stopping.join()
+                repeat(100) { engine.stop() }
+                assertTrue(job.isCancelled)
+            } finally {
+                job.cancel(); proceed.countDown(); job.join(); engine.stop()
+                pages.forEach { File(documents.directory, it.file).delete() }; image.delete()
+            }
+        }
+    }
+
     @Test fun reviewDraftRestoresAnAtomicBackupAfterInterruptedReplacement() {
         val directory = File(context.cacheDir, "draft-recovery-synthetic").also { it.mkdirs() }
         try {

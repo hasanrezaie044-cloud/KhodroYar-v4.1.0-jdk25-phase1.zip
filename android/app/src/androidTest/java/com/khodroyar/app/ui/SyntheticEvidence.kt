@@ -8,7 +8,7 @@ import android.provider.MediaStore
 /** Only generated emulator fixtures/evidence. UTP deletes app-specific files after a run. */
 internal fun publishSyntheticEvidence(context: Context, directory: String, name: String, mime: String, bytes: ByteArray) {
     check(Build.VERSION.SDK_INT >= 29)
-    check(Build.HARDWARE.contains("ranchu") || Build.HARDWARE.contains("goldfish") || Build.FINGERPRINT.contains("generic"))
+    check(Build.HARDWARE.contains("ranchu") || Build.HARDWARE.contains("goldfish"))
     val resolver = context.contentResolver
     val values = ContentValues().apply {
         put(MediaStore.Downloads.DISPLAY_NAME, name)

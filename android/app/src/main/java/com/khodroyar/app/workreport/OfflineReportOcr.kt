@@ -17,8 +17,11 @@ import java.security.MessageDigest
 
 /** All recognition is JNI Tesseract on this device, with three models bundled in the APK. */
 class OfflineReportOcr(private val context: Context) {
-    @Volatile private var active: TessBaseAPI? = null
-    fun stop() { active?.stop() }
+    private val activeLock = Any()
+    private var active: TessBaseAPI? = null
+    // stop() may run on the UI thread while the IO coroutine finishes. Serialize
+    // only lifecycle/stop, never recognition, so a recycled JNI pointer is not used.
+    fun stop() { synchronized(activeLock) { active?.stop() } }
 
     suspend fun recognize(pages: List<ReportPage>, sparse: Boolean, diagnostics: ((String) -> Unit)? = null, progress: (String) -> Unit): List<OcrPage> = withContext(Dispatchers.IO) {
         engineLock.withLock {
@@ -27,17 +30,20 @@ class OfflineReportOcr(private val context: Context) {
             currentCoroutineContext().ensureActive()
             val documents = ReportDocuments(context)
             val api = TessBaseAPI { value -> progress("خواندن آفلاین · ${value.percent}٪ از صفحهٔ جاری") }
-            active = api
             try {
                 check(api.init(modelDirectory.path, "fas+ara+eng", TessBaseAPI.OEM_LSTM_ONLY)) { "باز کردن مدل‌های آفلاین OCR انجام نشد." }
+                synchronized(activeLock) { active = api }
+                currentCoroutineContext().ensureActive()
                 api.setVariable("preserve_interword_spaces", "1")
                 api.setVariable("user_defined_dpi", "220")
                 val result = mutableListOf<OcrPage>()
                 pages.forEachIndexed { index, page ->
                     currentCoroutineContext().ensureActive()
                     progress("صفحهٔ ${index + 1} از ${pages.size} · آماده‌سازی تصویر")
+                    currentCoroutineContext().ensureActive()
                     val bitmap = documents.render(page)
                     try {
+                        currentCoroutineContext().ensureActive()
                         api.pageSegMode = if (sparse) TessBaseAPI.PageSegMode.PSM_SPARSE_TEXT else TessBaseAPI.PageSegMode.PSM_AUTO
                         api.setVariable("tessedit_char_whitelist", "")
                         api.setImage(bitmap)
@@ -66,7 +72,7 @@ class OfflineReportOcr(private val context: Context) {
                     require(result.sumOf { it.words.size } <= 200000) { "متن این مقایسه بیش از حد بزرگ است؛ سند را به چند بخش تقسیم کنید." }
                 }
                 result
-            } finally { active = null; api.recycle() }
+            } finally { synchronized(activeLock) { active = null; api.recycle() } }
         }
     }
 

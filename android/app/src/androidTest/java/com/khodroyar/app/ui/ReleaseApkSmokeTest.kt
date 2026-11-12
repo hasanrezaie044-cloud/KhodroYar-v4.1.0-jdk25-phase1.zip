@@ -44,7 +44,16 @@ class ReleaseApkSmokeTest {
         assertEquals("com.khodroyar.app", context.packageName)
         assertEquals(0, context.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE)
         val stages = mutableListOf<String>()
-        fun stage(value: String) { stages += value; println("Signed-release stage: $value") }
+        fun stage(value: String) {
+            stages += value
+            println("Signed-release stage: $value")
+            // Persist each boundary outside app storage, even if UTP later times
+            // out/uninstalls the target. Synthetic emulator data only.
+            val trace = JSONObject().put("stages", JSONArray(stages))
+            publishSyntheticEvidence(context, "KhodroYar-Release-Smoke", "stage-${stages.size.toString().padStart(2, '0')}.json",
+                "application/json", trace.toString().toByteArray())
+        }
+        stage("external instrumentation attached to original non-debuggable release")
         fun find(selector: BySelector, timeout: Long = 30000): UiObject2 = device.wait(Until.findObject(selector), timeout)
             ?: throw AssertionError("UI element not found: $selector; stages=$stages")
         fun tagged(value: String, timeout: Long = 30000) = find(By.res(value), timeout)

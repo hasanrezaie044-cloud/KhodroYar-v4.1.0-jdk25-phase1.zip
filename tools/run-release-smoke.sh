@@ -35,6 +35,14 @@ fi
 adb logcat -d -t 500 > "$EVIDENCE/logcat.txt"
 # UTP uninstalls the APK; use shared synthetic Downloads, NOT app-specific files.
 adb pull /sdcard/Download/KhodroYar-Release-Smoke/. "$EVIDENCE/" || RESULT=1
+python3 - "$EVIDENCE" <<'PY'
+import json, sys
+from pathlib import Path
+stages = sorted(Path(sys.argv[1]).glob('stage-*.json'))
+if stages:
+    text = stages[-1].read_text().replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
+    print('::notice title=Signed-release last reached stage::' + text[:3800])
+PY
 if ! python3 - "$EVIDENCE/runtime.json" <<'PY'
 import json, sys
 from pathlib import Path

@@ -26,6 +26,9 @@ import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.test.platform.app.InstrumentationRegistry
+import androidx.test.uiautomator.UiDevice
+import org.json.JSONObject
+import java.io.File
 import androidx.work.WorkManager
 import com.khodroyar.app.ai.*
 import com.khodroyar.app.automation.*
@@ -58,11 +61,18 @@ class OrbitUiSmokeTest {
     private lateinit var repository: AppRepository
     @Volatile private var imeVisible = false
     @Volatile private var imePixels = 0
+    private var testActivity: Activity? = null
 
     @Before fun fixture() {
-        check(Build.HARDWARE.contains("ranchu") || Build.HARDWARE.contains("goldfish") || Build.FINGERPRINT.contains("generic")) {
+        check(Build.HARDWARE.contains("ranchu") || Build.HARDWARE.contains("goldfish")) {
             "A disposable emulator is required: these UI fixtures replace the test app's data."
         }
+        // UTP can apply device settings after the runner script has configured the
+        // emulator. Set/verify this INSIDE instrumentation too; do not fake IME
+        // insets or bypass the real keyboard assertions below.
+        val device = UiDevice.getInstance(InstrumentationRegistry.getInstrumentation())
+        device.executeShellCommand("settings put secure show_ime_with_hard_keyboard 1")
+        assertEquals("1", device.executeShellCommand("settings get secure show_ime_with_hard_keyboard").trim())
         WorkManager.getInstance(context).cancelAllWork().result.get()
         QuickEntries.invalidate()
         SettingsStore.get(context).acknowledgeQuickMileageNotice()
@@ -97,7 +107,7 @@ class OrbitUiSmokeTest {
             val density = LocalDensity.current
             val activity = LocalContext.current.hostActivity()
             val imeBottom = WindowInsets.ime.getBottom(density)
-            SideEffect { imeVisible = imeBottom > 0; imePixels = imeBottom }
+            SideEffect { imeVisible = imeBottom > 0; imePixels = imeBottom; testActivity = activity }
             DisposableEffect(activity) {
                 if (edgeToEdge) activity?.window?.let { androidx.core.view.WindowCompat.setDecorFitsSystemWindows(it, false) }
                 val previous = activity?.window?.attributes?.softInputMode
@@ -114,6 +124,39 @@ class OrbitUiSmokeTest {
                     }
                 }
             }
+        }
+    }
+
+    private fun awaitIme(visible: Boolean, stage: String) {
+        var failure: Throwable? = null
+        try { compose.waitUntil(15_000) { imeVisible == visible } }
+        catch (e: Throwable) { failure = e }
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val device = UiDevice.getInstance(instrumentation)
+        val evidence = JSONObject().put("stage", stage).put("expectedVisible", visible)
+            .put("composeVisible", imeVisible).put("composePixels", imePixels).put("passed", failure == null)
+        instrumentation.runOnMainSync {
+            testActivity?.window?.let { window ->
+                val insets = androidx.core.view.ViewCompat.getRootWindowInsets(window.decorView)
+                evidence.put("platformVisible", insets?.isVisible(androidx.core.view.WindowInsetsCompat.Type.ime()))
+                    .put("platformPixels", insets?.getInsets(androidx.core.view.WindowInsetsCompat.Type.ime())?.bottom)
+                    .put("hasWindowFocus", window.decorView.hasWindowFocus()).put("softInputMode", window.attributes.softInputMode)
+            }
+        }
+        evidence.put("showWithHardware", device.executeShellCommand("settings get secure show_ime_with_hard_keyboard").trim())
+            .put("defaultIme", device.executeShellCommand("settings get secure default_input_method").trim())
+        val dump = device.executeShellCommand("dumpsys input_method")
+        evidence.put("inputMethodState", dump.lineSequence().filter { line ->
+            listOf("mInputShown", "mShowRequested", "mImeWindowVis", "mCurMethodId", "mServedView", "mIsInputViewShown", "mImeHiddenByDisplayPolicy").any { line.contains(it) }
+        }.take(14).joinToString("\n").take(2000))
+        publishSyntheticEvidence(context, "KhodroYar-UI-Smoke", "ime-$stage.json", "application/json", evidence.toString().toByteArray())
+        failure?.let { error ->
+            val image = File(context.cacheDir, "ime-$stage.png")
+            if (device.takeScreenshot(image)) {
+                publishSyntheticEvidence(context, "KhodroYar-UI-Smoke", image.name, "image/png", image.readBytes()); image.delete()
+            }
+            publishSyntheticEvidence(context, "KhodroYar-UI-Smoke", "ime-$stage.txt", "text/plain", dump.toByteArray())
+            throw AssertionError("Actual software keyboard did not reach expected state: $evidence", error)
         }
     }
 
@@ -352,7 +395,7 @@ class OrbitUiSmokeTest {
         km.performScrollTo().performClick()
         km.performTextInput("80")
         km.performClick()
-        compose.waitUntil(15000) { imeVisible }
+        awaitIme(true, "service-open")
         val save = compose.onNodeWithTag("service-save").assertIsDisplayed().assertIsEnabled().fetchSemanticsNode().boundsInRoot
         val cancel = compose.onNodeWithTag("service-cancel").assertIsDisplayed().assertIsEnabled().fetchSemanticsNode().boundsInRoot
         val window = compose.onNodeWithTag("ime-app-window").fetchSemanticsNode().boundsInRoot
@@ -362,7 +405,7 @@ class OrbitUiSmokeTest {
         val count = runBlocking { AppDatabase.get(context).services().allOnce().size }
         compose.onNodeWithTag("service-cancel").performClick()
         assertEquals(count, runBlocking { AppDatabase.get(context).services().allOnce().size })
-        compose.waitUntil(15000) { !imeVisible }
+        awaitIme(false, "service-cancel")
         compose.onNodeWithTag("nav-REPORTS").performClick()
         compose.onNodeWithTag("report-list").performScrollToNode(hasTestTag("open-work-report"))
         compose.onNode(hasText("مقایسهٔ کارکرد شرکت") and hasAnyAncestor(hasTestTag("open-work-report"))).performClick()
@@ -380,10 +423,10 @@ class OrbitUiSmokeTest {
         compose.onNodeWithTag("quick-title").performScrollTo().performTextReplacement("پارکینگ")
         compose.onNodeWithTag("quick-amount").performScrollTo().performTextReplacement("75000")
         compose.onNodeWithTag("quick-amount").performScrollTo().performClick()
-        compose.waitUntil(15_000) { imeVisible }
+        awaitIme(true, "quick-open")
         pressSystemBack()
         try {
-            compose.waitUntil(15_000) { !imeVisible }
+            awaitIme(false, "quick-back")
         } catch (e: Throwable) {
             shot("debug-quick-edit-state")
             val forms = compose.onAllNodesWithTag("quick-entry-screen").fetchSemanticsNodes().size

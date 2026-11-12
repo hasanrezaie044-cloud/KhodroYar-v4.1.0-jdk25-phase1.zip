@@ -44,7 +44,8 @@ on:
         value: ${{ jobs.release.outputs.version-name }}
 
 concurrency:
-  group: khodroyar-release-${{ github.ref }}
+  # A UI-only check must not cancel a signed APK's runtime/delivery verification.
+  group: khodroyar-release-${{ github.ref }}-${{ inputs.mode || 'release' }}
   cancel-in-progress: true
 
 env:
