@@ -50,12 +50,14 @@ cd android
 
 ساخت release به همان چهار متغیر امضای موجود نیاز دارد؛ کلید تازه یا debug جایگزین نمی‌شود. نسخه از `android/version.properties` خوانده می‌شود. ابزار `tools/version.py --bump minor|patch` بیشینهٔ نسخهٔ فعلی و نسخه‌های مشاهده‌شده را مبنا قرار می‌دهد، نه نام ZIP.
 
-آزمون‌های platform/native روی emulator موقت در CI اجرا می‌شوند. دادهٔ زبان فقط در assets آزمون کپی می‌شود، نه assets انتشار. برای اجرای محلی:
+آزمون‌های platform/native روی emulator موقت در CI اجرا می‌شوند؛ علاوه بر موتور واقعی، مسیر IPC و URI بین دو APK هم‌امضا نیز با متن چاپی فارسی آزموده می‌شود. دادهٔ زبان فقط در assets آزمون کپی می‌شود، نه assets انتشار. برای اجرای محلی:
 
 ```bash
 python3 tools/fetch-persian-ocr-data.py --output android/ocr/src/androidTest/assets/fas.traineddata
 cd android
-./gradlew :app:connectedDebugAndroidTest :ocr:connectedDebugAndroidTest
+# ابتدا افزونهٔ debug هم‌امضا و دادهٔ fas باید روی emulator نصب شده باشند.
+# tools/run-native-tests.sh نصب و provision این دادهٔ آزمون را خودکار انجام می‌دهد.
+cd .. && bash tools/run-native-tests.sh
 ```
 
 نتیجهٔ **واقعاً اجراشده**، امضا و اندازه‌های APK در گزارش انتشار همان commit ثبت می‌شوند. نبود SDK/JDK، آزمون یا ساخت اجرا‌نشده را به موفقیت تبدیل نمی‌کند.

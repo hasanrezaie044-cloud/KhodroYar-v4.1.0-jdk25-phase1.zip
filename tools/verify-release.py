@@ -23,7 +23,7 @@ def main():
     aapt = str(tools / 'aapt2'); signer = str(tools / 'apksigner')
     props = dict(x.split('=', 1) for x in (ROOT / 'android/version.properties').read_text().splitlines() if '=' in x)
     application = re.search(r"applicationId\s+'([^']+)'", (ROOT / 'android/app/build.gradle').read_text())[1]
-    def inspect(path):
+    def inspect(path, alignment=False):
         badging = subprocess.check_output([aapt, 'dump', 'badging', str(path)], text=True)
         meta = re.search(r"package: name='([^']+)' versionCode='([^']+)' versionName='([^']+)'", badging)
         assert meta, 'Package metadata not found'
@@ -31,9 +31,11 @@ def main():
         assert 'CN=Android Debug' not in signed, 'Debug identity is forbidden'
         fingerprints = re.findall(r'Signer #\d+ certificate SHA-256 digest: ([a-fA-F0-9]+)', signed)
         assert fingerprints, 'No verified release signer'
+        if alignment:
+            subprocess.check_call([str(tools / 'zipalign'), '-c', '-P', '16', '4', str(path)])
         return {'file': str(path), 'applicationId': meta[1], 'versionCode': int(meta[2]), 'versionName': meta[3], 'bytes': path.stat().st_size,
-                'sha256': hashlib.sha256(path.read_bytes()).hexdigest(), 'certificateSha256': fingerprints, 'apksigner': signed}
-    final = inspect(args.apk)
+                'sha256': hashlib.sha256(path.read_bytes()).hexdigest(), 'certificateSha256': fingerprints, 'apksigner': signed, 'zipAlignment16KiBVerified': alignment}
+    final = inspect(args.apk, alignment=True)
     assert final['applicationId'] == application
     assert final['versionCode'] == int(props['versionCode']) and final['versionName'] == props['versionName']
     with zipfile.ZipFile(args.apk) as archive:
@@ -50,7 +52,7 @@ def main():
         baseline['differencePercent'] = round(100 * baseline['differenceBytes'] / baseline['bytes'], 3)
         evidence['baselines'].append(baseline)
     if args.ocr:
-        ocr = inspect(args.ocr)
+        ocr = inspect(args.ocr, alignment=True)
         assert ocr['applicationId'] == 'com.khodroyar.ocr' and ocr['certificateSha256'] == final['certificateSha256']
         manifest = subprocess.check_output([aapt, 'dump', 'permissions', str(args.ocr)], text=True)
         for forbidden in ['INTERNET', 'ACCESS_NETWORK_STATE', 'READ_EXTERNAL_STORAGE', 'WRITE_EXTERNAL_STORAGE', 'CAMERA', 'RECORD_AUDIO']:

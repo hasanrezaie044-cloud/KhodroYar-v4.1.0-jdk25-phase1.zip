@@ -15,6 +15,6 @@ for module in ['app', 'ocr']:
                 for issue in list(case.findall('failure')) + list(case.findall('error')):
                     summary['problems'].append({'test': case.get('name'), 'message': (issue.get('message', '') + '\n' + (issue.text or ''))[:5000]})
 print('::notice title=Native verification evidence::' + json.dumps(summary, ensure_ascii=False).replace('%', '%25'))
-if summary['tests'] < 3 or summary['failures'] or summary['errors'] or summary['skipped']:
+if summary['tests'] < 4 or summary['failures'] or summary['errors'] or summary['skipped']:
     raise SystemExit('Native verification did not complete successfully; see real test results.')
-print('Three native tests executed and passed (PDF pages, duplicate image fingerprints, offline Persian OCR).')
+print('Four native tests executed and passed (PDF pages, duplicate images, native Persian OCR and real signature-protected OCR IPC).')

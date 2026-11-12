@@ -19,7 +19,7 @@ data class StatementColumns(val date: ColumnBand, val kilometers: ColumnBand, va
 /** Conservative table-row extraction; no route matching, guessed numbers or totals-as-trips. */
 object StatementParser {
     private val datePattern = Regex("(?<![0-9])[0-9]{4}\\s*[/.-]\\s*[0-9]{1,2}\\s*[/.-]\\s*[0-9]{1,2}(?![0-9])")
-    private val totalPattern = Regex("(?:^|\\s)(?:جمع(?: کل)?|مجموع|جمعا|جمعاً|total|subtotal)(?:\\s|$|:)", RegexOption.IGNORE_CASE)
+    private val totalPattern = Regex("^(?:جمع(?: کل)?|مجموع|جمعا|جمعاً|total|subtotal)(?:\\s|$|:)", RegexOption.IGNORE_CASE)
     private val headerPattern = Regex("تاریخ|کیلومتر|مسافت|ساعت|کارکرد|ردیف|شرح|مقصد|مبدا")
 
     fun parse(page: OcrPage, columns: StatementColumns? = null): List<StatementRow> {
@@ -41,6 +41,8 @@ object StatementParser {
             val dateAnywhere = datePattern.find(PersianText.digits(raw))?.value.orEmpty()
             val numeric = words.any { PersianText.digits(it.text).any { c -> c in '0'..'9' } }
             val kind = when {
+                // A real dated service is not a total because its route/description says «جمع».
+                dateAnywhere.isNotEmpty() -> StatementRowKind.SERVICE
                 totalPattern.containsMatchIn(normalized) -> StatementRowKind.TOTAL
                 !numeric -> StatementRowKind.OTHER
                 Regex("^(?:صفحه|page)\\s*[:0-9 /از]*$", RegexOption.IGNORE_CASE).matches(normalized) -> StatementRowKind.OTHER

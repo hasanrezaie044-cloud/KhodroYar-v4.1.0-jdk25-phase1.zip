@@ -150,14 +150,18 @@ jobs:
       - name: Android lint (existing and new diagnostics)
         id: lint
         run: CI_CHECK_NAME=lint bash tools/ci-gradle.sh :app:lintDebug :ocr:lintDebug
+      - name: Package verified, clearly named release files and optional language data
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          python3 tools/fetch-persian-ocr-data.py
+          python3 tools/package-release.py
       - name: Publish signed APKs and verification evidence
         uses: actions/upload-artifact@v4
         with:
           name: khodroyar-release-signed-${{ steps.version.outputs.version_name }}
           path: |
-            android/app/build/outputs/apk/release/app-release.apk
-            android/ocr/build/outputs/apk/release/ocr-release.apk
-            .verification/release-verification.json
+            deliverables/KhodroYar-v${{ steps.version.outputs.version_name }}-release/
             .verification/original-build.log
             android/app/build/reports/lint-results-debug.*
             android/ocr/build/reports/lint-results-debug.*
@@ -221,7 +225,7 @@ jobs:
           target: google_apis
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
-          script: CI_CHECK_NAME=native-tests bash tools/ci-gradle.sh :app:connectedDebugAndroidTest :ocr:connectedDebugAndroidTest
+          script: bash tools/run-native-tests.sh
       - name: Summarize executed native tests
         if: always()
         run: python3 tools/summarize-native-tests.py

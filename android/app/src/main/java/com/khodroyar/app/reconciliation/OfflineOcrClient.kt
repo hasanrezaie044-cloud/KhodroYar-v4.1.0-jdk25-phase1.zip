@@ -18,6 +18,7 @@ class OfflineOcrClient(private val context: Context) {
     companion object { const val PACKAGE = "com.khodroyar.ocr" }
     fun installed(): Boolean = context.packageManager.checkSignatures(context.packageName, PACKAGE) == PackageManager.SIGNATURE_MATCH
     fun openSetup() {
+        check(installed()) { "افزونهٔ OCR فارسیِ هم‌امضا را از بستهٔ همین انتشار نصب کنید؛ ورود دستی بدون افزونه هم ممکن است." }
         val intent = context.packageManager.getLaunchIntentForPackage(PACKAGE)
             ?: throw IllegalStateException("افزونهٔ اختیاری OCR فارسی را از بستهٔ همین انتشار نصب کنید؛ یا اطلاعات را دستی وارد کنید.")
         context.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))

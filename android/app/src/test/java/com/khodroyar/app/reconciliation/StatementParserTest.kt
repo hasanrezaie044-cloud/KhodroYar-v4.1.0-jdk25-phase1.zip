@@ -47,6 +47,14 @@ class StatementParserTest {
         val p = page(words = page().words + listOf(word("۱۴۰۵/۰۱/۱۲", 750, 200), word("۱۶۰", 420, 200), word("۱۰", 100, 200)))
         assertEquals(2, StatementParser.parse(p, columns).count { it.kind == StatementRowKind.SERVICE })
     }
+    @Test fun routeDescriptionCannotTurnADatedServiceIntoATotalRow() {
+        val p = page(words = page().words + word("جمع آوری", 225))
+        val precise = StatementColumns(ColumnBand(.7, 1.0), ColumnBand(.4, .65), ColumnBand(0.0, .25))
+        val r = StatementParser.parse(p, precise).single()
+        assertEquals(StatementRowKind.SERVICE, r.kind)
+        assertNotNull(ReconciliationEngine.values(r))
+    }
+
     @Test fun damagedDateWithNumericCellsRequiresReviewInsteadOfDisappearing() {
         val r = StatementParser.parse(page(words = listOf(word("۱۴۰۵/؟/۱۲", 750), word("۱۶۰", 420), word("۱۰", 100)))).single()
         assertEquals(StatementRowKind.SERVICE, r.kind)
