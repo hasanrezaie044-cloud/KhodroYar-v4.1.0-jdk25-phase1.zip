@@ -20,5 +20,8 @@ for index, page in enumerate(evidence['pages']):
     notice(f'Actual OCR geometry page {index+1}', message[:16000])
 notice('Actual OCR extracted rows', json.dumps(evidence['rows'], ensure_ascii=False)[:24000])
 
-for index, message in enumerate(evidence.get('diagnostics', [])):
-    notice(f'Native OCR diagnostic {index+1}', message[:12000])
+messages = '\n'.join(evidence.get('diagnostics', []))
+notice('Native OCR diagnostics', messages[:56000])
+for extra in sorted(path.parent.glob('numeric-font-*.json')):
+    data = json.loads(extra.read_text())
+    notice('Native numeric-font diagnostics ' + extra.stem, json.dumps(data, ensure_ascii=False)[:10000])

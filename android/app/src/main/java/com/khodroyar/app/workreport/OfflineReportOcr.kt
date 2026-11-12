@@ -83,7 +83,7 @@ class OfflineReportOcr(private val context: Context) {
         val reader = if (regions.isEmpty()) null else NumericGlyphOcr(context)
         val coroutine = currentCoroutineContext()
         val pixels = regions.groupBy { it.top to it.bottom }.values.flatMap { row ->
-            requireNotNull(reader).readRow(bitmap, row) { coroutine.ensureActive() }.entries.map { it.key to it.value }
+            requireNotNull(reader).readRow(bitmap, row, diagnostics) { coroutine.ensureActive() }.entries.map { it.key to it.value }
         }.toMap()
         fun canonical(field: NumericField, raw: String): String? = when (field) {
             NumericField.DATE -> PersianInput.date(raw)
@@ -112,12 +112,14 @@ class OfflineReportOcr(private val context: Context) {
             currentCoroutineContext().ensureActive()
             val tesseract = canonical(region.field, raw)
             val pixel = pixels[region]?.takeIf { canonical(region.field, it.text) != null }
+            val printedFooter = if (region.field == NumericField.DATE && pixel == null) reader?.readFooter(bitmap, region) else null
             val footer = region.field == NumericField.DATE && Regex("^(?:جمع(?:\\s*کل)?|مجموع|total|subtotal)$", RegexOption.IGNORE_CASE).matches(PersianInput.latin(raw))
             val conflict = pixel != null && tesseract != null && confidence >= 85 && canonical(region.field, pixel.text) != tesseract
-            diagnostics?.invoke("Cell $region: Tesseract='$raw' ($confidence); pixels=$pixel; strongConflict=$conflict")
+            diagnostics?.invoke("Cell $region: Tesseract='$raw' ($confidence); pixels=$pixel; printedFooter=$printedFooter; strongConflict=$conflict")
             val value = when {
                 conflict -> null
                 pixel != null -> pixel.text to pixel.confidence
+                printedFooter != null -> printedFooter.text to printedFooter.confidence
                 footer && confidence >= 70 -> raw to confidence
                 tesseract != null && confidence >= 85 -> raw to confidence
                 else -> null
@@ -125,7 +127,7 @@ class OfflineReportOcr(private val context: Context) {
             val inside = original.filter { it.x > region.left && it.x < region.right && it.y > region.top && it.y < region.bottom }
             if (value != null) {
                 result.removeAll(inside.toSet())
-                result += OcrWord(value.first, region.left, region.top, region.right, region.bottom, value.second)
+                result += OcrWord(value.first, region.left, region.lineTop, region.right, region.lineBottom, value.second)
             } else if (conflict) {
                 // No engine is treated as an oracle when two strong readings differ.
                 result.removeAll(inside.filter { PersianInput.latin(it.text).any { c -> c in '0'..'9' } }.toSet())

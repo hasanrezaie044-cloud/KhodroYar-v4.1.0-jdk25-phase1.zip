@@ -299,7 +299,12 @@ class NativeEnhancementTest {
                 }
                 val expected = listOf("1403/11/27", "8", "580.09", "5:45")
                 expected.forEachIndexed { n, value -> cell(value, 1920f - n * 480) }
-                val values = reader.readRow(bitmap, regions)
+                val messages = mutableListOf<String>()
+                val values = reader.readRow(bitmap, regions, diagnostics = { messages += it })
+                val evidence = JSONObject().put("font", index).put("readings", values.toString()).put("diagnostics", org.json.JSONArray(messages))
+                publishSyntheticEvidence(context, "KhodroYar-UI-Smoke", "numeric-font-$index.json", "application/json", evidence.toString().toByteArray())
+                val pixels = java.io.ByteArrayOutputStream().also { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }.toByteArray()
+                publishSyntheticEvidence(context, "KhodroYar-UI-Smoke", "fixture-numeric-font-$index.png", "image/png", pixels)
                 expected.forEachIndexed { n, value -> assertEquals("font=$index, field=${regions[n].field}, readings=$values", value, values[regions[n]]?.text) }
                 // Not every mark in a numeric cell is a number, including a missing zero.
                 canvas.drawRect(1150f, 50f, 1750f, 300f, Paint().apply { color = Color.WHITE })

@@ -4,7 +4,8 @@ import com.khodroyar.app.core.text.PersianInput
 
 /** Explicit header-derived regions, never a guessed count/km/hours order. */
 enum class NumericField { DATE, COUNT, KM, HOURS }
-data class NumericRegion(val field: NumericField, val left: Float, val top: Float, val right: Float, val bottom: Float)
+data class NumericRegion(val field: NumericField, val left: Float, val top: Float, val right: Float, val bottom: Float,
+    val lineTop: Float = top, val lineBottom: Float = bottom)
 
 object ReportTableGeometry {
     private fun field(raw: String): NumericField? {
@@ -20,7 +21,8 @@ object ReportTableGeometry {
     fun regions(words: List<OcrWord>): List<NumericRegion> {
         var headings = emptyMap<NumericField, Float>()
         val output = mutableListOf<NumericRegion>()
-        for (line in WorkReportParser.lines(words)) {
+        val lines = WorkReportParser.lines(words)
+        for ((lineIndex, line) in lines.withIndex()) {
             val found = line.mapNotNull { w -> field(w.text)?.let { it to w.x } }.toMap()
             if (found.keys.containsAll(listOf(NumericField.COUNT, NumericField.KM, NumericField.HOURS))) {
                 headings = found
@@ -34,14 +36,19 @@ object ReportTableGeometry {
             }
             // Without the date boundary an outer count region could swallow a date.
             if (NumericField.DATE !in positions || positions.values.sorted().zipWithNext().any { (a, b) -> b - a < .04f }) continue
-            val height = (line.maxOf { it.bottom } - line.minOf { it.top }).coerceAtLeast(.01f)
-            val top = (line.minOf { it.top } - height * .35f).coerceAtLeast(0f)
-            val bottom = (line.maxOf { it.bottom } + height * .35f).coerceAtMost(1f)
+            val lineTop = line.minOf { it.top }; val lineBottom = line.maxOf { it.bottom }
+            val height = (lineBottom - lineTop).coerceAtLeast(.01f)
+            // Missing isolated cells/RTL descenders may extend beyond the page
+            // recogniser's numeric boxes. Include the whitespace, never a neighbour.
+            val previous = lines.getOrNull(lineIndex - 1)?.maxOf { it.bottom } ?: 0f
+            val next = lines.getOrNull(lineIndex + 1)?.minOf { it.top } ?: 1f
+            val top = maxOf(0f, lineTop - height * .8f, (previous + lineTop) / 2)
+            val bottom = minOf(1f, lineBottom + height * .8f, (lineBottom + next) / 2)
             val columns = positions.entries.sortedBy { it.value }
             for ((index, entry) in columns.withIndex()) {
                 val left = maxOf(0f, entry.value - .16f, if (index == 0) 0f else (columns[index - 1].value + entry.value) / 2)
                 val right = minOf(1f, entry.value + .16f, if (index == columns.lastIndex) 1f else (columns[index + 1].value + entry.value) / 2)
-                output += NumericRegion(entry.key, left, top, right, bottom)
+                output += NumericRegion(entry.key, left, top, right, bottom, lineTop, lineBottom)
             }
         }
         return output

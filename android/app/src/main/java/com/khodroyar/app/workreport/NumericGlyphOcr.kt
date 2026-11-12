@@ -6,6 +6,10 @@ import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Typeface
+import android.text.Layout
+import android.text.StaticLayout
+import android.text.TextDirectionHeuristics
+import android.text.TextPaint
 import androidx.core.content.res.ResourcesCompat
 import com.khodroyar.app.R
 import kotlin.math.abs
@@ -33,6 +37,7 @@ class NumericGlyphOcr(context: Context) {
     }
     private data class Feature(val pixels: FloatArray, val aspect: Float, val height: Float, val middle: Float)
     private data class Template(val label: Char, val feature: Feature)
+    private data class LabelTemplate(val label: String, val feature: Feature)
     private data class Mask(val width: Int, val height: Int, val ink: BooleanArray) {
         fun bounds(left: Int = 0, right: Int = width): Box? {
             var top = height; var bottom = -1; var first = right; var last = -1
@@ -44,9 +49,10 @@ class NumericGlyphOcr(context: Context) {
     }
     private data class Cell(val region: NumericRegion, val top: Int, val mask: Mask)
     private val templates = templates(context.applicationContext)
+    private val labels by lazy { labels(context.applicationContext) }
 
     /** Regions must describe ONE row, so small zeros/points keep their baseline. */
-    fun readRow(bitmap: Bitmap, regions: List<NumericRegion>, checkCancelled: () -> Unit = {}): Map<NumericRegion, Reading?> {
+    fun readRow(bitmap: Bitmap, regions: List<NumericRegion>, diagnostics: ((String) -> Unit)? = null, checkCancelled: () -> Unit = {}): Map<NumericRegion, Reading?> {
         if (regions.isEmpty()) return emptyMap()
         val cells = regions.mapNotNull { region ->
             checkCancelled()
@@ -64,11 +70,11 @@ class NumericGlyphOcr(context: Context) {
         if (rowBottom - rowTop < 12) return emptyMap()
         return cells.associate { cell ->
             checkCancelled()
-            cell.region to read(cell.mask, rowTop - cell.top, rowBottom - cell.top, checkCancelled)
+            cell.region to read(cell.mask, rowTop - cell.top, rowBottom - cell.top, diagnostics?.let { callback -> { message -> callback("${cell.region.field}: $message") } }, checkCancelled)
         }
     }
 
-    private fun read(mask: Mask, rowTop: Int, rowBottom: Int, checkCancelled: () -> Unit): Reading? {
+    private fun read(mask: Mask, rowTop: Int, rowBottom: Int, diagnostics: ((String) -> Unit)?, checkCancelled: () -> Unit): Reading? {
         val columns = BooleanArray(mask.width)
         for (y in 0 until mask.height) for (x in 0 until mask.width) if (mask.ink[y * mask.width + x]) columns[x] = true
         val groups = mutableListOf<Pair<Int, Int>>()
@@ -92,11 +98,29 @@ class NumericGlyphOcr(context: Context) {
             }
             val ordered = scores.indices.sortedBy { scores[it] }
             val best = scores[ordered[0]]; val margin = scores[ordered[1]] - best
-            if (best > MAX_DISTANCE || margin < MIN_MARGIN) return null
+            if (best > MAX_DISTANCE || margin < MIN_MARGIN) {
+                diagnostics?.invoke("Rejected fragment $box after '$text': best=${LABELS[ordered[0]]}:$best, runner=${LABELS[ordered[1]]}:${scores[ordered[1]]}, margin=$margin, aspect=${feature.aspect}, height=${feature.height}, middle=${feature.middle}")
+                return null
+            }
             text.append(LABELS[ordered[0]])
             maximumDistance = maxOf(maximumDistance, best); minimumMargin = minOf(minimumMargin, margin)
         }
         return Reading(text.toString(), (98f - 240f * maximumDistance).coerceIn(70f, 98f), maximumDistance, minimumMargin)
+    }
+
+    /** A printed footer word is read from its own pixels, not inferred from sums. */
+    fun readFooter(bitmap: Bitmap, region: NumericRegion): Reading? {
+        val left = (region.left * bitmap.width).toInt().coerceIn(0, bitmap.width - 1)
+        val top = (region.top * bitmap.height).toInt().coerceIn(0, bitmap.height - 1)
+        val width = ((region.right * bitmap.width).toInt() - left).coerceIn(1, bitmap.width - left)
+        val height = ((region.bottom * bitmap.height).toInt() - top).coerceIn(1, bitmap.height - top)
+        if (width.toLong() * height > 1_000_000) return null
+        val mask = mask(bitmap, left, top, width, height, removeGrid = true)
+        val box = mask.bounds() ?: return null
+        val feature = feature(mask, box, box.top, box.bottom)
+        val scores = labels.groupBy { it.label }.mapValues { (_, values) -> values.minOf { distance(feature, it.feature) } }.entries.sortedBy { it.value }
+        val best = scores[0]; val margin = scores[1].value - best.value
+        return if (best.value <= .075f && margin >= .035f) Reading(best.key, 98f - 240f * best.value, best.value, margin) else null
     }
 
     companion object {
@@ -107,6 +131,7 @@ class NumericGlyphOcr(context: Context) {
         private const val MIN_MARGIN = .020f
         private val scripts = listOf("0123456789", "۰۱۲۳۴۵۶۷۸۹", "٠١٢٣٤٥٦٧٨٩")
         @Volatile private var cached: List<Template>? = null
+        @Volatile private var cachedLabels: List<LabelTemplate>? = null
 
         private fun templates(context: Context): List<Template> = cached ?: synchronized(this) {
             cached ?: run {
@@ -147,6 +172,29 @@ class NumericGlyphOcr(context: Context) {
                     }
                 }
                 result.toList().also { cached = it }
+            }
+        }
+
+        private fun labels(context: Context): List<LabelTemplate> = cachedLabels ?: synchronized(this) {
+            cachedLabels ?: run {
+                val fonts = listOf(R.font.vazirmatn_regular, R.font.vazirmatn_medium, R.font.vazirmatn_semibold, R.font.vazirmatn_bold)
+                    .mapNotNull { ResourcesCompat.getFont(context, it) } +
+                    listOf("sans-serif", "serif", "monospace").flatMap { family -> listOf(Typeface.NORMAL, Typeface.BOLD).map { Typeface.create(family, it) } }
+                val result = mutableListOf<LabelTemplate>()
+                val paint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply { textSize = 60f; color = Color.BLACK }
+                for (font in fonts) for (word in listOf("جمع", "جمع کل", "مجموع", "total", "subtotal")) {
+                    paint.typeface = font
+                    val bitmap = Bitmap.createBitmap(700, 180, Bitmap.Config.ARGB_8888)
+                    try {
+                        bitmap.eraseColor(Color.WHITE)
+                        val layout = StaticLayout.Builder.obtain(word, 0, word.length, paint, 700).setAlignment(Layout.Alignment.ALIGN_CENTER)
+                            .setTextDirection(TextDirectionHeuristics.FIRSTSTRONG_LTR).setIncludePad(false).build()
+                        val canvas = Canvas(bitmap); canvas.translate(0f, 30f); layout.draw(canvas)
+                        val mask = mask(bitmap, 0, 0, bitmap.width, bitmap.height, removeGrid = false)
+                        mask.bounds()?.let { box -> result += LabelTemplate(word, feature(mask, box, box.top, box.bottom)) }
+                    } finally { bitmap.recycle() }
+                }
+                result.toList().also { cachedLabels = it }
             }
         }
 
