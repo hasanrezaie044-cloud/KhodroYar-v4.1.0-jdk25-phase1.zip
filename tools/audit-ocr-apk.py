@@ -22,6 +22,13 @@ def audit(path):
             assert len(data) == entry['bytes'], entry['name']
             assert hashlib.sha256(data).hexdigest() == entry['sha256'], entry['name']
         assert {r['name'] for r in manifest['files'] if r['name'].endswith('.traineddata')} == {'fas.traineddata', 'ara.traineddata', 'eng.traineddata'}
+        reference_manifest = (Path(__file__).resolve().parents[1] / 'android/app/src/main/assets/ocr/print-references.json').read_bytes()
+        assert z.read('assets/ocr/print-references.json') == reference_manifest, 'Packaged print-reference provenance differs'
+        references = json.loads(reference_manifest)['files']
+        sizes = {e['bytes'] for e in references}
+        # aapt2 may shorten resource filenames; verify the original bytes, not names.
+        resource_hashes = {hashlib.sha256(z.read(info)).hexdigest() for info in z.infolist() if info.filename.startswith('res/') and info.file_size in sizes}
+        assert {e['sha256'] for e in references} <= resource_hashes, 'Missing/changed printed-number fonts or their OFL licence'
         for name in z.namelist():
             if not name.startswith('lib/') or not name.endswith('.so'):
                 continue
@@ -38,7 +45,7 @@ def audit(path):
         for abi in ('arm64-v8a', 'armeabi-v7a', 'x86_64'):
             assert any(n.startswith('lib/' + abi + '/') and n.endswith('/libtesseract.so') for n in libraries), 'Missing OCR ABI ' + abi
     return {'apk': path.name, 'bytes': path.stat().st_size, 'sha256': hashlib.sha256(path.read_bytes()).hexdigest(),
-            'zip_crc': 'passed', 'offline_model_assets': 'all hashes verified', 'native_64_bit_16kb_alignment': 'passed', 'libraries': libraries}
+            'zip_crc': 'passed', 'offline_model_assets': 'all hashes verified', 'print_reference_assets': 'all hashes verified', 'native_64_bit_16kb_alignment': 'passed', 'libraries': libraries}
 
 
 if __name__ == '__main__':

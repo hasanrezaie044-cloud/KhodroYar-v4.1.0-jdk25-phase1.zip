@@ -3,7 +3,7 @@ package com.khodroyar.app.workreport
 import com.khodroyar.app.core.text.PersianInput
 
 /** Explicit header-derived regions, never a guessed count/km/hours order. */
-enum class NumericField { DATE, COUNT, KM, HOURS }
+enum class NumericField { DATE, COUNT, KM, HOURS, ORDINAL }
 data class NumericRegion(val field: NumericField, val left: Float, val top: Float, val right: Float, val bottom: Float,
     val lineTop: Float = top, val lineBottom: Float = bottom)
 
@@ -19,6 +19,15 @@ object ReportTableGeometry {
         }
     }
     fun regions(words: List<OcrWord>): List<NumericRegion> {
+        CompanyReportTemplate.header(words)?.let { header ->
+            val fields = mapOf(CompanyReportTemplate.Column.DATE to NumericField.DATE, CompanyReportTemplate.Column.ORDINAL to NumericField.ORDINAL,
+                CompanyReportTemplate.Column.KM to NumericField.KM, CompanyReportTemplate.Column.HOURS to NumericField.HOURS)
+            return WorkReportParser.lines(words).filter { line -> line.map { it.y }.average() > header.bottom &&
+                line.any { w -> PersianInput.latin(w.text).any { it in '0'..'9' } } }.flatMap { line ->
+                val top = line.minOf { it.top }; val bottom = line.maxOf { it.bottom }
+                fields.mapNotNull { (column, field) -> header.bounds(column)?.let { (l, r) -> NumericRegion(field, l, top, r, bottom) } }
+            }
+        }
         var headings = emptyMap<NumericField, Float>()
         val output = mutableListOf<NumericRegion>()
         val lines = WorkReportParser.lines(words)

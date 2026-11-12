@@ -38,7 +38,7 @@ import java.util.regex.Pattern
  * the real launcher, terms/profile, system SAF picker and offline numeric review.
  */
 class ReleaseApkSmokeTest {
-    @Test(timeout = 600000) fun signedMinifiedApkLaunchesAndReadsPersianReportWithRadiosDisabled() {
+    @Test(timeout = 900000) fun signedMinifiedApkLaunchesAndReadsPersianReportWithRadiosDisabled() {
         check(Build.HARDWARE.contains("ranchu") || Build.HARDWARE.contains("goldfish"))
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val context = instrumentation.context
@@ -99,7 +99,16 @@ class ReleaseApkSmokeTest {
         listOf("۱۴۰۳/۰۱/۰۱", "۲", "۱۲۰٫۵", "۳٫۵").forEachIndexed { n, text -> cell(text, 1600f - n * 400, 300f, if (n == 0) 460 else 300) }
         context.contentResolver.openOutputStream(uri)!!.use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
         bitmap.recycle()
+        val fixedValues = ContentValues().apply {
+            put(MediaStore.Images.Media.DISPLAY_NAME, "khodroyar-fixed-company-fixture.png")
+            put(MediaStore.Images.Media.MIME_TYPE, "image/png")
+            put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/KhodroYarTest")
+        }
+        val fixedUri = requireNotNull(context.contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, fixedValues))
+        val fixedBitmap = fixedCompanyFixture()
+        context.contentResolver.openOutputStream(fixedUri)!!.use { fixedBitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }; fixedBitmap.recycle()
         val extracted = JSONObject()
+        val fixedCompany = JSONObject()
         val offline = JSONObject()
         val initiallyAirplaneMode = device.executeShellCommand("settings get global airplane_mode_on").trim() == "1"
         val connectivity = requireNotNull(context.getSystemService(ConnectivityManager::class.java))
@@ -158,12 +167,12 @@ class ReleaseApkSmokeTest {
             fun normalized(text: String) = buildString {
                 text.forEach { c -> append(when (c) { in '۰'..'۹' -> '0' + (c - '۰'); in '٠'..'٩' -> '0' + (c - '٠'); '٫' -> '.'; else -> c }) }
             }
-            fun value(field: String): String {
+            fun value(field: String, record: JSONObject = extracted): String {
                 val selector = By.res(Pattern.compile("report-cell-.*-$field"))
                 repeat(5) {
                     device.findObject(selector)?.takeIf { it.visibleBounds.width() > 0 }?.let { node ->
                         val value = normalized(node.text.orEmpty())
-                        extracted.put(field, value)
+                        record.put(field, value)
                         return value
                     }
                     find(By.res(Pattern.compile("report-row-scroll-.*"))).scroll(Direction.LEFT, .65f)
@@ -176,8 +185,28 @@ class ReleaseApkSmokeTest {
             scrollTo(By.res("report-review-confirm"), "work-report-list").click()
             tagged("report-compare").click()
             find(By.text("شرکت: 2 سرویس · 120.5 کیلومتر · 3.5 ساعت"))
+            stage("mandatory review and actual generic comparison passed; still offline")
+            find(By.text("بازگشت به جدول؛ هیچ سابقه‌ای تغییر نکرد")).click()
+            find(By.text("پاک کردن پیش‌نویس")).click(); find(By.text("پاک کردن")).click()
+            find(By.res("report-import").enabled(true)).click()
+            find(By.textContains("khodroyar-fixed-company-fixture"), 20000).click()
+            device.waitForIdle(2000)
+            device.findObject(By.res(Pattern.compile(".*:id/action_menu_select")))?.click()
+            scrollTo(By.res("report-ocr"), "work-report-list").click()
+            stage("real ruled company template requested: ordinal/date/origin/destination/km/hours, NO count column")
+            assertFalse("Fixed-form review is mandatory", tagged("report-compare", 120000).isEnabled)
+            scrollTo(dateSelector, "work-report-list")
+            val fixedReadings = JSONObject()
+            assertEquals("1403/04/12", value("date", fixedReadings)); assertEquals("1", value("count", fixedReadings))
+            assertEquals(40.0, value("km", fixedReadings).toDouble(), .000001); assertEquals(0.0, value("hours", fixedReadings).toDouble(), .000001)
+            scrollTo(By.res("report-review-confirm"), "work-report-list").click(); tagged("report-compare").click()
+            find(By.text("شرکت: 2 سرویس · 135 کیلومتر · 0 ساعت"))
+            find(By.text("1403/04/01 تا 1403/04/31"))
+            find(By.text("0 سرویس فقط در برنامه · 2 ردیف فقط در شرکت · 0 مجموعهٔ مبهم"))
+            fixedCompany.put("passed", true).put("rows", 2).put("count_per_row", "1")
+                .put("period_start", "1403/04/01").put("period_end", "1403/04/31").put("km", "135").put("hours", "0").put("first", fixedReadings)
             offline.put("after", verifyOffline())
-            stage("mandatory review and actual comparison passed; still offline")
+            stage("signed R8 fixed-form service comparison passed; ordinals 7/8 were not counts; full month; still offline")
             val screenshot = File(context.cacheDir, "signed-release-offline-ocr.png")
             assertTrue(device.takeScreenshot(screenshot))
             publishSyntheticEvidence(context, "KhodroYar-Release-Smoke", screenshot.name, "image/png", screenshot.readBytes())
@@ -185,7 +214,7 @@ class ReleaseApkSmokeTest {
             passed = true
         } finally {
             val trace = JSONObject().put("environment", "API35 x86_64 emulator; original signed non-debuggable R8 APK; gesture navigation; not physical Samsung proof")
-                .put("passed", passed).put("stages", JSONArray(stages)).put("extracted", extracted).put("offline", offline)
+                .put("passed", passed).put("stages", JSONArray(stages)).put("extracted", extracted).put("fixed_company", fixedCompany).put("offline", offline)
                 .put("target_package", targetPackage).put("target_debuggable", false)
                 .put("instrumentation_package", context.packageName)
                 .put("target_uid", targetInfo.uid).put("instrumentation_uid", android.os.Process.myUid())
@@ -203,6 +232,31 @@ class ReleaseApkSmokeTest {
             device.executeShellCommand("cmd connectivity airplane-mode ${if (initiallyAirplaneMode) "enable" else "disable"}")
             device.executeShellCommand("svc wifi enable"); device.executeShellCommand("svc data enable")
             context.contentResolver.delete(uri, null, null)
+            context.contentResolver.delete(fixedUri, null, null)
         }
     }
+    private fun fixedCompanyFixture(): Bitmap {
+        val bitmap = Bitmap.createBitmap(2400, 1700, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bitmap).apply { drawColor(Color.WHITE) }
+        val paint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply { textSize = 40f; color = Color.BLACK; typeface = Typeface.create("sans-serif", Typeface.NORMAL) }
+        val xs = listOf(120, 320, 500, 680, 860, 1032, 1152, 1272, 1656, 1944, 2196, 2304)
+        val line = Paint().apply { color = Color.BLACK; strokeWidth = 3f }
+        xs.forEach { x -> canvas.drawLine(x.toFloat(), 270f, x.toFloat(), 660f, line) }
+        listOf(270, 360, 510, 660).forEach { y -> canvas.drawLine(120f, y.toFloat(), 2304f, y.toFloat(), line) }
+        fun text(value: String, left: Int, right: Int, y: Float, size: Float = 40f) {
+            paint.textSize = size
+            val layout = StaticLayout.Builder.obtain(value, 0, value.length, paint, right - left - 8).setAlignment(Layout.Alignment.ALIGN_CENTER)
+                .setTextDirection(TextDirectionHeuristics.LTR).setIncludePad(false).build()
+            canvas.save(); canvas.translate(left + 4f, y); layout.draw(canvas); canvas.restore()
+        }
+        listOf("serial", "toll", "food", "hotel", "toll", "hours", "km", "destination", "origin", "date", "ordinal").forEachIndexed { n, label -> text(label, xs[n], xs[n + 1], 295f, 27f) }
+        listOf("7" to "40", "8" to "95").forEachIndexed { n, (ordinal, km) ->
+            val y = 405f + n * 150
+            text(ordinal, 2196, 2304, y); text("1403/04/12", 1944, 2196, y, 38f)
+            text("A", 1656, 1944, y); text("B", 1272, 1656, y)
+            text(km, 1152, 1272, y); text("0", 1032, 1152, y)
+        }
+        return bitmap
+    }
+
 }

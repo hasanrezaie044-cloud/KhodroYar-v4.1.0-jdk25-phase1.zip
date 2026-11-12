@@ -22,6 +22,8 @@ import urllib.request
 CERTIFICATE = '03bfbc3575667403c3259fae345f3eb1ad3045373cb62123be376ef4898caaf0'
 BASELINE = '797d7061c5f669cf4fa3e7361c0b3c2dca10490c'
 OFFLINE = dict(airplane_mode='1', wifi_on='0', active_network=False)
+FIXED_COMPANY = dict(passed=True, rows=2, count_per_row='1', period_start='1403/04/01',
+    period_end='1403/04/31', km='135', hours='0', first=dict(date='1403/04/12', count='1', km='40', hours='0'))
 
 
 def digest(path):
@@ -57,6 +59,8 @@ def verified_proof(apk, verification, expected_head):
             or runtime.get('extracted') != dict(date='1403/01/01', count='2', km='120.5', hours='3.5')
             or any(runtime.get('offline', {}).get(phase) != OFFLINE for phase in ('before', 'after'))):
         raise ValueError('Public APK does not match the original audited signed-runtime candidate')
+    if proof['version_code'] >= 64 and runtime.get('fixed_company') != FIXED_COMPANY:
+        raise ValueError('This version also requires actual fixed-company-form OCR/service comparison in the signed R8 APK')
     return proof
 
 

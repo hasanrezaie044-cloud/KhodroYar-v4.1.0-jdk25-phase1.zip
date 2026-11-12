@@ -785,7 +785,7 @@ private fun OcrLicenseLink() {
         Text(tr("مجوزهای OCR آفلاین", "Offline OCR licences"))
     }
     if (show) {
-        val licence = remember(context) { context.resources.openRawResource(R.raw.ocr_licenses).bufferedReader().use { it.readText() } }
+        val licence = remember(context) { listOf(R.raw.ocr_licenses, R.raw.parastoo_license).joinToString("\n\nParastoo printed-number references · OFL 1.1\n\n") { id -> context.resources.openRawResource(id).bufferedReader().use { it.readText() } } }
         AlertDialog(onDismissRequest = { show = false }, title = { Text("Tesseract · Offline OCR") },
             text = { Text(licence, modifier = Modifier.heightIn(max = 360.dp).verticalScroll(rememberScrollState()),
                 style = MaterialTheme.typography.bodySmall.copy(textDirection = androidx.compose.ui.text.style.TextDirection.Ltr)) },

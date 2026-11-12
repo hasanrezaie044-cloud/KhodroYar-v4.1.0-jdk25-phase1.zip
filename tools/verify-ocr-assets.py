@@ -49,7 +49,16 @@ def main():
         assert hashlib.sha256(data).hexdigest() == entry['sha256'], entry['name']
         assert hashlib.sha1(b'blob ' + str(len(data)).encode() + b'\0' + data).hexdigest() == entry['git_blob']
         print(entry['name'], entry['bytes'], entry['sha256'])
-    print('Offline Persian best + Arabic/English fast OCR assets: verified')
+    references = json.loads((DEST / 'print-references.json').read_text())
+    assert references['version'] == 1 and references['license'] == 'SIL-OFL-1.1'
+    assert references['repository'] == 'rastikerdar/parastoo-font' and references['commit'] == 'ab17e3b12fe84456c93e2d66e3e28231ae40c2de'
+    assert {e['source'] for e in references['files']} == {'res/font/parastoo_regular.ttf', 'res/font/parastoo_bold.ttf', 'res/raw/parastoo_license.txt'}
+    for entry in references['files']:
+        data = (DEST.parents[1] / entry['source']).read_bytes()
+        assert len(data) == entry['bytes'] and hashlib.sha256(data).hexdigest() == entry['sha256'], entry['source']
+        assert hashlib.sha1(b'blob ' + str(len(data)).encode() + b'\0' + data).hexdigest() == entry['git_blob']
+        print(entry['source'], entry['bytes'], entry['sha256'])
+    print('Offline Persian best + Arabic/English fast OCR and licensed print references: verified')
 
 
 if __name__ == '__main__':

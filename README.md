@@ -1,11 +1,13 @@
 # مدیریت خودرو — Native Android
 
-## Current source: 5.4.1 (versionCode 63), based on restored 5.4.0
+## Current source: 5.4.2 (versionCode 64), based on restored 5.4.0
 
 Fully integrated into the existing `com.khodroyar.app`, with Room 6 and the existing signing identity:
 - **Offline Persian work-report OCR** in Reports/toolkit: bundled Tesseract + Persian/Arabic/English
   models, multiple images and PDF pages, preview/rotation/order/removal, strict editable review,
-  cross-page duplicate flags and daily company/app comparison. Unknown values are never zero.
+  cross-page duplicate flags, the recurring ordinal/date/km/available-hours company form and
+  individual-service comparison against actual records. Ambiguous/split/grouped services need
+  explicit read-only links; unknown values are never zero. Full reporting months include app-only days.
 - **Local service-range dialogue**: compact/separated Jalali dates, explicit daily counts, saved
   values, exact before/after previews, button-only bulk approval, atomic mutations, stale-record
   rejection, retry deduplication, and recoverable mileage updates. Search/report/edit/delete and
@@ -14,9 +16,9 @@ Fully integrated into the existing `com.khodroyar.app`, with Room 6 and the exis
 - **Android form safety**: consumed Scaffold insets plus IME/navigation union, pinned Save/Cancel,
   large-text minimum button heights, bounded confirmation text and native page/column review.
 
-Read the [Persian usage, safety and verification contract](docs/OFFLINE-WORK-REPORTS.md).
-No cloud OCR/backend/Firebase, separate installation, new permission, public Release or financial
-formula/export rewrite is introduced. Existing optional online/traffic features are retained,
+Read the [5.4.2 service-comparison changes](CHANGES_5.4.2.md) and the [Persian usage, safety and verification contract](docs/OFFLINE-WORK-REPORTS.md).
+No cloud OCR/backend/Firebase, separate installation, new permission or financial
+formula/export rewrite is introduced. Public APK delivery is explicitly opt-in after all release gates. Existing optional online/traffic features are retained,
 not required by OCR or the internal assistant. Compilation and runtime verification are separate:
 only the final commit-specific CI results establish a passing release, not this feature list.
 

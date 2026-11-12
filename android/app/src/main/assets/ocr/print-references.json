@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "repository": "rastikerdar/parastoo-font",
+  "commit": "ab17e3b12fe84456c93e2d66e3e28231ae40c2de",
+  "license": "SIL-OFL-1.1",
+  "files": [
+    {
+      "source": "res/font/parastoo_regular.ttf",
+      "upstream_path": "dist/Parastoo.ttf",
+      "git_blob": "b71d723d691a167f238dffa65649c72f9dc37851",
+      "bytes": 94180,
+      "sha256": "0c9ce97e06cf20716c2413d0be6c8f9e5e01734df5d3f08f6e3294d8a691877d"
+    },
+    {
+      "source": "res/font/parastoo_bold.ttf",
+      "upstream_path": "dist/Parastoo-Bold.ttf",
+      "git_blob": "5eff308cf0f653ff9d7c3c9d0452edcfa3ec46fe",
+      "bytes": 97940,
+      "sha256": "25f5eb2039739759a1666ce1a7a1b5dd3f08e6be5b9114f453b52e35aa08b104"
+    },
+    {
+      "source": "res/raw/parastoo_license.txt",
+      "upstream_path": "LICENSE",
+      "git_blob": "c3e1475625f950dafb15a97efa6b7d2cd76e621e",
+      "bytes": 4372,
+      "sha256": "43d8d3fc679037e8bb33cecb02da63a536a45d31974ef419855a72a4d2c75da6"
+    }
+  ]
+}

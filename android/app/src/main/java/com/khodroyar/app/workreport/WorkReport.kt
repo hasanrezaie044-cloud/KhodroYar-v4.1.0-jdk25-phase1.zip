@@ -4,17 +4,20 @@ import com.khodroyar.app.core.text.PersianInput
 import java.math.BigDecimal
 import java.security.MessageDigest
 
-/** Coordinates are normalised after page rotation. No route information is needed for comparison. */
+/** Coordinates are normalised after rotation/deskew. Routes are review context, not matching keys. */
 data class OcrWord(val text: String, val left: Float, val top: Float, val right: Float, val bottom: Float, val confidence: Float) {
     val x get() = (left + right) / 2
     val y get() = (top + bottom) / 2
 }
-data class OcrPage(val id: String, val number: Int, val words: List<OcrWord>, val text: String)
+data class OcrPage(val id: String, val number: Int, val words: List<OcrWord>, val text: String,
+    val companyRows: List<CompanyOcrRow> = emptyList())
 
-data class ReportColumns(val count: Int? = null, val km: Int? = null, val hours: Int? = null) {
-    // Manual positions count numeric cells from RIGHT to LEFT, including the date cell.
+data class ReportColumns(val count: Int? = null, val km: Int? = null, val hours: Int? = null, val singleService: Boolean = false) {
+    // Manual positions count numeric cells from RIGHT to LEFT, including date/ordinal cells.
     val manual get() = count != null || km != null || hours != null
-    fun valid() = listOfNotNull(count, km, hours).let { it.size == 3 && it.distinct().size == 3 && it.all { n -> n in 1..16 } }
+    fun valid() = listOfNotNull(if (singleService) null else count, km, hours).let {
+        it.size == (if (singleService) 2 else 3) && it.distinct().size == it.size && it.all { n -> n in 1..16 } && (!singleService || count == null)
+    }
 }
 
 data class ReportRow(
@@ -22,10 +25,13 @@ data class ReportRow(
     val date: String = "", val count: String = "", val km: String = "", val hours: String = "",
     val confidence: Float = 0f, val included: Boolean = true,
     val note: String = "", val duplicateOf: String? = null,
+    val kind: ReportRowKind = ReportRowKind.DAILY_TOTAL, val ordinal: String = "",
+    val origin: String = "", val destination: String = "",
 ) {
     fun validated(): DailyWork? {
         val d = PersianInput.date(date) ?: return null
         val c = PersianInput.count(count) ?: return null
+        if (kind != ReportRowKind.DAILY_TOTAL && c != 1) return null
         val k = PersianInput.decimal(km) ?: return null
         val h = PersianInput.hours(hours) ?: return null
         return DailyWork(d, c, k, h)
@@ -50,7 +56,11 @@ data class WorkDayComparison(val date: String, val company: DailyWork?, val app:
     val kmDifference get() = (company?.km ?: BigDecimal.ZERO) - (app?.km ?: BigDecimal.ZERO)
     val hoursDifference get() = (company?.hours ?: BigDecimal.ZERO) - (app?.hours ?: BigDecimal.ZERO)
 }
-data class WorkComparison(val days: List<WorkDayComparison>, val company: WorkTotals, val app: WorkTotals, val start: String, val end: String)
+data class WorkComparison(val days: List<WorkDayComparison>, val company: WorkTotals, val app: WorkTotals, val start: String, val end: String,
+    val services: List<ServiceWorkMatch> = emptyList(), val companyRows: List<ReportRow> = emptyList(),
+    val appServices: List<AppWorkService> = emptyList()) {
+    val companyServiceCountKnown get() = companyRows.none { it.kind == ReportRowKind.GROUPED }
+}
 
 object WorkReportComparison {
     fun aggregate(rows: List<DailyWork>): List<DailyWork> = rows.groupBy { it.date }.toSortedMap().map { (date, entries) ->
@@ -93,7 +103,7 @@ object WorkReportParser {
         }
         return groups.map { it.sortedBy { w -> w.left } }
     }
-    private fun dateCell(line: List<OcrWord>): Pair<String, List<OcrWord>>? {
+    internal fun dateCell(line: List<OcrWord>): Pair<String, List<OcrWord>>? {
         val candidates = mutableListOf<Pair<String, List<OcrWord>>>()
         for (ordered in listOf(line.sortedBy { it.x }, line.sortedByDescending { it.x })) {
             for (start in ordered.indices) for (size in 1..minOf(7, ordered.size - start)) {
@@ -115,9 +125,13 @@ object WorkReportParser {
     }
 
     fun extract(pages: List<OcrPage>, columns: ReportColumns = ReportColumns()): List<ReportRow> {
-        require(!columns.manual || columns.valid()) { "برای هر سه مقدار ستون‌های جداگانه انتخاب کنید." }
+        require(!columns.manual || columns.valid()) { "برای مقدارها ستون‌های جداگانه انتخاب کنید؛ «ردیف» تعداد نیست." }
         val rows = mutableListOf<ReportRow>()
         pages.forEach { page ->
+            if (!columns.manual) CompanyReportTemplate.extract(page)?.let { fixed ->
+                rows += fixed
+                return@forEach
+            }
             var headings = emptyMap<Field, Float>()
             // Each page must establish its own header geometry. We never assume that
             // the next scan has the previous page's layout.
@@ -142,8 +156,9 @@ object WorkReportParser {
                 val values = mutableMapOf<Field, String>()
                 if (columns.manual) {
                     val cells = numericWords.sortedByDescending { it.x }
+                    if (columns.singleService) values[Field.COUNT] = "1"
                     listOf(Field.COUNT to columns.count, Field.KM to columns.km, Field.HOURS to columns.hours).forEach { (f, pos) ->
-                        cells.getOrNull(requireNotNull(pos) - 1)?.let { w ->
+                        if (pos != null) cells.getOrNull(pos - 1)?.let { w ->
                             if (PersianInput.date(w.text) == null) values[f] = w.text
                         }
                     }
@@ -165,10 +180,13 @@ object WorkReportParser {
                 }
                 rows.add(ReportRow("${page.id}:$index", page.id, page.number, index, raw,
                     date.orEmpty(), values[Field.COUNT].orEmpty(), values[Field.KM].orEmpty(), values[Field.HOURS].orEmpty(),
-                    confidence, included = skip == null, note = note))
+                    confidence, included = skip == null, note = note,
+                    kind = if (columns.singleService) ReportRowKind.SERVICE else ReportRowKind.DAILY_TOTAL))
             }
         }
-        return duplicates(rows)
+        val fixed = CompanyReportTemplate.duplicates(rows.filter { it.kind != ReportRowKind.DAILY_TOTAL }).associateBy { it.id }
+        val daily = duplicates(rows.filter { it.kind == ReportRowKind.DAILY_TOTAL }).associateBy { it.id }
+        return rows.map { fixed[it.id] ?: daily.getValue(it.id) }
     }
 
     private fun duplicateEvidence(raw: String): String {

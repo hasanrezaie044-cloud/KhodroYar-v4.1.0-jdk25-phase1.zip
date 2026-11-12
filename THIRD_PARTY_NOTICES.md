@@ -33,3 +33,15 @@ resource (`res/raw/vazirmatn_license.txt`) as well as in source.
 Complete native upstream notices (including the IJG README/terms) are bundled in
 `res/raw/ocr_licenses.txt` and accessible from **Settings → About → Offline OCR licences**.
 No runtime model/network download is performed. These are OCR language models, not a generative LLM.
+
+## Parastoo printed-number references (5.4.2)
+
+- Saber Rastikerdar / [Parastoo](https://github.com/rastikerdar/parastoo-font), **SIL OFL 1.1**.
+- Unmodified `dist/Parastoo.ttf` and `dist/Parastoo-Bold.ttf`, pinned revision
+  `ab17e3b12fe84456c93e2d66e3e28231ae40c2de`, **192,120 bytes** combined.
+- Bundled as `res/font/parastoo_regular.ttf` and `res/font/parastoo_bold.ttf`; original internal
+  font names/copyrights are unchanged. Used only as local visual print references, not as a
+  replacement for the app's typography. No document-derived glyphs or private reports are bundled.
+- Complete upstream licence: `res/raw/parastoo_license.txt`, accessible in Settings → About →
+  Offline OCR licences. Exact byte/hash/blob provenance: `assets/ocr/print-references.json`.
+  Source and actual-APK audit tools verify both fonts and the licence. No runtime download.

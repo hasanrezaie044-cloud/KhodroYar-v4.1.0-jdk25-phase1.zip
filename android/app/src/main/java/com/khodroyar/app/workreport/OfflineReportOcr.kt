@@ -41,8 +41,10 @@ class OfflineReportOcr(private val context: Context) {
                     currentCoroutineContext().ensureActive()
                     progress("صفحهٔ ${index + 1} از ${pages.size} · آماده‌سازی تصویر")
                     currentCoroutineContext().ensureActive()
-                    val bitmap = documents.render(page)
+                    var bitmap = documents.render(page)
                     try {
+                        val coroutine = currentCoroutineContext()
+                        bitmap = ReportImageGrid.deskew(bitmap) { coroutine.ensureActive() }
                         currentCoroutineContext().ensureActive()
                         api.pageSegMode = if (sparse) TessBaseAPI.PageSegMode.PSM_SPARSE_TEXT else TessBaseAPI.PageSegMode.PSM_AUTO
                         api.setVariable("tessedit_char_whitelist", "")
@@ -66,8 +68,11 @@ class OfflineReportOcr(private val context: Context) {
                             } finally { iterator.delete() }
                         }
                         diagnostics?.invoke("Page ${index + 1} initial text: $text; words: $words")
-                        val refined = refineTable(api, bitmap, words, diagnostics)
-                        result += OcrPage(page.id, index + 1, refined, text)
+                        val company = CompanyReportTemplate.header(words)?.let { header ->
+                            readCompanyTable(api, bitmap, words, header, diagnostics) { row, count -> progress("صفحهٔ ${index + 1} از ${pages.size} · خواندن ردیف $row از $count") }
+                        }.orEmpty()
+                        val refined = if (company.isEmpty()) refineTable(api, bitmap, words, diagnostics) else words
+                        result += OcrPage(page.id, index + 1, refined, text, company)
                     } finally { api.clear(); bitmap.recycle() }
                     require(result.sumOf { it.words.size } <= 200000) { "متن این مقایسه بیش از حد بزرگ است؛ سند را به چند بخش تقسیم کنید." }
                 }
@@ -94,6 +99,7 @@ class OfflineReportOcr(private val context: Context) {
         fun canonical(field: NumericField, raw: String): String? = when (field) {
             NumericField.DATE -> PersianInput.date(raw)
             NumericField.COUNT -> PersianInput.count(raw)?.toString()
+            NumericField.ORDINAL -> PersianInput.count(raw)?.takeIf { it > 0 }?.toString()
             NumericField.KM -> PersianInput.decimal(raw)?.let(PersianInput::display)
             NumericField.HOURS -> PersianInput.hours(raw)?.let(PersianInput::display)
         }
@@ -107,7 +113,7 @@ class OfflineReportOcr(private val context: Context) {
             val digits = "0123456789۰۱۲۳۴۵۶۷۸۹٠١٢٣٤٥٦٧٨٩"
             val whitelist = when (region.field) {
                 NumericField.DATE -> "" // Also preserve readable «جمع»/footer labels in the date cell.
-                NumericField.COUNT -> digits + ".٫,٬"
+                NumericField.COUNT, NumericField.ORDINAL -> digits + ".٫,٬"
                 NumericField.KM -> digits + ".٫,٬"
                 NumericField.HOURS -> digits + ".٫:"
             }
@@ -144,6 +150,84 @@ class OfflineReportOcr(private val context: Context) {
             }
         }
         return result
+    }
+
+    /** Read every ruled row, including one whose date/numbers were entirely missed by sparse OCR. */
+    private suspend fun readCompanyTable(api: TessBaseAPI, bitmap: Bitmap, original: List<OcrWord>, header: CompanyReportTemplate.Header,
+        diagnostics: ((String) -> Unit)?, progress: (Int, Int) -> Unit): List<CompanyOcrRow> {
+        val coroutine = currentCoroutineContext()
+        val grid = ReportImageGrid.ink(bitmap) { coroutine.ensureActive() }.companyRows(header) { coroutine.ensureActive() }
+        require(grid.size <= 400) { "جدول این صفحه بیش از ۴۰۰ ردیف دارد؛ آن را تقسیم کنید." }
+        if (grid.isEmpty()) return emptyList()
+        val reader = NumericGlyphOcr(context)
+        val output = mutableListOf<CompanyOcrRow>()
+        val fields = mapOf(CompanyReportTemplate.Column.DATE to NumericField.DATE, CompanyReportTemplate.Column.ORDINAL to NumericField.ORDINAL,
+            CompanyReportTemplate.Column.KM to NumericField.KM, CompanyReportTemplate.Column.HOURS to NumericField.HOURS)
+        fun canonical(field: NumericField, text: String): String? = when (field) {
+            NumericField.DATE -> PersianInput.date(text)
+            NumericField.COUNT -> PersianInput.count(text)?.toString()
+            NumericField.ORDINAL -> PersianInput.count(text)?.takeIf { it > 0 }?.toString()
+            NumericField.KM -> PersianInput.decimal(text)?.let(PersianInput::display)
+            NumericField.HOURS -> PersianInput.hours(text)?.let(PersianInput::display)
+        }
+        fun read(rect: GridRect, whitelist: String = ""): Pair<String, Float> {
+            coroutine.ensureActive()
+            val l = (rect.left * bitmap.width).toInt().coerceIn(0, bitmap.width - 1)
+            val t = (rect.top * bitmap.height).toInt().coerceIn(0, bitmap.height - 1)
+            val w = ((rect.right * bitmap.width).toInt() - l).coerceIn(1, bitmap.width - l)
+            val h = ((rect.bottom * bitmap.height).toInt() - t).coerceIn(1, bitmap.height - t)
+            api.pageSegMode = TessBaseAPI.PageSegMode.PSM_SINGLE_LINE
+            api.setVariable("tessedit_char_whitelist", whitelist)
+            api.setRectangle(l, t, w, h)
+            return api.getUTF8Text().orEmpty().trim() to api.meanConfidence().toFloat()
+        }
+        val digits = "0123456789۰۱۲۳۴۵۶۷۸۹٠١٢٣٤٥٦٧٨٩"
+        for ((index, row) in grid.withIndex()) {
+            coroutine.ensureActive(); progress(index + 1, grid.size)
+            val span = read(row.description)
+            val initial = original.filter { it.y > row.description.top && it.y < row.description.bottom }.sortedByDescending { it.x }.joinToString(" ") { it.text }
+            val printedFooter = if (!row.reliable && !ReportLabels.total(span.first) && !ReportLabels.total(initial)) reader.readFooter(bitmap,
+                NumericRegion(NumericField.DATE, row.description.left, row.description.top, row.description.right, row.description.bottom)) else null
+            val footerEvidence = ReportLabels.total(span.first) || ReportLabels.total(initial) || printedFooter != null
+            val mergedFooter = !row.reliable && footerEvidence
+            if (!row.reliable && !mergedFooter) {
+                output += CompanyOcrRow(index, "خط‌کشی این بخش ناقص/چند ردیف ناخوانا است؛ با اصل سند به ردیف‌های جدا اصلاح یا اضافه کنید.", "", "", "", "")
+                continue
+            }
+            val regions = row.cells.mapNotNull { (column, rect) -> fields[column]?.let { NumericRegion(it, rect.left, rect.top, rect.right, rect.bottom) } }
+            val pixels = reader.readRow(bitmap, regions, diagnostics, cellBaselines = true) { coroutine.ensureActive() }
+            var dateLabel = "" to 0f
+            val readings = regions.associate { region ->
+                val raw = read(GridRect(region.left, region.top, region.right, region.bottom), when (region.field) {
+                    NumericField.DATE -> "" // Dates/total labels must not be manufactured by a digits-only whitelist.
+                    NumericField.COUNT, NumericField.ORDINAL, NumericField.KM -> digits + ".٫,٬"
+                    NumericField.HOURS -> digits + ".٫:"
+                })
+                if (region.field == NumericField.DATE) dateLabel = raw
+                val tess = canonical(region.field, raw.first)
+                val pixel = pixels[region]?.takeIf { canonical(region.field, it.text) != null }
+                val conflict = pixel != null && tess != null && raw.second >= 85 && canonical(region.field, pixel.text) != tess
+                val value = when {
+                    conflict -> "" to 0f
+                    pixel != null -> pixel.text to pixel.confidence
+                    tess != null && raw.second >= 85f -> raw
+                    else -> "" to 0f
+                }
+                diagnostics?.invoke("Fixed-form ${region.field}: tess=$raw; pixels=$pixel; conflict=$conflict; accepted=$value")
+                region.field to value
+            }
+            fun value(field: NumericField) = readings[field]?.first.orEmpty()
+            fun text(column: CompanyReportTemplate.Column) = row.cells[column]?.let { read(it).first }.orEmpty()
+            val origin = text(CompanyReportTemplate.Column.ORIGIN)
+            val destination = text(CompanyReportTemplate.Column.DESTINATION)
+            // A route containing «جمع» must not erase a real service row.
+            val total = mergedFooter || (footerEvidence && value(NumericField.DATE).isBlank() && value(NumericField.ORDINAL).isBlank() && dateLabel.second >= 70 && ReportLabels.total(dateLabel.first))
+            val raw = "ردیف ${value(NumericField.ORDINAL)} | تاریخ ${value(NumericField.DATE)} | $origin ← $destination | کیلومتر ${value(NumericField.KM)} | ساعت ${value(NumericField.HOURS)}" + if (total) " | جمع" else ""
+            output += CompanyOcrRow(index, raw, value(NumericField.DATE), value(NumericField.ORDINAL), value(NumericField.KM), value(NumericField.HOURS),
+                origin, destination, listOf(NumericField.DATE, NumericField.KM, NumericField.HOURS).minOf { readings[it]?.second ?: 0f }, total)
+            if (total) break
+        }
+        return output
     }
 
     private fun installModels(): File {

@@ -60,6 +60,16 @@ class PublicationFixtures(unittest.TestCase):
                 with self.assertRaises(ValueError): self.verify()
                 self.proof[key] = old
 
+    def test_fixed_form_runtime_is_required_for_the_service_comparison_update(self):
+        self.proof.update(version_name='5.4.2', version_code=64)
+        with self.assertRaises(ValueError):
+            self.verify()
+        self.proof['signed_runtime']['fixed_company'] = copy.deepcopy(publication.FIXED_COMPANY)
+        self.assertEqual(self.verify()['version_code'], 64)
+        self.proof['signed_runtime']['fixed_company']['count_per_row'] = '7'
+        with self.assertRaises(ValueError):
+            self.verify()
+
     def test_missing_or_failed_actual_runtime_is_rejected(self):
         for runtime in [{}, dict(passed=False)]:
             with self.subTest(runtime=runtime):

@@ -87,10 +87,14 @@ class ReportDocuments(private val context: Context) {
             val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
             BitmapFactory.decodeFile(file.path, bounds)
             require(bounds.outWidth > 0 && bounds.outHeight > 0) { "تصویر قابل خواندن نیست." }
-            var sample = 1
-            while (bounds.outWidth.toLong() / sample * (bounds.outHeight / sample) > maxPixels || maxOf(bounds.outWidth, bounds.outHeight) / sample > maxEdge) sample *= 2
-            val options = BitmapFactory.Options().apply { inSampleSize = sample; inPreferredConfig = Bitmap.Config.ARGB_8888 }
-            val bitmap = requireNotNull(BitmapFactory.decodeFile(file.path, options)) { "حافظه یا قالب تصویر مناسب نیست." }
+            val plan = ReportRasterPlan.of(bounds.outWidth, bounds.outHeight, maxPixels, maxEdge)
+            val options = BitmapFactory.Options().apply {
+                inSampleSize = plan.sample; inPreferredConfig = Bitmap.Config.ARGB_8888
+                inScaled = true; inDensity = 1_000_000; inTargetDensity = plan.density
+            }
+            val decoded = requireNotNull(BitmapFactory.decodeFile(file.path, options)) { "حافظه یا قالب تصویر مناسب نیست." }
+            val bitmap = if (decoded.width.toLong() * decoded.height <= maxPixels && maxOf(decoded.width, decoded.height) <= maxEdge) decoded
+                else Bitmap.createScaledBitmap(decoded, plan.width, plan.height, true).also { if (it !== decoded) decoded.recycle() }
             val exif = runCatching { ExifInterface(file).getAttributeInt(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL) }.getOrDefault(1)
             val matrix = Matrix().apply { when (exif) {
                 2 -> setScale(-1f, 1f); 3 -> setRotate(180f); 4 -> setScale(1f, -1f)
@@ -113,15 +117,19 @@ class ReportDocuments(private val context: Context) {
 /** Atomic, bounded recovery of the review draft, not a new Room database or cloud sync. */
 class WorkReportDraft(private val directory: File) {
     private val file = android.util.AtomicFile(File(directory, "draft.json"))
-    data class Draft(val pages: List<ReportPage>, val recognized: List<OcrPage>, val rows: List<ReportRow>, val start: String, val end: String)
+    data class Draft(val pages: List<ReportPage>, val recognized: List<OcrPage>, val rows: List<ReportRow>, val start: String, val end: String,
+        val links: List<ReportMatchLink> = emptyList(), val periodNote: String = "")
     fun save(draft: Draft) {
-        val j = JSONObject().put("version", 1).put("start", draft.start).put("end", draft.end)
+        val j = JSONObject().put("version", 2).put("start", draft.start).put("end", draft.end).put("periodNote", draft.periodNote)
+        j.put("links", JSONArray().apply { draft.links.forEach { link -> put(JSONObject().put("company", JSONArray(link.companyIds)).put("app", JSONArray(link.appIds)).put("fingerprint", link.appFingerprint)) } })
         j.put("pages", JSONArray().apply { draft.pages.forEach { p -> put(JSONObject().put("id", p.id).put("file", p.file).put("name", p.name).put("pdf", p.pdfPage).put("rotation", p.rotation)) } })
         j.put("ocr", JSONArray().apply { draft.recognized.forEach { p -> put(JSONObject().put("id", p.id).put("number", p.number).put("text", p.text.take(200000)).put("words", JSONArray().apply {
             p.words.forEach { w -> put(JSONArray(listOf(w.text, w.left, w.top, w.right, w.bottom, w.confidence))) }
-        })) } })
+        }).put("companyRows", JSONArray().apply { p.companyRows.forEach { r -> put(JSONObject().put("line", r.line).put("raw", r.raw).put("date", r.date)
+            .put("ordinal", r.ordinal).put("km", r.km).put("hours", r.hours).put("origin", r.origin).put("destination", r.destination).put("confidence", r.confidence).put("total", r.total)) } })) } })
         j.put("rows", JSONArray().apply { draft.rows.forEach { r -> put(JSONObject().put("id", r.id).put("pageId", r.pageId).put("page", r.page).put("line", r.line).put("raw", r.raw)
-            .put("date", r.date).put("count", r.count).put("km", r.km).put("hours", r.hours).put("confidence", r.confidence).put("included", r.included).put("note", r.note).put("duplicate", r.duplicateOf ?: JSONObject.NULL)) } })
+            .put("date", r.date).put("count", r.count).put("km", r.km).put("hours", r.hours).put("confidence", r.confidence).put("included", r.included).put("note", r.note).put("duplicate", r.duplicateOf ?: JSONObject.NULL)
+            .put("kind", r.kind.name).put("ordinal", r.ordinal).put("origin", r.origin).put("destination", r.destination)) } })
         val data = j.toString().toByteArray(); require(data.size <= 32_000_000) { "گزارش بیش از حد بزرگ است؛ آن را تقسیم کنید." }
         val out = file.startWrite()
         try { out.write(data); file.finishWrite(out) } catch (e: Throwable) { file.failWrite(out); throw e }
@@ -133,17 +141,26 @@ class WorkReportDraft(private val directory: File) {
             if (!file.baseFile.exists() && !File(directory, "draft.json.bak").exists()) return null else throw e
         }
         val j = input.use { require(file.baseFile.length() <= 32_000_000); JSONObject(it.bufferedReader().readText()) }
-        require(j.getInt("version") == 1)
+        require(j.getInt("version") in 1..2)
         val pages = j.getJSONArray("pages").objects().map { p -> ReportPage(p.getString("id"), p.getString("file"), p.getString("name"), p.getInt("pdf"), p.getInt("rotation").also { require(it in 0..3) }) }
         require(pages.size <= ReportDocuments.MAX_PAGES)
         val recognized = j.getJSONArray("ocr").objects().map { p ->
             val words = p.getJSONArray("words"); require(words.length() <= 50000)
-            OcrPage(p.getString("id"), p.getInt("number"), (0 until words.length()).map { i -> words.getJSONArray(i).let { a -> OcrWord(a.getString(0), a.getDouble(1).toFloat(), a.getDouble(2).toFloat(), a.getDouble(3).toFloat(), a.getDouble(4).toFloat(), a.getDouble(5).toFloat()) } }, p.getString("text"))
+            val company = p.optJSONArray("companyRows") ?: JSONArray(); require(company.length() <= 10000)
+            OcrPage(p.getString("id"), p.getInt("number"), (0 until words.length()).map { i -> words.getJSONArray(i).let { a -> OcrWord(a.getString(0), a.getDouble(1).toFloat(), a.getDouble(2).toFloat(), a.getDouble(3).toFloat(), a.getDouble(4).toFloat(), a.getDouble(5).toFloat()) } }, p.getString("text"),
+                company.objects().map { r -> CompanyOcrRow(r.getInt("line"), r.getString("raw"), r.getString("date"), r.getString("ordinal"), r.getString("km"), r.getString("hours"), r.optString("origin"), r.optString("destination"), r.getDouble("confidence").toFloat(), r.optBoolean("total")) })
         }
         require(recognized.size <= pages.size && recognized.sumOf { it.words.size } <= 200000)
         val rowArray = j.getJSONArray("rows"); require(rowArray.length() <= 10000)
-        val rows = rowArray.objects().map { r -> ReportRow(r.getString("id"), r.getString("pageId"), r.getInt("page"), r.getInt("line"), r.getString("raw"), r.getString("date"), r.getString("count"), r.getString("km"), r.getString("hours"), r.getDouble("confidence").toFloat(), r.getBoolean("included"), r.getString("note"), if (r.isNull("duplicate")) null else r.getString("duplicate")) }
-        return Draft(pages, recognized, rows, j.optString("start"), j.optString("end"))
+        val rows = rowArray.objects().map { r -> ReportRow(r.getString("id"), r.getString("pageId"), r.getInt("page"), r.getInt("line"), r.getString("raw"), r.getString("date"), r.getString("count"), r.getString("km"), r.getString("hours"), r.getDouble("confidence").toFloat(), r.getBoolean("included"), r.getString("note"), if (r.isNull("duplicate")) null else r.getString("duplicate"),
+            ReportRowKind.valueOf(r.optString("kind", ReportRowKind.DAILY_TOTAL.name)), r.optString("ordinal"), r.optString("origin"), r.optString("destination")) }
+        val linkArray = j.optJSONArray("links") ?: JSONArray(); require(linkArray.length() <= 10000)
+        val links = linkArray.objects().map { link ->
+            fun ids(name: String) = link.getJSONArray(name).let { a -> require(a.length() <= 10000); (0 until a.length()).map { a.getString(it) } }
+            ReportMatchLink(ids("company"), ids("app"), link.getString("fingerprint"))
+        }
+        require(links.sumOf { it.companyIds.size } <= 10000 && links.sumOf { it.appIds.size } <= 10000)
+        return Draft(pages, recognized, rows, j.optString("start"), j.optString("end"), links, j.optString("periodNote"))
     }
     private fun JSONArray.objects(): List<JSONObject> = (0 until length()).map { getJSONObject(it) }
 }

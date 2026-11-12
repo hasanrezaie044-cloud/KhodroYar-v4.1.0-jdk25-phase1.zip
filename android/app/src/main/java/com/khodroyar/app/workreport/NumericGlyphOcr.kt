@@ -54,7 +54,7 @@ class NumericGlyphOcr(context: Context) {
     private val labels by lazy { labels(context.applicationContext) }
 
     /** Regions must describe ONE row, so small zeros/points keep their baseline. */
-    fun readRow(bitmap: Bitmap, regions: List<NumericRegion>, diagnostics: ((String) -> Unit)? = null, checkCancelled: () -> Unit = {}): Map<NumericRegion, Reading?> {
+    fun readRow(bitmap: Bitmap, regions: List<NumericRegion>, diagnostics: ((String) -> Unit)? = null, cellBaselines: Boolean = false, checkCancelled: () -> Unit = {}): Map<NumericRegion, Reading?> {
         if (regions.isEmpty()) return emptyMap()
         val cells = regions.mapNotNull { region ->
             checkCancelled()
@@ -72,7 +72,12 @@ class NumericGlyphOcr(context: Context) {
         if (rowBottom - rowTop < 12) return emptyMap()
         return cells.associate { cell ->
             checkCancelled()
-            cell.region to read(cell.mask, rowTop - cell.top, rowBottom - cell.top, cell.region.field, diagnostics?.let { callback -> { message -> callback("${cell.region.field}: $message") } }, checkCancelled)
+            // Fixed forms may print ordinals/dates at different sizes. A cell
+            // with full-height ink can establish its own reference; a tiny zero
+            // or punctuation CANNOT (it retains the complete row's baseline).
+            val own = cell.mask.bounds()?.takeIf { cellBaselines && it.height >= 12 }
+            cell.region to read(cell.mask, own?.top ?: (rowTop - cell.top), own?.bottom ?: (rowBottom - cell.top), cell.region.field,
+                diagnostics?.let { callback -> { message -> callback("${cell.region.field}: $message") } }, checkCancelled)
         }
     }
 
@@ -149,10 +154,12 @@ class NumericGlyphOcr(context: Context) {
                     listOf("sans-serif", "sans-serif-condensed", "serif", "monospace").flatMap { family ->
                         listOf(Typeface.NORMAL, Typeface.BOLD, Typeface.ITALIC).map { Typeface.create(family, it) }
                     }
+                val printFonts = listOf(R.font.parastoo_regular, R.font.parastoo_bold).mapNotNull { ResourcesCompat.getFont(context, it) }
+                val variants = fonts.map { it to 72f } + printFonts.flatMap { font -> listOf(32f, 48f, 72f).map { font to it } }
                 val result = mutableListOf<Template>()
-                val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply { textSize = 72f; color = Color.BLACK }
-                for (font in fonts) {
-                    paint.typeface = font
+                val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.BLACK }
+                for ((font, size) in variants) {
+                    paint.typeface = font; paint.textSize = size
                     for (script in scripts) {
                         val glyphs = (script + "./:٫,٬-").mapNotNull { char ->
                             if (!paint.hasGlyph(char.toString())) null else {
@@ -186,7 +193,8 @@ class NumericGlyphOcr(context: Context) {
 
         private fun labels(context: Context): List<LabelTemplate> = cachedLabels ?: synchronized(this) {
             cachedLabels ?: run {
-                val fonts = listOf(R.font.vazirmatn_regular, R.font.vazirmatn_medium, R.font.vazirmatn_semibold, R.font.vazirmatn_bold)
+                val fonts = listOf(R.font.vazirmatn_regular, R.font.vazirmatn_medium, R.font.vazirmatn_semibold, R.font.vazirmatn_bold,
+                    R.font.parastoo_regular, R.font.parastoo_bold)
                     .mapNotNull { ResourcesCompat.getFont(context, it) } +
                     listOf("sans-serif", "serif", "monospace").flatMap { family -> listOf(Typeface.NORMAL, Typeface.BOLD).map { Typeface.create(family, it) } }
                 val result = mutableListOf<LabelTemplate>()

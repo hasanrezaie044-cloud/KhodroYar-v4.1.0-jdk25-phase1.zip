@@ -153,6 +153,8 @@ assert evidence['target_package'] == 'com.khodroyar.app'
 assert evidence['target_debuggable'] is False
 assert evidence['instrumentation_package'] != evidence['target_package']
 assert evidence['target_uid'] != evidence['instrumentation_uid'], 'Test must run outside the production process'
+assert evidence.get('fixed_company') == dict(passed=True, rows=2, count_per_row='1', period_start='1403/04/01',
+    period_end='1403/04/31', km='135', hours='0', first=dict(date='1403/04/12', count='1', km='40', hours='0')), 'Actual fixed-company-form OCR and service comparison must also pass'
 for phase in ('before', 'after'):
     assert evidence['offline'][phase] == dict(airplane_mode='1', wifi_on='0', active_network=False), 'Actual offline state is required'
 PY
