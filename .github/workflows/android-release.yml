@@ -275,6 +275,9 @@ jobs:
           path.write_text(json.dumps(proof, indent=2) + '\n')
           PY
 
+      - name: Check strict instrumentation protocol parser (fixtures only)
+        run: python3 tools/test-instrumentation-summary.py
+
       - name: Enable KVM for actual signed release verification
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules

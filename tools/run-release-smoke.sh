@@ -16,15 +16,33 @@ adb shell settings put secure show_ime_with_hard_keyboard 1
 adb shell input keyevent KEYCODE_WAKEUP
 adb shell wm dismiss-keyguard || true
 BEFORE=$(sha256sum app/build/outputs/apk/release/app-release.apk | awk '{print $1}')
+# The already-built original target is not rebuilt, re-signed or made debuggable.
+# Use raw AndroidJUnitRunner protocol so a Gradle/UTP collection stall cannot
+# disguise whether the exact external signed test actually started and completed.
+set -e
+APK=app/build/outputs/apk/release/app-release.apk
+TEST_APK=app/build/outputs/apk/androidTest/release/app-release-androidTest.apk
+test -s "$TEST_APK"
+APKSIGNER="$ANDROID_HOME/build-tools/${ANDROID_BUILD_TOOLS:-36.0.0}/apksigner"
+TEST_CERT=$("$APKSIGNER" verify --print-certs "$TEST_APK" | sed -n 's/^Signer #1 certificate SHA-256 digest: //p')
+test "$TEST_CERT" = "03bfbc3575667403c3259fae345f3eb1ad3045373cb62123be376ef4898caaf0" || {
+  echo "::error::Instrumentation APK must share the release signing identity to test a non-debuggable target"; exit 1;
+}
+adb install --no-incremental -r "$APK"
+adb install --no-incremental -r -t "$TEST_APK"
+echo "::notice title=Signed test installation::Original non-debuggable audited APK and same-signed external instrumentation installed on disposable emulator."
 set +e
-timeout --signal=TERM --kill-after=45s 18m ./gradlew connectedReleaseAndroidTest -PkhodroyarTestBuildType=release \
-  -Pandroid.testInstrumentationRunnerArguments.class=com.khodroyar.app.ui.ReleaseApkSmokeTest \
-  -Pandroid.testInstrumentationRunnerArguments.timeout_msec=600000 \
-  --stacktrace 2>&1 | tee "${RUNNER_TEMP:-/tmp}/khodroyar-signed-runtime.log"
+timeout --signal=TERM --kill-after=30s 12m adb shell am instrument -w -r \
+  -e class com.khodroyar.app.ui.ReleaseApkSmokeTest \
+  -e timeout_msec 600000 \
+  com.khodroyar.app.test/androidx.test.runner.AndroidJUnitRunner 2>&1 | tee "$EVIDENCE/instrumentation.log"
 RESULT=${PIPESTATUS[0]}
 set -e
-echo "::notice title=Signed runtime Gradle exit::Exit $RESULT (124 means 18-minute timeout, 137 means forced termination); this is not a passing runtime result."
-python3 "$ROOT/tools/annotate-build-errors.py" "${RUNNER_TEMP:-/tmp}/khodroyar-signed-runtime.log"
+echo "::notice title=Signed instrumentation command exit::Exit $RESULT; the raw protocol, actual assertions, runtime trace and original hash must also pass."
+if ! python3 "$ROOT/tools/summarize-instrumentation.py" "$EVIDENCE/instrumentation.log" \
+  "$ROOT/android/app/build/outputs/androidTest-results/connected/manual-release/TEST-com.khodroyar.app.ui.ReleaseApkSmokeTest.xml"; then
+  RESULT=1
+fi
 if ! python3 "$ROOT/tools/summarize-tests.py" "$ROOT/android/app/build/outputs/androidTest-results/connected" "Signed release native OCR tests"; then
   RESULT=1
 fi
@@ -34,7 +52,7 @@ if [ "$BEFORE" != "$AFTER" ]; then
   RESULT=1
 fi
 adb logcat -d -t 500 > "$EVIDENCE/logcat.txt"
-# UTP uninstalls the APK; use shared synthetic Downloads, NOT app-specific files.
+# Preserve shared synthetic evidence; never collect private user app data.
 adb pull /sdcard/Download/KhodroYar-Release-Smoke/. "$EVIDENCE/" || RESULT=1
 python3 - "$EVIDENCE" <<'PY'
 import json, sys
