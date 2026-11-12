@@ -230,7 +230,10 @@ class AgentToolExecutor(private val repo: AppRepository) : AgentToolRunner {
     }
 
     private suspend fun listServices(call: ValidatedCall): ToolOutcome {
-        val prefix = call.str("date") ?: call.int("year")?.toString() ?: ""
+        val prefix = call.str("date") ?: when {
+            call.int("month") != null -> monthPrefix(call.int("year") ?: curYear(), call.int("month")!!)
+            else -> call.int("year")?.toString() ?: ""
+        }
         val rows = repo.servicesByPrefixOnce(prefix).sortedByDescending { it.date }.take(call.int("limit") ?: 10)
         if (rows.isEmpty()) return ToolOutcome(true, "سرویسی ثبت نشده است.")
         val sb = StringBuilder("سرویس‌های ثبت‌شده (تاریخ | نوع | کیلومتر | ساعت | درآمد):\n")

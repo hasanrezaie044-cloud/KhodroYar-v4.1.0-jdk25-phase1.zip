@@ -182,3 +182,55 @@ jobs:
       - name: Remove temporary signing file
         if: always()
         run: rm -f '${{ steps.keystore.outputs.path }}'
+
+  native-offline-verification:
+    name: Native Persian OCR and document import (API 35)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '25'
+      - uses: android-actions/setup-android@v3
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.4.1'
+          cache-read-only: true
+      - name: Verify official optional Persian data
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python3 tools/fetch-persian-ocr-data.py --output android/ocr/src/androidTest/assets/fas.traineddata
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Compile native instrumentation tests
+        run: CI_CHECK_NAME=native-compile bash tools/ci-gradle.sh :app:assembleDebugAndroidTest :ocr:assembleDebugAndroidTest
+      - name: Run genuinely local OCR and PDF/image import on emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          arch: x86_64
+          target: google_apis
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          script: CI_CHECK_NAME=native-tests bash tools/ci-gradle.sh :app:connectedDebugAndroidTest :ocr:connectedDebugAndroidTest
+      - name: Publish native results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: khodroyar-native-offline-verification
+          path: |
+            android/app/build/outputs/androidTest-results
+            android/ocr/build/outputs/androidTest-results
+            android/app/build/reports/androidTests
+            android/ocr/build/reports/androidTests
+            android/ocr/src/androidTest/assets/fas.traineddata
+            .verification/*.log
+          if-no-files-found: ignore

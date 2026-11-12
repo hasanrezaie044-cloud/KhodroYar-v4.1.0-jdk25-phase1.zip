@@ -46,6 +46,8 @@ object StatementParser {
                 Regex("^(?:صفحه|page)\\s*[:0-9 /از]*$", RegexOption.IGNORE_CASE).matches(normalized) -> StatementRowKind.OTHER
                 headerPattern.containsMatchIn(normalized) && dateAnywhere.isEmpty() && words.count { w -> PersianText.digits(w.text).any { it in '0'..'9' } } < 2 -> StatementRowKind.OTHER
                 dateAnywhere.isNotEmpty() || columns != null -> StatementRowKind.SERVICE
+                // A damaged date with two numeric cells must not silently disappear.
+                words.count { w -> PersianText.digits(w.text).any { it in '0'..'9' } } >= 2 -> StatementRowKind.SERVICE
                 else -> StatementRowKind.OTHER
             }
             fun field(band: ColumnBand): String = words.filter {

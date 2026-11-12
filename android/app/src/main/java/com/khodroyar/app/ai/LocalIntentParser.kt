@@ -32,7 +32,7 @@ class LocalIntentParser(private val today: () -> Jalali.Ymd = { Jalali.today() }
         private val EDIT_DELETE = Regex("حذف|پاک\\s*کن|ویرایش|تغییر\\s*بده|\\b(?:delete|remove|edit|update)\\b")
 
         fun normalize(raw: String): String = buildString {
-            for (ch in Normalizer.normalize(raw, Normalizer.Form.NFKC).lowercase(Locale.ROOT)) {
+            for (ch in Normalizer.normalize(com.khodroyar.app.core.persian.PersianText.digits(raw), Normalizer.Form.NFKC).lowercase(Locale.ROOT)) {
                 append(when (ch) {
                     in '۰'..'۹' -> '0' + (ch - '۰')
                     in '٠'..'٩' -> '0' + (ch - '٠')
@@ -143,6 +143,8 @@ class LocalIntentParser(private val today: () -> Jalali.Ymd = { Jalali.today() }
     }
 
     private fun read(text: String): LocalIntent {
+        if (text.trim('!', '؟', '.', ',') in setOf("مرسی", "ممنون", "سپاس", "دمت گرم", "thanks", "thank you"))
+            return LocalIntent.Reply("خواهش می‌کنم! برای دیدن گزارش‌ها یا ثبت یک مورد با تأیید خودتان، بگویید چه کمکی نیاز دارید.")
         if (text.trim('!', '؟', '.', ',') in setOf("سلام", "درود", "hello", "hi")) return LocalIntent.Reply("سلام! بدون اینترنت و API آماده‌ام. می‌توانید «گزارش این ماه»، «وضعیت خودرو» یا «راهنما» بنویسید. من دستیار دستورمحور هستم، نه مدل زبانی عمومی.")
         if (has(text, "وضعیت خودرو", "وضعیت ماشین", "کیلومتر خودرو", "کیلومتر ماشین", "موعد سرویس", "زمان تعویض", "car status")) return LocalIntent.Tool("get_vehicle_status")
         if (has(text, "یادآور", "یاداوری", "بیمه", "اقساط", "قسط", "مدارک", "reminder")) return LocalIntent.Tool("get_active_reminders")

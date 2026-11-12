@@ -43,7 +43,7 @@ class PersianOcrService : Service() {
             val tess = TessBaseAPI()
             try {
                 check(tess.init(PersianData.root(this).absolutePath, "fas", TessBaseAPI.OEM_LSTM_ONLY)) { "راه‌اندازی OCR فارسی انجام نشد." }
-                tess.pageSegMode = TessBaseAPI.PageSegMode.PSM_AUTO
+                tess.setPageSegMode(TessBaseAPI.PageSegMode.PSM_AUTO)
                 tess.setImage(bitmap)
                 tess.getUTF8Text() // Start recognition before acquiring the word iterator.
                 val words = JSONArray()

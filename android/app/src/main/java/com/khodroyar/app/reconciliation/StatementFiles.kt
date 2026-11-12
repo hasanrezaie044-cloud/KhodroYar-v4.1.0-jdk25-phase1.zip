@@ -99,10 +99,10 @@ class StatementFiles(private val context: Context) {
             val matrix = Matrix().apply { postRotate(page.rotation + page.deskew) }
             rotated = Bitmap.createBitmap(original, 0, 0, original.width, original.height, matrix, true)
             val source = requireNotNull(rotated)
-            val result = if (page.enhance) {
+            val result = if (page.enhance || page.deskew != 0f) {
                 enhanced = Bitmap.createBitmap(source.width, source.height, Bitmap.Config.ARGB_8888)
                 val colors = ColorMatrix().apply { setSaturation(0f); postConcat(ColorMatrix(floatArrayOf(1.15f,0f,0f,0f,-12f, 0f,1.15f,0f,0f,-12f, 0f,0f,1.15f,0f,-12f, 0f,0f,0f,1f,0f))) }
-                Canvas(enhanced!!).apply { drawColor(Color.WHITE); drawBitmap(source, 0f, 0f, Paint().apply { colorFilter = ColorMatrixColorFilter(colors) }) }
+                Canvas(enhanced!!).apply { drawColor(Color.WHITE); drawBitmap(source, 0f, 0f, Paint().apply { if (page.enhance) colorFilter = ColorMatrixColorFilter(colors) }) }
                 enhanced!!
             } else source
             val output = rendered(page)

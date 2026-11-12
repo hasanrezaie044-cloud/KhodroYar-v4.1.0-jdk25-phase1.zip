@@ -2,6 +2,11 @@ package com.khodroyar.app.ui.screens
 
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.Matrix
+import android.graphics.Canvas
+import android.graphics.Paint
+import android.graphics.ColorMatrix
+import android.graphics.ColorMatrixColorFilter
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
@@ -111,7 +116,7 @@ fun ReconciliationScreen(vm: ReconciliationViewModel = viewModel()) {
                     val index = vm.pages.indexOfFirst { it.id == page.id }
                     Text("صفحه ${PersianText.fa((index + 1).toString())}", style = MaterialTheme.typography.titleMedium)
                     val shown = if (vm.files.rendered(page).isFile && page.processed) vm.files.rendered(page) else vm.files.image(page)
-                    StatementImage(shown, modifier = Modifier.fillMaxWidth().height(190.dp).clickable { preview = page })
+                    StatementImage(shown, modifier = Modifier.fillMaxWidth().height(190.dp).clickable { preview = page }, angle = if (page.processed) 0f else page.rotation + page.deskew, enhance = !page.processed && page.enhance)
                     Text("برای تصویر بزرگ‌تر لمس کنید. با چرخاندن یا تغییر پردازش، ردیف‌های این صفحه باید دوباره استخراج شوند.", style = MaterialTheme.typography.bodySmall)
                     Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         TextButton(onClick = { preview = page }, enabled = !vm.busy) { Text("بزرگ‌نمایی") }
@@ -230,7 +235,7 @@ fun ReconciliationScreen(vm: ReconciliationViewModel = viewModel()) {
                         TextButton(onClick = { preview = null }) { Text("بستن تصویر") }
                         Box(Modifier.weight(1f).horizontalScroll(rememberScrollState()).verticalScroll(rememberScrollState())) {
                             val shown = if (vm.files.rendered(page).isFile && page.processed) vm.files.rendered(page) else vm.files.image(page)
-                            StatementImage(shown, modifier = Modifier.requiredSize((340 * zoom).dp, (500 * zoom).dp))
+                            StatementImage(shown, modifier = Modifier.requiredSize((340 * zoom).dp, (500 * zoom).dp), angle = if (page.processed) 0f else page.rotation + page.deskew, enhance = !page.processed && page.enhance)
                         }
                         Slider(zoom, { zoom = it }, valueRange = 1f..4f)
                         Text("برای دیدن جزئیات، بزرگ‌نمایی و تصویر را پیمایش کنید.")
@@ -277,7 +282,7 @@ private fun RowEditor(row: StatementRow, page: ImportedStatementPage?, files: St
                 Text("بازبینی ردیف با تصویر", style = MaterialTheme.typography.titleLarge)
                 page?.let {
                     val file = if (files.rendered(it).isFile && it.processed) files.rendered(it) else files.image(it)
-                    StatementImage(file, if (it.processed) row.area else null, Modifier.fillMaxWidth().height(160.dp))
+                    StatementImage(file, if (it.processed) row.area else null, Modifier.fillMaxWidth().height(160.dp), angle = if (it.processed) 0f else it.rotation + it.deskew, enhance = !it.processed && it.enhance)
                 }
                 Text(row.rawText, style = MaterialTheme.typography.bodySmall)
                 WorkField("تاریخ شمسی", date, { date = it })
@@ -302,9 +307,9 @@ private fun RowEditor(row: StatementRow, page: ImportedStatementPage?, files: St
 }
 
 @Composable
-private fun StatementImage(file: File, area: RowArea? = null, modifier: Modifier = Modifier) {
+private fun StatementImage(file: File, area: RowArea? = null, modifier: Modifier = Modifier, angle: Float = 0f, enhance: Boolean = false) {
     val stamp = file.lastModified()
-    val bitmap by produceState<Bitmap?>(null, file.absolutePath, stamp, area) {
+    val bitmap by produceState<Bitmap?>(null, file.absolutePath, stamp, area, angle, enhance) {
         value = withContext(Dispatchers.IO) {
             runCatching {
                 val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
@@ -313,7 +318,16 @@ private fun StatementImage(file: File, area: RowArea? = null, modifier: Modifier
                 while (maxOf(options.outWidth, options.outHeight) / options.inSampleSize > 1400) options.inSampleSize *= 2
                 options.inJustDecodeBounds = false
                 val decoded = BitmapFactory.decodeFile(file.absolutePath, options) ?: return@runCatching null
-                if (area == null) decoded else {
+                if (area == null) {
+                    val rotated = if (angle == 0f) decoded else Bitmap.createBitmap(decoded, 0, 0, decoded.width, decoded.height, Matrix().apply { postRotate(angle) }, true)
+                    if (rotated !== decoded) decoded.recycle()
+                    if (enhance || angle % 90f != 0f) {
+                        val result = Bitmap.createBitmap(rotated.width, rotated.height, Bitmap.Config.ARGB_8888)
+                        val colors = ColorMatrix().apply { setSaturation(0f); postConcat(ColorMatrix(floatArrayOf(1.15f,0f,0f,0f,-12f, 0f,1.15f,0f,0f,-12f, 0f,0f,1.15f,0f,-12f, 0f,0f,0f,1f,0f))) }
+                        Canvas(result).apply { drawColor(android.graphics.Color.WHITE); drawBitmap(rotated, 0f, 0f, Paint().apply { if (enhance) colorFilter = ColorMatrixColorFilter(colors) }) }
+                        rotated.recycle(); result
+                    } else rotated
+                } else {
                     val sample = options.inSampleSize
                     val l = (area.left / sample).coerceIn(0, decoded.width - 1); val t = ((area.top - 12) / sample).coerceIn(0, decoded.height - 1)
                     val r = (area.right / sample).coerceIn(l + 1, decoded.width); val b = ((area.bottom + 12) / sample).coerceIn(t + 1, decoded.height)

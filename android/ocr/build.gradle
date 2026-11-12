@@ -11,6 +11,7 @@ android {
     buildToolsVersion '36.0.0'
     defaultConfig {
         applicationId 'com.khodroyar.ocr'
+        testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
         minSdk 24
         targetSdk 35
         versionName releaseVersion.getProperty('versionName')
@@ -42,6 +43,8 @@ android {
 }
 
 dependencies {
+    androidTestImplementation 'androidx.test:runner:1.6.2'
+    androidTestImplementation 'androidx.test.ext:junit:1.2.1'
     implementation 'androidx.core:core-ktx:1.17.0'
     implementation 'cz.adaptech.tesseract4android:tesseract4android:4.9.0'
 }

@@ -1,7 +1,7 @@
 {
   "source": {"ref": "9b66596ce07f3b42eb8451d853c61ca735bdd27a", "versionName": "5.1.9", "versionCode": 54},
   "observedReleases": [
-    {"ref": "54fe555fcd49d6095d4f130fd31365480a28b478", "run": 43016583464, "versionName": "5.4.0", "versionCode": 60, "role": "pre-ALBERT size/signature baseline; code to be confirmed against APK"},
+    {"ref": "54fe555fcd49d6095d4f130fd31365480a28b478", "run": 43016583464, "versionName": "5.4.0", "versionCode": 60, "role": "pre-ALBERT size/signature baseline; code read from immutable source, verified against APK by CI"},
     {"ref": "06bf8750b3b1fb62dbd256dd94152c6d9beff82b", "run": 43084276600, "versionName": "5.5.1", "versionCode": 62, "role": "latest successful ALBERT build, version read from source"}
   ],
   "restoredAssistant": {"ref": "bdfc1ba9fc02", "files": ["LocalIntentParser.kt", "LocalNumbers.kt", "LocalAssistant.kt"], "note": "Original API-free local command assistant, adapted to the provided repository's existing tool boundary; no later UI redesign imported."}

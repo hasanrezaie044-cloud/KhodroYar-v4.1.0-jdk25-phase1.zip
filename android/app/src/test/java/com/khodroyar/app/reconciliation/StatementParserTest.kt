@@ -47,6 +47,12 @@ class StatementParserTest {
         val p = page(words = page().words + listOf(word("۱۴۰۵/۰۱/۱۲", 750, 200), word("۱۶۰", 420, 200), word("۱۰", 100, 200)))
         assertEquals(2, StatementParser.parse(p, columns).count { it.kind == StatementRowKind.SERVICE })
     }
+    @Test fun damagedDateWithNumericCellsRequiresReviewInsteadOfDisappearing() {
+        val r = StatementParser.parse(page(words = listOf(word("۱۴۰۵/؟/۱۲", 750), word("۱۶۰", 420), word("۱۰", 100)))).single()
+        assertEquals(StatementRowKind.SERVICE, r.kind)
+        assertNull(ReconciliationEngine.values(r)); assertFalse(r.confirmed); assertNotNull(r.area)
+    }
+
     @Test fun overlappingOrReversedColumnsAreInvalid() {
         assertFalse(StatementColumns(ColumnBand(.5, 1.0), ColumnBand(.4, .7), ColumnBand(.0, .3)).valid())
         assertFalse(ColumnBand(.5, .4).valid()); assertFalse(ColumnBand(-.1, .3).valid())

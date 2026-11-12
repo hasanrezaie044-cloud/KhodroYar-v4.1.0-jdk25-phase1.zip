@@ -1,0 +1,92 @@
+[
+  {
+    "resource": "android/app/src/main/res/mipmap-hdpi/ic_launcher.png",
+    "originalBytes": 9842,
+    "losslessBytes": 6894,
+    "pixelsIdentical": true
+  },
+  {
+    "resource": "android/app/src/main/res/mipmap-hdpi/ic_launcher_foreground.png",
+    "originalBytes": 21975,
+    "losslessBytes": 13908,
+    "pixelsIdentical": true
+  },
+  {
+    "resource": "android/app/src/main/res/mipmap-hdpi/ic_launcher_round.png",
+    "originalBytes": 11812,
+    "losslessBytes": 8126,
+    "pixelsIdentical": true
+  },
+  {
+    "resource": "android/app/src/main/res/mipmap-mdpi/ic_launcher.png",
+    "originalBytes": 5024,
+    "losslessBytes": 3556,
+    "pixelsIdentical": true
+  },
+  {
+    "resource": "android/app/src/main/res/mipmap-mdpi/ic_launcher_foreground.png",
+    "originalBytes": 11320,
+    "losslessBytes": 7252,
+    "pixelsIdentical": true
+  },
+  {
+    "resource": "android/app/src/main/res/mipmap-mdpi/ic_launcher_round.png",
+    "originalBytes": 6067,
+    "losslessBytes": 4260,
+    "pixelsIdentical": true
+  },
+  {
+    "resource": "android/app/src/main/res/mipmap-xhdpi/ic_launcher.png",
+    "originalBytes": 15813,
+    "losslessBytes": 11032,
+    "pixelsIdentical": true
+  },
+  {
+    "resource": "android/app/src/main/res/mipmap-xhdpi/ic_launcher_foreground.png",
+    "originalBytes": 35475,
+    "losslessBytes": 22450,
+    "pixelsIdentical": true
+  },
+  {
+    "resource": "android/app/src/main/res/mipmap-xhdpi/ic_launcher_round.png",
+    "originalBytes": 18911,
+    "losslessBytes": 12990,
+    "pixelsIdentical": true
+  },
+  {
+    "resource": "android/app/src/main/res/mipmap-xxhdpi/ic_launcher.png",
+    "originalBytes": 30849,
+    "losslessBytes": 21488,
+    "pixelsIdentical": true
+  },
+  {
+    "resource": "android/app/src/main/res/mipmap-xxhdpi/ic_launcher_foreground.png",
+    "originalBytes": 69815,
+    "losslessBytes": 43366,
+    "pixelsIdentical": true
+  },
+  {
+    "resource": "android/app/src/main/res/mipmap-xxhdpi/ic_launcher_round.png",
+    "originalBytes": 36431,
+    "losslessBytes": 24960,
+    "pixelsIdentical": true
+  },
+  {
+    "resource": "android/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png",
+    "originalBytes": 49234,
+    "losslessBytes": 34706,
+    "pixelsIdentical": true
+  },
+  {
+    "resource": "android/app/src/main/res/mipmap-xxxhdpi/ic_launcher_foreground.png",
+    "originalBytes": 113105,
+    "losslessBytes": 71096,
+    "pixelsIdentical": true
+  },
+  {
+    "resource": "android/app/src/main/res/mipmap-xxxhdpi/ic_launcher_round.png",
+    "originalBytes": 57691,
+    "losslessBytes": 38992,
+    "pixelsIdentical": true
+  }
+]
