@@ -26,8 +26,8 @@ data class StatementRow(
 )
 
 data class WorkTotals(val services: Int = 0, val kilometers: BigDecimal = BigDecimal.ZERO, val hours: BigDecimal = BigDecimal.ZERO) {
-    operator fun plus(other: WorkTotals) = WorkTotals(services + other.services, kilometers + other.kilometers, hours + other.hours)
-    operator fun minus(other: WorkTotals) = WorkTotals(services - other.services, kilometers - other.kilometers, hours - other.hours)
+    operator fun plus(other: WorkTotals) = WorkTotals(Math.addExact(services, other.services), kilometers + other.kilometers, hours + other.hours)
+    operator fun minus(other: WorkTotals) = WorkTotals(Math.subtractExact(services, other.services), kilometers - other.kilometers, hours - other.hours)
 }
 enum class DayStatus { MATCHED, DISCREPANCY, REVIEW }
 data class DailyComparison(

@@ -147,9 +147,8 @@ jobs:
           while IFS= read -r -d '' file; do BASELINES+=(--baseline "$file"); done < <(find .verification/baselines -name '*.apk' -print0)
           python3 tools/verify-release.py --apk android/app/build/outputs/apk/release/app-release.apk --ocr android/ocr/build/outputs/apk/release/ocr-release.apk "${BASELINES[@]}"
           python3 tools/check-secrets.py --apk android/app/build/outputs/apk/release/app-release.apk --apk android/ocr/build/outputs/apk/release/ocr-release.apk
-      - name: Android lint (record existing and new diagnostics)
+      - name: Android lint (existing and new diagnostics)
         id: lint
-        continue-on-error: true
         run: CI_CHECK_NAME=lint bash tools/ci-gradle.sh :app:lintDebug :ocr:lintDebug
       - name: Publish signed APKs and verification evidence
         uses: actions/upload-artifact@v4
@@ -197,6 +196,8 @@ jobs:
           distribution: temurin
           java-version: '25'
       - uses: android-actions/setup-android@v3
+        with:
+          packages: 'platforms;android-${{ env.ANDROID_COMPILE_SDK }} build-tools;${{ env.ANDROID_BUILD_TOOLS }} platform-tools'
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '9.4.1'
@@ -221,6 +222,9 @@ jobs:
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
           script: CI_CHECK_NAME=native-tests bash tools/ci-gradle.sh :app:connectedDebugAndroidTest :ocr:connectedDebugAndroidTest
+      - name: Summarize executed native tests
+        if: always()
+        run: python3 tools/summarize-native-tests.py
       - name: Publish native results
         if: always()
         uses: actions/upload-artifact@v4

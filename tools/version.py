@@ -28,6 +28,7 @@ def main():
         else: patch += 1
         current = {'versionName': f'{major}.{minor}.{patch}', 'versionCode': max(int(x['versionCode']) for x in candidates) + 1}
         (ROOT / 'android/version.properties').write_text('\n'.join(f'{k}={v}' for k, v in current.items()) + '\n')
-    print(json.dumps({'applicationId': 'com.khodroyar.app', **current}, ensure_ascii=False))
+    application = re.search(r"applicationId\s+'([^']+)'", (ROOT / 'android/app/build.gradle').read_text())[1]
+    print(json.dumps({'applicationId': application, **current}, ensure_ascii=False))
 
 if __name__ == '__main__': main()
