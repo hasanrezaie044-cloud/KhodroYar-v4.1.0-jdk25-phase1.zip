@@ -130,7 +130,15 @@ class ReleaseApkSmokeTest {
             stage("real launcher opened, radios disabled")
             tagged("terms-agree").click(); tagged("terms-continue").click()
             stage("terms accepted through UI")
+            // Lock is ON by default in the recovered app. A real clean install
+            // creates and confirms a PIN before profile setup; never disable or
+            // seed the lock/preferences to skip this production path.
+            find(By.text("یک رمز عبور ۵ رقمی بسازید"))
+            find(By.clazz("android.widget.EditText")).apply { click(); text = "13579" }
+            find(By.text("رمز عبور را دوباره وارد کنید"))
+            find(By.clazz("android.widget.EditText")).apply { click(); text = "13579" }
             tagged("profile-first-name").apply { click(); text = "آزمایشی" }
+            stage("fresh-install PIN created and confirmed through actual UI")
             tagged("profile-last-name").apply { click(); text = "امولاتور" }
             device.pressBack()
             find(By.text("شروع مسیر")).click()
@@ -185,6 +193,13 @@ class ReleaseApkSmokeTest {
             val hierarchy = ByteArrayOutputStream()
             device.dumpWindowHierarchy(hierarchy)
             publishSyntheticEvidence(context, "KhodroYar-Release-Smoke", "last-window.xml", "text/xml", hierarchy.toByteArray())
+            if (!passed) {
+                val failureImage = File(context.cacheDir, "signed-release-failure.png")
+                if (device.takeScreenshot(failureImage)) {
+                    publishSyntheticEvidence(context, "KhodroYar-Release-Smoke", failureImage.name, "image/png", failureImage.readBytes())
+                }
+                failureImage.delete()
+            }
             device.executeShellCommand("cmd connectivity airplane-mode ${if (initiallyAirplaneMode) "enable" else "disable"}")
             device.executeShellCommand("svc wifi enable"); device.executeShellCommand("svc data enable")
             context.contentResolver.delete(uri, null, null)

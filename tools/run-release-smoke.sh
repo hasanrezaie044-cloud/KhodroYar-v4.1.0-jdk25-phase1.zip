@@ -117,10 +117,26 @@ adb pull /sdcard/Download/KhodroYar-Release-Smoke/. "$EVIDENCE/" || RESULT=1
 python3 - "$EVIDENCE" <<'PY'
 import json, sys
 from pathlib import Path
-stages = sorted(Path(sys.argv[1]).glob('stage-*.json'))
+from xml.etree import ElementTree as ET
+root = Path(sys.argv[1])
+stages = sorted(root.glob('stage-*.json'))
 if stages:
     text = stages[-1].read_text().replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
     print('::notice title=Signed-release last reached stage::' + text[:3800])
+# Only this disposable emulator's generated test UI, never a connected phone.
+# Expose the actual stopping window instead of inferring it from a missing ID.
+if (root / 'runtime.json').is_file() and (root / 'last-window.xml').is_file():
+    runtime = json.loads((root / 'runtime.json').read_text())
+    if runtime.get('passed') is not True:
+        nodes = []
+        for node in ET.parse(root / 'last-window.xml').iter('node'):
+            values = {key: node.get(key, '')[:200] for key in ('resource-id', 'text', 'content-desc', 'class', 'enabled', 'bounds')}
+            if values['text'] or values['content-desc'] or values['resource-id']:
+                nodes.append(values)
+        text = json.dumps(nodes[:50], ensure_ascii=False)[:9000]
+        for index in range(0, len(text), 3000):
+            piece = text[index:index+3000].replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
+            print(f'::notice title=Actual final synthetic accessibility window {index//3000+1}::' + piece)
 PY
 if ! python3 - "$EVIDENCE/runtime.json" <<'PY'
 import json, sys
