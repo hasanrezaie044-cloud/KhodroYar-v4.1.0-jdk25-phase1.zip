@@ -25,7 +25,3 @@ notice('Native OCR diagnostics', messages[:56000])
 for extra in sorted(path.parent.glob('numeric-font-*.json')):
     data = json.loads(extra.read_text())
     notice('Native numeric-font diagnostics ' + extra.stem, json.dumps(data, ensure_ascii=False)[:10000])
-
-for extra in sorted(path.parent.glob('ime-*.json')):
-    if extra.stat().st_size <= 32768:
-        notice('Actual software keyboard ' + extra.stem, json.dumps(json.loads(extra.read_text()), ensure_ascii=False)[:3800])

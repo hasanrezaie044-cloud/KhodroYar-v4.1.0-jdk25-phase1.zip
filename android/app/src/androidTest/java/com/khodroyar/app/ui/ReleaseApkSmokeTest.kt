@@ -18,6 +18,7 @@ import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.uiautomator.By
 import androidx.test.uiautomator.BySelector
 import androidx.test.uiautomator.Direction
+import androidx.test.uiautomator.Configurator
 import androidx.test.uiautomator.UiDevice
 import androidx.test.uiautomator.UiObject2
 import androidx.test.uiautomator.Until
@@ -39,6 +40,10 @@ class ReleaseApkSmokeTest {
         check(Build.HARDWARE.contains("ranchu") || Build.HARDWARE.contains("goldfish"))
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val context = instrumentation.targetContext
+        // Orbit has native ongoing animations. Bound the accessibility idle wait
+        // rather than spending ten seconds on every lookup. Explicit selector
+        // waits and every real OCR/review assertion remain unchanged.
+        Configurator.getInstance().waitForIdleTimeout = 1000
         val device = UiDevice.getInstance(instrumentation)
         assertEquals("Gesture navigation must really be enabled", 2, android.provider.Settings.Secure.getInt(context.contentResolver, "navigation_mode", -1))
         assertEquals("com.khodroyar.app", context.packageName)

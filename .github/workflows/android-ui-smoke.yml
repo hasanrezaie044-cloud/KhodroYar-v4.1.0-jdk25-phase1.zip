@@ -70,6 +70,18 @@ jobs:
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none
           script: bash tools/run-ui-smoke.sh
+      - name: Publish actual keyboard integration evidence
+        if: always()
+        run: |
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          for path in sorted((Path(os.environ['RUNNER_TEMP']) / 'orbit-ui-screenshots').glob('ime-*.json')):
+              if path.stat().st_size <= 32768:
+                  text = json.dumps(json.loads(path.read_text()), ensure_ascii=False)[:3800]
+                  text = text.replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
+                  print('::notice title=Actual software keyboard ' + path.stem + '::' + text)
+          PY
       - name: Publish bounded synthetic previews for visual review
         if: always() && github.event_name == 'workflow_dispatch'
         run: |

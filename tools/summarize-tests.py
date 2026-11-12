@@ -9,6 +9,7 @@ def main():
     root = Path(sys.argv[1] if len(sys.argv) > 1 else "android/app/build/test-results/testDebugUnitTest")
     reports = sorted(root.rglob("TEST-*.xml"))
     if not reports:
+        print('::error title=Missing Android test reports::No JUnit XML was produced; tests have not passed.')
         raise SystemExit(f"No JUnit XML reports found under {root}; tests must actually execute")
     counts = dict(tests=0, failures=0, errors=0, skipped=0)
     for path in reports:

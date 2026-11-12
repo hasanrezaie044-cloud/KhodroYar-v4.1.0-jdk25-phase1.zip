@@ -14,7 +14,13 @@ for filename in sys.argv[1:]:
     if not path.is_file():
         continue
     seen = set()
-    for line in path.read_text(errors='replace').splitlines():
+    lines = path.read_text(errors='replace').splitlines()
+    for index, line in enumerate(lines):
+        if line.startswith('* What went wrong:'):
+            detail = '\n'.join(lines[index:index+25]).split('* Try:')[0]
+            print('::error title=Android Gradle task failure::' + escape(detail[:3800]))
+        if line.startswith('INSTRUMENTATION_FAILED:') or 'Test run failed to complete' in line:
+            print('::error title=Android instrumentation failure::' + escape(line[:2000]))
         if not re.match(r'^(e: |.*\berror: |ERROR: )', line) or line in seen:
             continue
         seen.add(line)

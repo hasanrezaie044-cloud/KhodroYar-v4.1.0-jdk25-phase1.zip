@@ -17,12 +17,13 @@ adb shell input keyevent KEYCODE_WAKEUP
 adb shell wm dismiss-keyguard || true
 BEFORE=$(sha256sum app/build/outputs/apk/release/app-release.apk | awk '{print $1}')
 set +e
-timeout 18m ./gradlew connectedReleaseAndroidTest -PkhodroyarTestBuildType=release \
+timeout --signal=TERM --kill-after=45s 18m ./gradlew connectedReleaseAndroidTest -PkhodroyarTestBuildType=release \
   -Pandroid.testInstrumentationRunnerArguments.class=com.khodroyar.app.ui.ReleaseApkSmokeTest \
   -Pandroid.testInstrumentationRunnerArguments.timeout_msec=600000 \
   --stacktrace 2>&1 | tee "${RUNNER_TEMP:-/tmp}/khodroyar-signed-runtime.log"
 RESULT=${PIPESTATUS[0]}
 set -e
+echo "::notice title=Signed runtime Gradle exit::Exit $RESULT (124 means 18-minute timeout, 137 means forced termination); this is not a passing runtime result."
 python3 "$ROOT/tools/annotate-build-errors.py" "${RUNNER_TEMP:-/tmp}/khodroyar-signed-runtime.log"
 if ! python3 "$ROOT/tools/summarize-tests.py" "$ROOT/android/app/build/outputs/androidTest-results/connected" "Signed release native OCR tests"; then
   RESULT=1
@@ -48,6 +49,7 @@ import json, sys
 from pathlib import Path
 p = Path(sys.argv[1])
 if not p.is_file() or p.stat().st_size > 65536:
+    print('::error title=Missing signed-release runtime proof::The actual APK runtime test did not publish its required trace; no handoff is allowed.')
     raise SystemExit('Missing signed-release runtime trace')
 evidence = json.loads(p.read_text())
 text = json.dumps(evidence, ensure_ascii=False).replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
