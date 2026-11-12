@@ -8,8 +8,12 @@ on:
       mode:
         description: 'Verify native UI only, or build and privately deliver the signed release'
         type: choice
-        options: [release, ui-only]
+        options: [release, ui-only, diagnostics]
         default: release
+      evidence_run_id:
+        description: 'Existing run ID for diagnostics-only: synthetic emulator crash evidence, never APKs'
+        required: false
+        type: string
       delivery_upload_url:
         description: 'Ciphertext receiver URL (public, NEVER the user download URL)'
         required: false
@@ -55,7 +59,7 @@ env:
 
 jobs:
   release:
-    if: ${{ inputs.mode != 'ui-only' }}
+    if: ${{ inputs.mode != 'ui-only' && inputs.mode != 'diagnostics' }}
     name: Signed APK Release (JDK 25)
     runs-on: ubuntu-latest
     timeout-minutes: 55
@@ -334,9 +338,48 @@ jobs:
           retention-days: 30
 
   ui-smoke:
+    if: ${{ inputs.mode != 'diagnostics' }}
     name: Native UI smoke and screenshots
     permissions:
       contents: read
     uses: ./.github/workflows/android-ui-smoke.yml
     with:
       ref: ${{ inputs.ref || github.ref }}
+
+  diagnostics:
+    name: Read synthetic emulator crash evidence
+    if: ${{ inputs.mode == 'diagnostics' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - name: Validate the existing run identifier
+        env:
+          RUN_ID: ${{ inputs.evidence_run_id }}
+        run: '[[ "$RUN_ID" =~ ^[0-9]{1,20}$ ]]'
+      - name: Read only synthetic test evidence, not an APK
+        uses: actions/download-artifact@v4
+        with:
+          name: khodroyar-signed-release-test-evidence
+          run-id: ${{ inputs.evidence_run_id }}
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/signed-test-diagnostics
+      - name: Expose bounded emulator crash diagnostics through checks
+        run: |
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          root = Path(os.environ['RUNNER_TEMP']) / 'signed-test-diagnostics'
+          for path in sorted(root.rglob('logcat.txt')):
+              lines = path.read_text(errors='replace').splitlines()
+              starts = [i for i, line in enumerate(lines) if 'FATAL EXCEPTION' in line]
+              selected = []
+              for start in starts[-2:]:
+                  selected.extend(lines[max(0, start-2):start+45])
+              text = '\n'.join(selected or lines[-70:])[:21000]
+              for index in range(0, len(text), 3500):
+                  piece = text[index:index+3500].replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
+                  print(f'::notice title=Synthetic signed-runtime crash {index//3500+1}::' + piece)
+          PY
