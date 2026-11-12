@@ -6,10 +6,15 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: 'Verify native UI only, or build and privately deliver the signed release'
+        description: 'Verify native UI, or build the signed release; public delivery requires publish_apk'
         type: choice
         options: [release, ui-only, diagnostics]
         default: release
+      publish_apk:
+        description: 'Owner explicitly authorises a public signed APK artifact and GitHub Release after all tests pass'
+        required: false
+        type: boolean
+        default: false
       evidence_run_id:
         description: 'Existing run ID for diagnostics-only: synthetic emulator crash evidence, never APKs'
         required: false
@@ -28,6 +33,11 @@ on:
         description: 'Git ref to build'
         required: false
         type: string
+      publish_apk:
+        description: 'Explicit owner permission to publish the verified signed APK'
+        required: false
+        type: boolean
+        default: false
       delivery_upload_url:
         required: false
         type: string
@@ -64,8 +74,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 55
     permissions:
-      # Only unreferenced authenticated CIPHERTEXT objects are written for private
-      # owner handoff. No APK, branch/tag/ref update or public Release is uploaded.
+      # Private delivery stays the default. An explicit publish_apk=true permits
+      # a public candidate artifact; the final Release waits for BOTH test jobs.
       contents: write
     outputs:
       version-name: ${{ steps.version.outputs.version_name }}
@@ -74,10 +84,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.ref || github.ref }}
+          ref: ${{ inputs.ref || github.sha }}
 
       - name: Check private receiver HTTPS before building
-        if: ${{ inputs.delivery_upload_url != '' }}
+        if: ${{ !inputs.publish_apk && inputs.delivery_upload_url != '' }}
         env:
           DELIVERY: ${{ inputs.delivery_upload_url }}
         run: |
@@ -92,7 +102,7 @@ jobs:
           PY
 
       - name: Check encrypted Git-object handoff permission
-        if: ${{ inputs.delivery_upload_url == '' && inputs.delivery_public_key != '' }}
+        if: ${{ !inputs.publish_apk && inputs.delivery_upload_url == '' && inputs.delivery_public_key != '' }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -267,12 +277,12 @@ jobs:
           CERT=$("$ANDROID_HOME/build-tools/${ANDROID_BUILD_TOOLS}/apksigner" verify --print-certs android/app/build/outputs/apk/release/app-release.apk | sed -n 's/^Signer #1 certificate SHA-256 digest: //p')
           test "$CERT" = "03bfbc3575667403c3259fae345f3eb1ad3045373cb62123be376ef4898caaf0" || { echo "Signing identity changed"; exit 1; }
           python3 - <<'PY'
-          import json, os
+          import json, subprocess
           from pathlib import Path
           path = Path('android/app/build/outputs/apk/release/verification.json')
           proof = json.loads(path.read_text())
           proof.update(package='com.khodroyar.app', version_name='${{ steps.version.outputs.version_name }}',
-              version_code=int('${{ steps.version.outputs.version_code }}'), head_sha=os.environ['GITHUB_SHA'],
+              version_code=int('${{ steps.version.outputs.version_code }}'), head_sha=subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip(),
               certificate_sha256='03bfbc3575667403c3259fae345f3eb1ad3045373cb62123be376ef4898caaf0',
               debuggable=False, zipalign_16kb='passed', room_version=6,
               baseline='797d7061c5f669cf4fa3e7361c0b3c2dca10490c')
@@ -281,6 +291,9 @@ jobs:
 
       - name: Check strict instrumentation protocol parser (fixtures only)
         run: python3 tools/test-instrumentation-summary.py
+
+      - name: Check explicit public-delivery guards (fixtures only)
+        run: python3 tools/test-public-apk-release.py
 
       - name: Enable KVM for actual signed release verification
         run: |
@@ -317,8 +330,22 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
-      # Never upload an installable APK to artifacts in this public source repo.
+      - name: Prepare originally signed APK for owner-authorised public delivery
+        if: ${{ inputs.publish_apk }}
+        run: |
+          python3 tools/public-apk-release.py prepare android/app/build/outputs/apk/release/app-release.apk android/app/build/outputs/apk/release/verification.json "$RUNNER_TEMP/public-apk" --head "$GITHUB_SHA"
+
+      - name: Upload owner-authorised signed APK candidate
+        if: ${{ inputs.publish_apk }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: khodroyar-signed-release-candidate
+          path: ${{ runner.temp }}/public-apk/
+          if-no-files-found: error
+          retention-days: 14
+
       - name: End-to-end encrypted private delivery (no additional repository secret)
+        if: ${{ !inputs.publish_apk }}
         env:
           KHODROYAR_ENCRYPTED_APK_UPLOAD_URL: ${{ inputs.delivery_upload_url }}
           KHODROYAR_DELIVERY_PUBLIC_KEY: ${{ inputs.delivery_public_key }}
@@ -344,7 +371,32 @@ jobs:
       contents: read
     uses: ./.github/workflows/android-ui-smoke.yml
     with:
-      ref: ${{ inputs.ref || github.ref }}
+      ref: ${{ inputs.ref || github.sha }}
+
+  public-release:
+    name: Publish verified signed APK and test actual public HTTPS download
+    needs: [release, ui-smoke]
+    if: ${{ inputs.publish_apk && needs.release.result == 'success' && needs.ui-smoke.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - name: Checkout exact verified source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+      - name: Read this run's signed and runtime-verified candidate
+        uses: actions/download-artifact@v4
+        with:
+          name: khodroyar-signed-release-candidate
+          path: ${{ runner.temp }}/public-apk
+      - name: Publish only after signed runtime and all native UI tests pass
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 tools/public-apk-release.py publish "$RUNNER_TEMP/public-apk" --head "$GITHUB_SHA" --repository "$GITHUB_REPOSITORY" --run-id "$GITHUB_RUN_ID"
 
   diagnostics:
     name: Read synthetic emulator crash evidence
