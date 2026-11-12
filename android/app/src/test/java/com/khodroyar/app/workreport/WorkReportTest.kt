@@ -88,4 +88,33 @@ class WorkReportTest {
         assertEquals(0, row.validated()!!.count)
         assertNull(row.copy(hours = "").validated()); assertNull(row.copy(km = "bad").validated())
     }
+    @Test fun splitDateCellsAreReconstructedInEitherSpatialDirectionWithoutNumericLeakage() {
+        for (reverse in listOf(false, true)) {
+            val p = page()
+            val without = p.words.filterNot { it.x > .8f && it.top > .15f }
+            val values = listOf("1403", "/", "01", "/", "02").let { if (reverse) it.reversed() else it }
+            val parts = values.mapIndexed { n, value -> OcrWord(value, .77f + n * .035f, .2f, .80f + n * .035f, .225f, 95f) }
+            val row = WorkReportParser.extract(listOf(p.copy(words = without + parts))).single()
+            assertEquals("1403/01/02", row.date); assertNotNull(row.validated())
+            assertNotNull(WorkReportParser.extract(listOf(p.copy(words = without + parts)), ReportColumns(2, 3, 4)).single().validated())
+        }
+    }
+    @Test fun decimalFormattingVariationAcrossPagesStillFlagsTheDuplicate() {
+        val a = ReportRow("a", "p1", 1, 1, "۱۴۰۳/۰۱/۰۱ ۲ ۱۲۰٫۵ ۳٫۵", "14030101", "2", "120.5", "3.5")
+        val b = a.copy(id = "b", pageId = "p2", page = 2, raw = "1403-01-01 2.0 120.50 3.500")
+        assertNotNull(WorkReportParser.duplicates(listOf(a, b))[1].duplicateOf)
+    }
+    @Test fun duplicateMatchingIsOccurrenceAwareAndPreservesExtraIdenticalTrips() {
+        val a = ReportRow("a", "p1", 1, 1, "14030101 1 10 1", "14030101", "1", "10", "1")
+        val b = a.copy(id = "b", pageId = "p2", page = 2)
+        val extra = b.copy(id = "c", line = 2)
+        val result = WorkReportParser.duplicates(listOf(a, b, extra))
+        assertEquals(2, result.count { it.included }); assertNotNull(result[1].duplicateOf); assertNull(result[2].duplicateOf)
+    }
+    @Test fun blankSourceAndExplicitZeroDoNotEraseMissingDayStatus() {
+        val zero = work("1403/01/01", 0, "0", "0")
+        assertEquals(DayStatus.MISSING_IN_APP, WorkDayComparison(zero.date, zero, null).status)
+        assertEquals(DayStatus.MATCH, WorkDayComparison(zero.date, zero, zero.copy(km = BigDecimal("0.0000000001"))).status)
+    }
+
 }

@@ -11,6 +11,7 @@ import kotlinx.coroutines.CancellationException
 class ServiceRecordTools(private val repository: AppRepository) : AgentToolRunner {
     override suspend fun prepare(call: ValidatedCall): ValidatedCall = try {
         require(call.spec.name in ServiceCommandSpecs.names)
+        if (call.spec.kind == ToolKind.READ) return call
         val plan = repository.serviceBatches.prepare(call.spec.name, requireNotNull(call.str("start_date")), requireNotNull(call.str("end_date")),
             requireNotNull(call.str("service_type")), call.int("per_day"), call.str("days") == "workdays", call.dbl("km"), call.dbl("hours"), call.str("new_type")).copy(reportAfter = call.str("report_after") == "on")
         ValidatedCall(call.spec, call.args + ("service_plan" to plan))
@@ -19,7 +20,8 @@ class ServiceRecordTools(private val repository: AppRepository) : AgentToolRunne
 
     private fun plan(call: ValidatedCall): ServiceBatchPlan = (call.args["service_plan"] as? ServiceBatchPlan)
         ?.takeIf { it.action == call.spec.name } ?: throw AgentUserException("پیش‌نمایش معتبر موجود نیست؛ درخواست را دوباره بدهید.")
-    override fun describe(call: ValidatedCall) = plan(call).summary()
+    override fun describe(call: ValidatedCall) = if (call.spec.kind == ToolKind.READ)
+        "سرویس‌های ${call.str("start_date")} تا ${call.str("end_date")}" else plan(call).summary()
     override suspend fun describeTarget(call: ValidatedCall): String? = if (call.spec.name == "bulk_delete_services")
         plan(call).changes.mapNotNull { it.before }.takeIf { it.isNotEmpty() }?.let { rows ->
             "${rows.size} سرویس مشخص با شناسه‌های ثابت؛ ${rows.map { it.date }.distinct().size} روز. هیچ رکورد دیگری جایگزین هدف حذف نمی‌شود."

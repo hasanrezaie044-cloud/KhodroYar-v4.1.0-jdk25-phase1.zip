@@ -145,6 +145,38 @@ class NativeEnhancementTest {
         assertEquals(5000.0, settings.current.vehicleCurrentKm, .001); assertNotNull(settings.quickMileageNotice.value)
         settings.acknowledgeQuickMileageNotice()
     }
+    @Test fun batchUsesOwnYearPricesAndRejectsAStaleRateSnapshot() = runBlocking {
+        val old = com.khodroyar.app.core.rates.Rates(nightKm = 1000.0, hour = 2000.0)
+        val next = old.copy(nightKm = 3000.0, hour = 4000.0)
+        repo.saveRatesForYear(1402, old); repo.saveRatesForYear(1403, next)
+        val plan = repo.serviceBatches.prepare("bulk_register_services", "1402/12/29", "1403/01/01", "night", 1, false, null, null, null)
+        assertEquals(listOf(66000L, 192000L), plan.created.map { it.income })
+        repo.saveRatesForYear(1403, next.copy(hour = 5000.0))
+        assertTrue(runCatching { repo.serviceBatches.execute(plan) }.isFailure)
+        assertTrue(db.services().allOnce().isEmpty()); assertTrue(settings.pendingQuickMileage.isNullOrBlank())
+        assertEquals(1000.0, settings.current.vehicleCurrentKm, .001)
+    }
+    @Test fun workdaysSkipOfficialManualAndWeekendDatesAndReadsNeverPrepareWrites() = runBlocking {
+        val all = requireNotNull(com.khodroyar.app.core.text.PersianInput.days("1403/02/01", "1403/02/10"))
+        val manual = all.first { !com.khodroyar.app.core.holidays.WorkCalendar.isNonWorkingDay(it, emptySet()) }
+        repo.addHoliday(manual, "تعطیل آزمایشی")
+        val plan = repo.serviceBatches.prepare("bulk_register_services", all.first(), all.last(), "night", 1, true, null, null, null)
+        val expected = all.filterNot { com.khodroyar.app.core.holidays.WorkCalendar.isNonWorkingDay(it, setOf(manual)) }
+        assertEquals(expected, plan.created.map { it.date }); assertEquals(all.size - expected.size, plan.skipped)
+        val tools = AppAgentTools(context, repo)
+        val read = request("search_services_range")
+        assertSame(read, tools.prepare(read))
+        assertTrue(tools.execute(read).ok); assertTrue(db.services().allOnce().isEmpty())
+    }
+    @Test fun rentalServiceRequiresRentalSettingsEvenAfterAnApprovalWasPrepared() = runBlocking {
+        settings.update { it.copy(isRental = true) }
+        val plan = repo.serviceBatches.prepare("bulk_register_services", "1403/01/01", "1403/01/02", "fixed-salary", 1, false, null, null, null)
+        assertTrue(plan.summary().contains("حقوق ثابت")); assertEquals(plan.mileageBefore, plan.mileageAfter, 0.0)
+        settings.update { it.copy(isRental = false) }
+        assertTrue(runCatching { repo.serviceBatches.execute(plan) }.isFailure)
+        assertTrue(db.services().allOnce().isEmpty())
+    }
+
     private fun service(id: String, date: String, km: Double, hours: Double) = ServiceEntity(id, date, "night", "soren", km, hours, hours, "", "", "مبارکه", "اصفهان", "", "", 0, 0.0, 0.0, 0.0, 0L, "2026-01-01T00:00:00Z")
 
     /** Real bundled Tesseract, real SAF/FileProvider import, real multipage PdfRenderer. */
@@ -154,13 +186,14 @@ class NativeEnhancementTest {
         val bitmap = Bitmap.createBitmap(2000, 1000, Bitmap.Config.ARGB_8888)
         drawFixture(Canvas(bitmap))
         image.outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }; bitmap.recycle()
-        PdfDocument().use { document ->
+        val document = PdfDocument()
+        try {
             repeat(2) { n ->
                 val page = document.startPage(PdfDocument.PageInfo.Builder(2000, 1000, n + 1).create())
                 drawFixture(page.canvas); document.finishPage(page)
             }
             pdf.outputStream().use { document.writeTo(it) }
-        }
+        } finally { document.close() }
         val documents = ReportDocuments(context)
         val uris = listOf(pdf, image).map { FileProvider.getUriForFile(context, "com.khodroyar.app.fileprovider", it) }
         val imported = runBlocking { documents.import(uris, emptyList()) }

@@ -73,4 +73,22 @@ class ServiceCommandDialogueTest {
         val correction = tool(e.parse("ن سرویس شب بود"))
         assertEquals("night", correction.args.getString("service_type"))
     }
+    @Test fun longestServiceTypeDoesNotAlsoMatchTheShorterType() {
+        val v = tool(engine().parse("سرویس حقوق ثابت از 14030101 تا 14030103 روزی 1 سرویس ثبت کن"))
+        assertEquals("fixed-salary", v.args.getString("service_type"))
+    }
+    @Test fun malformedDateCorrectionCannotReuseAnOlderApprovedRange() {
+        val e = engine()
+        tool(e.parse("سرویس شب از 14030101 تا 14030103 روزی 1 سرویس ثبت کن"))
+        assertTrue(e.parse("نه، تا 1403010") is LocalIntent.Reply)
+        assertTrue(e.parse("نه، تا 20240320") is LocalIntent.Reply)
+    }
+    @Test fun malformedOrUnicodeNegativeValuesAreNeverPartiallyParsed() {
+        listOf("−80 کیلومتر", "کیلومتر 1,234.5.6", "ساعت 3:77", "2٫5٫6 ساعت").forEach { change ->
+            assertTrue(change, engine().parse("سرویس شب از 14030101 تا 14030103 را ویرایش کن $change") is LocalIntent.Reply)
+        }
+        val ok = tool(engine().parse("سرویس شب از 14030101 تا 14030103 را ویرایش کن کیلومتر 1,234.5"))
+        assertEquals(1234.5, ok.args.getDouble("km"), 0.0)
+    }
+
 }

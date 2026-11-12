@@ -70,7 +70,8 @@ class ServiceCommandDialogue(private val today: () -> String) {
         if (action != null && action != d.action) {
             d.action = action; d.km = null; d.hours = null; d.newType = null; d.perDay = null
         }
-        if (dates.any { it == null } || dates.size > 2) return question("تاریخ نامعتبر یا بیش از دو تاریخ دیده شد؛ ابتدا و انتهای بازه را دقیق شمسی بنویسید.", "range")
+        val dateLike = Regex("(?<![0-9])(?:[0-9]{7,9}|[0-9]{4}\\s*[/.-]\\s*[0-9]{1,2}\\s*[/.-]\\s*[0-9]{1,2})(?![0-9])").findAll(t).count()
+        if (dates.any { it == null } || dates.size > 2 || dateLike > dates.size) return question("تاریخ نامعتبر یا بیش از دو تاریخ دیده شد؛ ابتدا و انتهای بازه را دقیق شمسی بنویسید.", "range")
         when (dates.size) {
             2 -> { d.start = dates[0]; d.end = dates[1] }
             1 -> when {
@@ -93,7 +94,7 @@ class ServiceCommandDialogue(private val today: () -> String) {
         if (has(t, "فقط روزهای کاری", "روزای کاری", "working days")) d.workdays = true
         if (has(t, "همه روزها", "حتی تعطیل", "all days")) d.workdays = false
         val stripped = t.replace(PersianInput.datePattern, " ")
-        if (Regex("-\\s*[0-9]").containsMatchIn(stripped)) return question("مقدار منفی مجاز نیست؛ مقدار دقیق را اصلاح کنید.", "changes")
+        if (Regex("[-−–—﹣－]\\s*[0-9]").containsMatchIn(stripped)) return question("مقدار منفی مجاز نیست؛ مقدار دقیق را اصلاح کنید.", "changes")
         val km = value(stripped, "کیلومتر|km", false)
         val hours = value(stripped, "ساعت|hours?", true)
         if (km.first) { if (km.second == null || km.second!! > 3000) return question("کیلومتر باید عدد دقیق بین صفر و ۳۰۰۰ باشد.", "km"); d.km = km.second }
@@ -124,7 +125,9 @@ class ServiceCommandDialogue(private val today: () -> String) {
     }
     private fun value(t: String, unit: String, hours: Boolean): Pair<Boolean, Double?> {
         val u = "(?:$unit)(?:ش|ها|شون)?"
-        val number = "[0-9]+(?:[.,٫:][0-9]+)?"
+        // Consume the whole token. Never accept 1,234 from an invalid 1,234.5.6
+        // or the positive tail of a signed/otherwise malformed value.
+        val number = "(?<![0-9.,٫٬:])(?:[0-9][0-9.,٫٬:]*)(?![0-9.,٫٬:])"
         val matches = Regex("($number)\\s*$u|$u\\s*(?:را|رو|به|بشه|باشد|بکن|:)?\\s*($number)").findAll(t).toList()
         if (matches.size != 1) return (matches.isNotEmpty() || Regex("$u\\s*[0-9]").containsMatchIn(t)) to null
         val hit = matches.single().groupValues.drop(1).first { it.isNotEmpty() }
@@ -133,9 +136,15 @@ class ServiceCommandDialogue(private val today: () -> String) {
     private fun question(text: String, field: String): LocalIntent.Reply {
         waiting = field; context = LocalDialogueContext("تنظیم سرویس‌های بازه", text, listOf("لغو")); return LocalIntent.Reply(text)
     }
-    private fun typeHits(t: String): List<String> = aliases.flatMap { (wire, words) -> words.mapNotNull { word ->
-        Regex("(?<![\\p{L}])${Regex.escape(word)}(?![\\p{L}])").find(t)?.range?.first?.let { it to wire }
-    } }.sortedBy { it.first }.map { it.second }.distinct()
+    private fun typeHits(t: String): List<String> {
+        // Longest non-overlapping phrase wins: «حقوق ثابت» is NOT also «ثابت».
+        val hits = aliases.flatMap { (wire, words) -> words.flatMap { word ->
+            Regex("(?<![\\p{L}])${Regex.escape(word)}(?![\\p{L}])").findAll(t).map { it.range to wire }.toList()
+        } }.sortedWith(compareByDescending<Pair<IntRange, String>> { it.first.count() }.thenBy { it.first.first })
+        val chosen = mutableListOf<Pair<IntRange, String>>()
+        for (hit in hits) if (chosen.none { it.first.first <= hit.first.last && hit.first.first <= it.first.last }) chosen += hit
+        return chosen.sortedBy { it.first.first }.map { it.second }.distinct()
+    }
     private fun has(t: String, vararg words: String) = words.any { t.contains(it) }
     companion object {
         private val aliases = listOf("fixed-salary" to listOf("حقوق ثابت"), "night" to listOf("شب", "شبانه", "night", "night-shift"),

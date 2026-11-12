@@ -37,7 +37,9 @@ data class ServiceBatchPlan(
         val old = changes.mapNotNull { it.before }; val next = created
         append("قبل: ${old.size} سرویس · ${old.sumOf { it.km }} کیلومتر · ${old.sumOf { it.hours }} ساعت\n")
         append("بعد: ${next.size} سرویس · ${next.sumOf { it.km }} کیلومتر · ${next.sumOf { it.hours }} ساعت\n")
-        append("درآمد رکوردهای بعد: ${next.sumOf { it.income }} تومان؛ با نرخ سال هر تاریخ\n")
+        append("درآمد قبل: ${old.sumOf { it.income }} → بعد: ${next.sumOf { it.income }} تومان؛ با نرخ سال هر تاریخ\n")
+        fun types(rows: List<ServiceEntity>) = rows.groupingBy { ServiceType.fromWire(it.type).label }.eachCount().entries.joinToString("، ") { "${it.key}: ${it.value}" }.ifBlank { "هیچ" }
+        append("نوع قبل: ${types(old)}\nنوع بعد: ${types(next)}\n")
         append("کیلومتر خودرو: $mileageBefore ← $mileageAfter\n\nروزهای دقیقِ تغییر:\n")
         changes.groupBy { (it.after ?: it.before)!!.date }.toSortedMap().forEach { (date, rows) ->
             val b = rows.mapNotNull { it.before }; val a = rows.mapNotNull { it.after }
@@ -125,11 +127,16 @@ class ServiceBatchOperations(private val db: AppDatabase, private val settings: 
             if (afterMatches) return@mutate plan.changes.size
             check(hashRows(db.services().rangeOnce(plan.start, plan.end)) == plan.sourceHash) { "سوابق بعد از پیش‌نمایش تغییر کرده‌اند؛ درخواست را دوباره بده. هیچ تغییری اعمال نشد." }
             check(plan.presetHash == null || plan.presetHash == presetHash()) { "الگوی ذخیره‌شده تغییر کرده است؛ پیش‌نمایش تازه لازم است." }
-            for ((year, snapshot) in plan.rates) check(ratesFor(year).toString() == snapshot) { "نرخ‌ها تغییر کرده‌اند؛ پیش‌نمایش تازه لازم است." }
+            check(settings.current.isRental || plan.created.none { ServiceType.fromWire(it.type) in ServiceType.RENTAL_TYPES }) {
+                "حالت اجاره‌ای تغییر کرده است؛ پیش‌نمایش تازه لازم است."
+            }
             val journal = ServiceBatchJournal.from(plan)
             if (journal != null) settings.stageQuickMileage(journal.encode()) { it.vehicleCurrentKm.toFloat().toDouble() == plan.mileageBefore }
             try {
                 db.withTransaction {
+                    // Rate writes share Room's transaction lock, including concurrent UI edits.
+                    for ((year, snapshot) in plan.rates) check(ratesFor(year).toString() == snapshot) { "نرخ‌ها تغییر کرده‌اند؛ پیش‌نمایش تازه لازم است." }
+                    check(plan.presetHash == null || plan.presetHash == presetHash()) { "الگوی ذخیره‌شده تغییر کرده است؛ پیش‌نمایش تازه لازم است." }
                     check(hashRows(db.services().rangeOnce(plan.start, plan.end)) == plan.sourceHash) { "سوابق هم‌زمان تغییر کرده‌اند؛ دوباره بررسی کنید." }
                     plan.changes.forEach { change ->
                         val id = (change.before ?: change.after)!!.id

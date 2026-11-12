@@ -41,9 +41,9 @@ data class WorkTotals(val count: Int, val km: BigDecimal, val hours: BigDecimal)
 enum class DayStatus(val label: String) { MATCH("مطابق"), MISSING_IN_APP("در خودرویار ثبت نشده"), MISSING_IN_REPORT("در گزارش شرکت نیست"), DIFFERENT("مغایرت روزانه") }
 data class WorkDayComparison(val date: String, val company: DailyWork?, val app: DailyWork?) {
     val status: DayStatus get() = when {
-        countDifference == 0 && kmDifference.abs() <= BigDecimal("0.000001") && hoursDifference.abs() <= BigDecimal("0.000001") -> DayStatus.MATCH
         app == null -> DayStatus.MISSING_IN_APP
         company == null -> DayStatus.MISSING_IN_REPORT
+        countDifference == 0 && kmDifference.abs() <= BigDecimal("0.000001") && hoursDifference.abs() <= BigDecimal("0.000001") -> DayStatus.MATCH
         else -> DayStatus.DIFFERENT
     }
     val countDifference get() = (company?.count ?: 0) - (app?.count ?: 0)
@@ -93,6 +93,20 @@ object WorkReportParser {
         }
         return groups.map { it.sortedBy { w -> w.left } }
     }
+    private fun dateCell(line: List<OcrWord>): Pair<String, List<OcrWord>>? {
+        val candidates = mutableListOf<Pair<String, List<OcrWord>>>()
+        for (ordered in listOf(line.sortedBy { it.x }, line.sortedByDescending { it.x })) {
+            for (start in ordered.indices) for (size in 1..minOf(7, ordered.size - start)) {
+                val words = ordered.subList(start, start + size)
+                if (words.zipWithNext().any { (a, b) -> maxOf(a.left, b.left) - minOf(a.right, b.right) > .045f }) continue
+                val text = words.joinToString("") { PersianInput.latin(it.text).trim() }
+                PersianInput.date(text)?.let { candidates += it to words.toList() }
+            }
+        }
+        // Two distinct readable dates in one line are not one daily record.
+        return candidates.takeIf { it.map { c -> c.first }.distinct().size == 1 }?.minByOrNull { it.second.size }
+    }
+
     fun extract(pages: List<OcrPage>, columns: ReportColumns = ReportColumns()): List<ReportRow> {
         require(!columns.manual || columns.valid()) { "برای هر سه مقدار ستون‌های جداگانه انتخاب کنید." }
         val rows = mutableListOf<ReportRow>()
@@ -108,11 +122,12 @@ object WorkReportParser {
                     headings = found
                     return@forEachIndexed
                 }
-                val joined = line.joinToString("") { PersianInput.latin(it.text) }
-                val dateHits = PersianInput.datePattern.findAll(joined).toList()
-                val individualDate = line.firstOrNull { PersianInput.date(it.text) != null }
-                val date = individualDate?.let { PersianInput.date(it.text) } ?: dateHits.singleOrNull()?.let { PersianInput.date(it.value) }
-                val numericWords = line.filter { numeric.matches(PersianInput.latin(it.text).trim()) }
+                val dateCell = dateCell(line)
+                val date = dateCell?.first
+                val dateWords = dateCell?.second.orEmpty()
+                val numericWords = line.filter { it !in dateWords && numeric.matches(PersianInput.latin(it.text).trim()) } +
+                    if (dateCell != null) listOf(OcrWord(dateCell.first, dateWords.minOf { it.left }, dateWords.minOf { it.top },
+                        dateWords.maxOf { it.right }, dateWords.maxOf { it.bottom }, dateWords.minOf { it.confidence })) else emptyList()
                 val skip = excluded(plain)
                 // Pure titles/labels aren't daily data. Numeric, undated lines are retained,
                 // not dropped: an unreadable date must be corrected or explicitly excluded.
@@ -126,7 +141,7 @@ object WorkReportParser {
                         }
                     }
                 } else if (headings.size == 3) {
-                    val assignments = numericWords.filter { it !== individualDate && PersianInput.date(it.text) == null }
+                    val assignments = numericWords.filter { PersianInput.date(it.text) == null }
                         .mapNotNull { w ->
                             val distances = headings.map { (f, x) -> f to kotlin.math.abs(w.x - x) }.sortedBy { it.second }
                             val first = distances.first()
@@ -149,18 +164,28 @@ object WorkReportParser {
         return duplicates(rows)
     }
 
+    private fun duplicateEvidence(raw: String): String {
+        val joined = clean(raw).replace('٫', '.').replace('٬', ',').replace(Regex("\\s*([/.:,-])\\s*"), "$1")
+        return numeric.replace(joined) { hit ->
+            PersianInput.date(hit.value) ?: (if (hit.value.contains(':')) PersianInput.hours(hit.value) else PersianInput.decimal(hit.value))
+                ?.let(PersianInput::display) ?: hit.value
+        }.replace(Regex("\\s+"), "")
+    }
     fun duplicates(rows: List<ReportRow>): List<ReportRow> {
-        val seen = mutableMapOf<String, ReportRow>()
+        val seen = mutableMapOf<String, MutableMap<String, MutableList<ReportRow>>>()
         return rows.map { row ->
             val v = row.validated()
             if (v == null || !row.included) row else {
-                // Whole-row evidence, not just equal daily totals. Identical trips on the
-                // SAME page are not automatically removed. Cross-page suspects stay visible.
-                val key = "${v.date}|${v.count}|${PersianInput.display(v.km)}|${PersianInput.display(v.hours)}|${clean(row.raw)}"
-                val previous = seen[key]
-                if (previous != null && previous.pageId != row.pageId) row.copy(included = false, duplicateOf = previous.id,
+                val key = "${v.date}|${v.count}|${PersianInput.display(v.km)}|${PersianInput.display(v.hours)}|${duplicateEvidence(row.raw)}"
+                val pages = seen.getOrPut(key) { linkedMapOf() }
+                val here = pages.getOrPut(row.pageId) { mutableListOf() }
+                val ordinal = here.size
+                val previous = pages.entries.firstNotNullOfOrNull { (page, matches) -> if (page != row.pageId) matches.getOrNull(ordinal) else null }
+                here += row
+                // Match occurrences, not every equal trip on a later page to one source.
+                if (previous != null) row.copy(included = false, duplicateOf = previous.id,
                     note = "مشکوک به تکرار ردیف صفحهٔ ${previous.page}؛ پیش‌فرض از جمع کنار گذاشته شد. قابل بازگرداندن است.")
-                else row.also { seen[key] = row }
+                else row
             }
         }
     }

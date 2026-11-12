@@ -316,7 +316,7 @@ fun ReportsScreen(repository: AppRepository, onOpenService: (ServiceEntity) -> U
         /* ------------------------------------------------------------- filters */
         item {
             FormSection("بازه گزارش", Icons.Outlined.DateRange) {
-                BoxWithConstraints {
+                BoxWithConstraints(Modifier.testTag("report-date-fields")) {
                     if (maxWidth < 320.dp || LocalDensity.current.fontScale > 1.2f) {
                         Column(verticalArrangement = Arrangement.spacedBy(AppDimens.gap)) {
                             JalaliDateField("از تاریخ", from, { from = it })

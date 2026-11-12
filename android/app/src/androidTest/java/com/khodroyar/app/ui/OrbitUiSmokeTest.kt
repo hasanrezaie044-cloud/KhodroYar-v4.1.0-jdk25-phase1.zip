@@ -321,7 +321,10 @@ class OrbitUiSmokeTest {
         val list = compose.onNodeWithTag("report-list")
         // Date fields deliberately expose one accessible button description,
         // not their decorative inner Text/OutlinedTextField semantics.
-        list.performScrollToNode(hasContentDescription("از تاریخ", substring = true))
+        // Bring the entire pair into view, not merely the first field while the
+        // next field is below the viewport after the new work-report entry.
+        list.performScrollToNode(hasTestTag("report-date-fields"))
+        compose.onNodeWithTag("report-date-fields").performScrollTo().assertIsDisplayed()
         val fromField = compose.onNodeWithContentDescription("از تاریخ", substring = true).assertIsDisplayed()
         val toField = compose.onNodeWithContentDescription("تا تاریخ", substring = true).assertIsDisplayed()
         assertTrue(fromField.fetchSemanticsNode().boundsInRoot.bottom <= toField.fetchSemanticsNode().boundsInRoot.top)
