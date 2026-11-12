@@ -31,6 +31,16 @@ test "$TEST_CERT" = "03bfbc3575667403c3259fae345f3eb1ad3045373cb62123be376ef4898
 adb install --no-incremental -r "$APK"
 adb install --no-incremental -r -t "$TEST_APK"
 echo "::notice title=Signed test installation::Original non-debuggable audited APK and same-signed external instrumentation installed on disposable emulator."
+# Distinguish a genuine launcher startup from instrumentation bootstrap. Never
+# make the target debuggable or change its signature to collect this evidence.
+adb logcat -c
+set +e
+timeout --signal=TERM --kill-after=10s 60s adb shell am start -W -n com.khodroyar.app/.MainActivity \
+  2>&1 | tee "$EVIDENCE/normal-launch.txt"
+LAUNCH_RESULT=${PIPESTATUS[0]}
+set -e
+echo "::notice title=Original APK normal launcher exit::Exit $LAUNCH_RESULT; this alone is not a passing OCR result."
+adb shell am force-stop com.khodroyar.app
 set +e
 timeout --signal=TERM --kill-after=30s 12m adb shell am instrument -w -r \
   -e class com.khodroyar.app.ui.ReleaseApkSmokeTest \
@@ -38,6 +48,7 @@ timeout --signal=TERM --kill-after=30s 12m adb shell am instrument -w -r \
   com.khodroyar.app.test/androidx.test.runner.AndroidJUnitRunner 2>&1 | tee "$EVIDENCE/instrumentation.log"
 RESULT=${PIPESTATUS[0]}
 set -e
+if [ "$LAUNCH_RESULT" -ne 0 ]; then RESULT=1; fi
 echo "::notice title=Signed instrumentation command exit::Exit $RESULT; the raw protocol, actual assertions, runtime trace and original hash must also pass."
 if ! python3 "$ROOT/tools/summarize-instrumentation.py" "$EVIDENCE/instrumentation.log" \
   "$ROOT/android/app/build/outputs/androidTest-results/connected/manual-release/TEST-com.khodroyar.app.ui.ReleaseApkSmokeTest.xml"; then
@@ -51,7 +62,30 @@ if [ "$BEFORE" != "$AFTER" ]; then
   echo "::error::Tested release APK differs from the already audited candidate"
   RESULT=1
 fi
-adb logcat -d -t 500 > "$EVIDENCE/logcat.txt"
+adb logcat -d -t 1500 > "$EVIDENCE/logcat.txt"
+adb logcat -d -b crash > "$EVIDENCE/crash.txt"
+adb shell dumpsys dropbox --print data_app_anr > "$EVIDENCE/anr.txt"
+python3 - "$EVIDENCE" <<'PY'
+import re, sys
+from pathlib import Path
+root = Path(sys.argv[1])
+text = (root / 'anr.txt').read_text(errors='replace')
+# Only the generated emulator app's own startup dump, not unrelated OS entries.
+own = [part for part in re.split(r'^Cmd line: ', text, flags=re.M)[1:]
+       if part.splitlines()[0].strip() == 'com.khodroyar.app']
+for part in own[-2:]:
+    match = re.search(r'^"main"[^\n]*', part, re.M)
+    if not match:
+        continue
+    section = part[match.start():match.start()+6500].split('\n"', 1)[0]
+    for index in range(0, len(section), 3200):
+        value = section[index:index+3200].replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
+        print(f'::notice title=Actual startup main-thread ANR {index//3200+1}::' + value)
+crash = (root / 'crash.txt').read_text(errors='replace')
+if crash.strip():
+    value = crash[-3500:].replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
+    print('::notice title=Actual signed-process crash buffer::' + value)
+PY
 # Preserve shared synthetic evidence; never collect private user app data.
 adb pull /sdcard/Download/KhodroYar-Release-Smoke/. "$EVIDENCE/" || RESULT=1
 python3 - "$EVIDENCE" <<'PY'
