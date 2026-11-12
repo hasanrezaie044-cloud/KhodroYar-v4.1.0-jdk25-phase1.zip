@@ -23,7 +23,7 @@ data class ToolOutcome(val ok: Boolean, val text: String)
  * Runs validated tools through the EXISTING [AppRepository]. The model never touches the
  * database: it only names a tool; this class performs it and reports the verified result.
  */
-class AgentToolExecutor(private val repo: AppRepository) {
+class AgentToolExecutor(private val repo: AppRepository) : AgentToolRunner {
 
     // ------------------------------------------------------------ formatting
 
@@ -89,7 +89,7 @@ class AgentToolExecutor(private val repo: AppRepository) {
     // ---------------------------------------------------------- confirmation
 
     /** Persian summary the USER confirms. Built from validated values, not from model prose. */
-    fun describe(call: ValidatedCall): String {
+    override fun describe(call: ValidatedCall): String {
         val a = call
         fun amt(key: String) = a.dbl(key)?.let { "${n(it)} تومان" }
         return when (a.spec.name) {
@@ -129,7 +129,7 @@ class AgentToolExecutor(private val repo: AppRepository) {
 
     // ------------------------------------------------------------- execution
 
-    suspend fun execute(call: ValidatedCall): ToolOutcome = try {
+    override suspend fun execute(call: ValidatedCall): ToolOutcome = try {
         when (call.spec.name) {
             "get_today_expenses" -> todayExpenses()
             "get_monthly_report" -> periodReport(call, withBreakdown = true)
@@ -156,8 +156,10 @@ class AgentToolExecutor(private val repo: AppRepository) {
             "delete_fuel" -> deleteFuel(call)
             else -> ToolOutcome(false, "ابزار مجاز نیست.")
         }
+    } catch (e: kotlinx.coroutines.CancellationException) {
+        throw e
     } catch (e: Exception) {
-        ToolOutcome(false, "عملیات انجام نشد: ${e.message ?: "خطای داخلی"}")
+        ToolOutcome(false, "عملیات انجام نشد. سوابق را بررسی کنید؛ موفقیت تأیید نشده است.")
     }
 
     // ----------------------------------------------------------------- reads
@@ -486,7 +488,7 @@ class AgentToolExecutor(private val repo: AppRepository) {
     }
 
     /** Human-readable description of the record a delete would remove (shown before confirming). */
-    suspend fun describeTarget(call: ValidatedCall): String? {
+    override suspend fun describeTarget(call: ValidatedCall): String? {
         val idArg = call.str("id") ?: return null
         return when (call.spec.name) {
             "delete_expense" -> resolve(idArg, repo.personalExpenses("").first()) { it.id }?.let { "هزینه ${n(it.amount)} تومان · ${clip(it.title)} · ${it.date}" }

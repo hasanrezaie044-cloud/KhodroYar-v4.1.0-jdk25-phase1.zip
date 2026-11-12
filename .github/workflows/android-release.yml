@@ -7,7 +7,7 @@ on:
   workflow_call:
     inputs:
       ref:
-        description: 'Git ref to build'
+        description: Git ref to build
         required: false
         type: string
     secrets:
@@ -38,138 +38,147 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      actions: read
     outputs:
       version-name: ${{ steps.version.outputs.version_name }}
-
     steps:
-      - name: Checkout
+      - name: Checkout current ref
         uses: actions/checkout@v4
         with:
           ref: ${{ inputs.ref || github.ref }}
-
+          fetch-depth: 0
       - name: Set up JDK 25
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: ${{ env.JAVA_VERSION }}
-
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
         with:
           packages: 'platforms;android-${{ env.ANDROID_COMPILE_SDK }} build-tools;${{ env.ANDROID_BUILD_TOOLS }} platform-tools'
-
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '9.4.1'
           cache-read-only: ${{ github.ref != 'refs/heads/main' }}
-
-      - name: Ensure Gradle wrapper jar exists
-        working-directory: android
-        run: |
-          # gradle-wrapper.jar is a binary that was missing from the 5.1.8 source archive.
-          if [ ! -f gradle/wrapper/gradle-wrapper.jar ]; then
-            gradle wrapper --gradle-version 9.4.1 --distribution-type bin
-          fi
-          test -f gradle/wrapper/gradle-wrapper.jar
-
-      - name: Validate JDK 25
-        run: |
-          java -version 2>&1 | grep -Eq "openjdk.*25|java.*25" || { echo "JDK 25 required"; exit 1; }
-
-      - name: Validate signing secrets
+      - name: Validate original signing secrets
         env:
           KS: ${{ secrets.KEYSTORE_BASE64 }}
           KP: ${{ secrets.KEYSTORE_PASSWORD }}
           KA: ${{ secrets.KEY_ALIAS }}
           KPW: ${{ secrets.KEY_PASSWORD }}
         run: |
-          [[ -n "$KS" ]] || { echo "KEYSTORE_BASE64 missing"; exit 1; }
-          [[ -n "$KP" ]] || { echo "KEYSTORE_PASSWORD missing"; exit 1; }
-          [[ -n "$KA" ]] || { echo "KEY_ALIAS missing"; exit 1; }
-          [[ -n "$KPW" ]] || { echo "KEY_PASSWORD missing"; exit 1; }
-
-      - name: Decode keystore
+          [[ -n "$KS" && -n "$KP" && -n "$KA" && -n "$KPW" ]] || { echo 'Original release signing configuration missing; no replacement key will be generated.'; exit 1; }
+      - name: Decode original keystore outside checkout
         id: keystore
         env:
           KS: ${{ secrets.KEYSTORE_BASE64 }}
         run: |
-          KEYSTORE_DIR="${RUNNER_TEMP}/khodroyar-signing"
-          mkdir -p "$KEYSTORE_DIR"
-          printf '%s' "$KS" | base64 --decode > "$KEYSTORE_DIR/release.jks"
-          test -s "$KEYSTORE_DIR/release.jks"
-          echo "path=$KEYSTORE_DIR/release.jks" >> "$GITHUB_OUTPUT"
-
-
-
-      - name: Static checks and unit tests
-        working-directory: android
+          DIR="${RUNNER_TEMP}/khodroyar-signing"
+          mkdir -p "$DIR"
+          printf '%s' "$KS" | base64 --decode > "$DIR/release.jks"
+          test -s "$DIR/release.jks"
+          echo "path=$DIR/release.jks" >> "$GITHUB_OUTPUT"
+      - name: Read actual resulting version
+        id: version
         run: |
-          chmod +x ./gradlew
-          STATIC_ONLY=1 bash ../tools/check-permissions.sh
-          ./gradlew testDebugUnitTest --stacktrace
-
-      - name: Build signed release APK
-        working-directory: android
+          python3 tools/version.py
+          echo "version_name=$(sed -n 's/^versionName=//p' android/version.properties)" >> "$GITHUB_OUTPUT"
+      - name: Static checks, permission audit, credential scan
+        run: |
+          git diff --check
+          STATIC_ONLY=1 bash tools/check-permissions.sh
+          python3 -m unittest discover -s tools -p 'test_*.py' -v
+          python3 tools/check-secrets.py --history
+          cd backend && npm test
+      - name: Compile Kotlin, KSP, Compose and run JVM unit tests
+        run: CI_CHECK_NAME=tests bash tools/ci-gradle.sh :app:testDebugUnitTest :app:compileDebugKotlin :ocr:compileDebugKotlin
+      - name: Preserve unit test evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: khodroyar-unit-tests-${{ steps.version.outputs.version_name }}
+          path: |
+            android/app/build/reports/tests
+            android/app/build/test-results
+            .verification/*.log
+          if-no-files-found: ignore
+      - name: Build signed main and optional OCR APKs (R8)
+        env:
+          ANDROID_KEYSTORE_PATH: ${{ steps.keystore.outputs.path }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: CI_CHECK_NAME=release bash tools/ci-gradle.sh :app:assembleRelease :ocr:assembleRelease
+      - name: Read actual pre-ALBERT baseline APK
+        uses: actions/download-artifact@v4
+        with:
+          name: khodroyar-release-signed-5.4.0
+          path: .verification/baselines/pre-albert
+          github-token: ${{ github.token }}
+          run-id: 43016583464
+      - name: Read actual latest ALBERT baseline APK
+        uses: actions/download-artifact@v4
+        with:
+          name: khodroyar-release-signed-5.5.1
+          path: .verification/baselines/albert
+          github-token: ${{ github.token }}
+          run-id: 43084276600
+      - name: Build unmodified provided source as size reference
+        id: original
+        continue-on-error: true
         env:
           ANDROID_KEYSTORE_PATH: ${{ steps.keystore.outputs.path }}
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
           ANDROID_KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           ANDROID_KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
-          chmod +x ./gradlew
-          ./gradlew clean assembleRelease --stacktrace
-          test -f "app/build/outputs/apk/release/app-release.apk"
-          test -s "app/build/outputs/apk/release/app-release.apk"
-
-      - name: Extract version
-        id: version
+          ORIGINAL="$RUNNER_TEMP/khodroyar-original"
+          mkdir -p "$ORIGINAL"
+          git archive 9b66596ce07f3b42eb8451d853c61ca735bdd27a android | tar -x -C "$ORIGINAL"
+          cd "$ORIGINAL/android"
+          gradle :app:assembleRelease --stacktrace > "$GITHUB_WORKSPACE/.verification/original-build.log" 2>&1
+          mkdir -p "$GITHUB_WORKSPACE/.verification/baselines/provided-source"
+          cp app/build/outputs/apk/release/app-release.apk "$GITHUB_WORKSPACE/.verification/baselines/provided-source/"
+      - name: Verify package, version, signatures, size and embedded credentials
         run: |
-          VERSION=$(grep "versionName" android/app/build.gradle | head -1 | sed -E "s/.*versionName '([^']+)'.*/\1/")
-          echo "version_name=$VERSION" >> "$GITHUB_OUTPUT"
-
-      - name: Verify APK signature
-        run: |
-          APK="android/app/build/outputs/apk/release/app-release.apk"
-          APKSIGNER="$ANDROID_HOME/build-tools/${ANDROID_BUILD_TOOLS}/apksigner"
-          test -x "$APKSIGNER"
-          "$APKSIGNER" verify --verbose --print-certs "$APK"
-          if "$APKSIGNER" verify "$APK" 2>&1 | grep -qi "DOES NOT VERIFY"; then
-            echo "APK signature verification failed"
-            exit 1
-          fi
-          if "$APKSIGNER" verify --print-certs "$APK" | grep -qi "CN=Android Debug"; then
-            echo "APK is signed with debug certificate"
-            exit 1
-          fi
-
-      - name: Audit permissions (merged APK)
-        run: bash tools/check-permissions.sh android/app/build/outputs/apk/release
-
-      - name: Verify version
-        run: |
-          AAPT="$ANDROID_HOME/build-tools/${ANDROID_BUILD_TOOLS}/aapt2"
-          "$AAPT" dump badging android/app/build/outputs/apk/release/app-release.apk | grep -E "versionCode='54' versionName='5\.1\.9'" || exit 1
-
-      - name: Verify package name
-        run: |
-          APK="android/app/build/outputs/apk/release/app-release.apk"
-          AAPT="$ANDROID_HOME/build-tools/${ANDROID_BUILD_TOOLS}/aapt2"
-          "$AAPT" dump badging "$APK" | grep -E "^package: name='com\.khodroyar\.app'" || exit 1
-
-      - name: Upload signed APK
+          bash tools/check-permissions.sh
+          BASELINES=()
+          while IFS= read -r -d '' file; do BASELINES+=(--baseline "$file"); done < <(find .verification/baselines -name '*.apk' -print0)
+          python3 tools/verify-release.py --apk android/app/build/outputs/apk/release/app-release.apk --ocr android/ocr/build/outputs/apk/release/ocr-release.apk "${BASELINES[@]}"
+          python3 tools/check-secrets.py --apk android/app/build/outputs/apk/release/app-release.apk --apk android/ocr/build/outputs/apk/release/ocr-release.apk
+      - name: Android lint (record existing and new diagnostics)
+        id: lint
+        continue-on-error: true
+        run: CI_CHECK_NAME=lint bash tools/ci-gradle.sh :app:lintDebug :ocr:lintDebug
+      - name: Publish signed APKs and verification evidence
         uses: actions/upload-artifact@v4
         with:
           name: khodroyar-release-signed-${{ steps.version.outputs.version_name }}
-          path: android/app/build/outputs/apk/release/app-release.apk
+          path: |
+            android/app/build/outputs/apk/release/app-release.apk
+            android/ocr/build/outputs/apk/release/ocr-release.apk
+            .verification/release-verification.json
+            .verification/original-build.log
+            android/app/build/reports/lint-results-debug.*
+            android/ocr/build/reports/lint-results-debug.*
           if-no-files-found: error
           retention-days: 30
-
-      - name: Upload R8 mapping
+      - name: Publish R8 mapping
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: khodroyar-r8-mapping
-          path: android/app/build/outputs/mapping/release/mapping.txt
+          name: khodroyar-r8-mapping-${{ steps.version.outputs.version_name }}
+          path: |
+            android/app/build/outputs/mapping/release/mapping.txt
+            android/ocr/build/outputs/mapping/release/mapping.txt
           if-no-files-found: ignore
-          retention-days: 30
+      - name: Release summary
+        if: always()
+        run: |
+          echo '### Actual verification results' >> "$GITHUB_STEP_SUMMARY"
+          echo 'Provided-source build: ${{ steps.original.outcome }}; lint: ${{ steps.lint.outcome }}' >> "$GITHUB_STEP_SUMMARY"
+          if [ -f .verification/release-verification.json ]; then cat .verification/release-verification.json >> "$GITHUB_STEP_SUMMARY"; fi
+      - name: Remove temporary signing file
+        if: always()
+        run: rm -f '${{ steps.keystore.outputs.path }}'

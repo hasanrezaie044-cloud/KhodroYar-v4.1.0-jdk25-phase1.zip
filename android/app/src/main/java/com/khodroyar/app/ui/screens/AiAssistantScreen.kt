@@ -70,6 +70,7 @@ import com.khodroyar.app.ai.AiAssistantViewModel
 import com.khodroyar.app.ai.AiErrorKind
 import com.khodroyar.app.ai.AiLimits
 import com.khodroyar.app.ai.AiSettings
+import com.khodroyar.app.ai.AiMode
 import com.khodroyar.app.ai.ChatEntry
 import com.khodroyar.app.ai.ChatRole
 import com.khodroyar.app.ai.ConnectionState
@@ -148,7 +149,7 @@ fun AiAssistantScreen(vm: AiAssistantViewModel = viewModel()) {
             enabled = settings.enabled && vm.pending == null,
             busy = vm.busy,
             placeholder = if (vm.pending != null) "ابتدا عملیات بالا را تأیید یا لغو کنید" else "پیام خود را بنویسید…",
-            onSend = { vm.send(input); if (settings.consented) input = "" },
+            onSend = { vm.send(input); if (settings.mode == AiMode.LOCAL || settings.consented) input = "" },
         )
     }
 
@@ -230,6 +231,8 @@ private fun AssistantHeader(
 }
 
 private fun connectionLook(s: ConnectionState): Pair<String, Color> = when (s) {
+    ConnectionState.LOCAL -> "آماده · آفلاین" to Color(0xFF2E7D32)
+    ConnectionState.NEEDS_CONSENT -> "آنلاین · نیاز به رضایت ارسال" to Color(0xFFF9A825)
     ConnectionState.ONLINE -> "متصل" to Color(0xFF2E7D32)
     ConnectionState.CHECKING, ConnectionState.UNKNOWN -> "در حال بررسی اتصال…" to Color(0xFFF9A825)
     ConnectionState.OFFLINE -> "قطع (اینترنت یا سرور)" to Color(0xFFC62828)
@@ -372,7 +375,7 @@ private fun DisabledCard(onEnable: () -> Unit) {
     Column(Modifier.fillMaxSize().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
         Text("دستیار هوشمند غیرفعال است", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
         Spacer(Modifier.height(6.dp))
-        Text("تا فعال نکنید هیچ داده‌ای به سرور ارسال نمی‌شود.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text("حالت داخلی بدون ارسال داده کار می‌کند. حالت آنلاین فقط پس از رضایت شما فعال می‌شود.", color = MaterialTheme.colorScheme.onSurfaceVariant)
         Spacer(Modifier.height(14.dp))
         Button(onClick = onEnable) { Text("فعال کردن دستیار") }
     }
@@ -457,6 +460,7 @@ private fun SettingsDialog(
     onDismiss: () -> Unit,
 ) {
     var enabled by remember { mutableStateOf(current.enabled) }
+    var localMode by remember { mutableStateOf(current.mode == AiMode.LOCAL) }
     var url by remember { mutableStateOf(current.backendUrl) }
     var model by remember { mutableStateOf(current.model) }
     var token by remember { mutableStateOf(current.clientToken) }
@@ -471,6 +475,11 @@ private fun SettingsDialog(
                     Text("فعال بودن دستیار", Modifier.weight(1f))
                     Switch(checked = enabled, onCheckedChange = { enabled = it })
                 }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("حالت داخلی آفلاین", Modifier.weight(1f))
+                    Switch(checked = localMode, onCheckedChange = { localMode = it })
+                }
+                Text("دستیار داخلی دستورمحور است، نه مدل زبانی عمومی. حالت آنلاین قبلی نیز اختیاری حفظ شده است.", style = MaterialTheme.typography.bodySmall)
                 OutlinedTextField(
                     value = url, onValueChange = { url = it }, singleLine = true, shape = FieldShape, colors = fieldColors(),
                     label = { Text("آدرس سرور دستیار (https)") }, textStyle = ltr,
@@ -495,14 +504,14 @@ private fun SettingsDialog(
                     style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 OutlinedButton(onClick = {
-                    onSave(current.copy(enabled = enabled, backendUrl = url, model = model, clientToken = token))
+                    onSave(current.copy(enabled = enabled, mode = if (localMode) AiMode.LOCAL else AiMode.ONLINE, backendUrl = url, model = model, clientToken = token))
                     onTest()
                 }) { Text("ذخیره و آزمایش اتصال") }
                 testMessage?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
             }
         },
         confirmButton = {
-            Button(onClick = { onSave(current.copy(enabled = enabled, backendUrl = url, model = model, clientToken = token)) }) { Text("ذخیره") }
+            Button(onClick = { onSave(current.copy(enabled = enabled, mode = if (localMode) AiMode.LOCAL else AiMode.ONLINE, backendUrl = url, model = model, clientToken = token)) }) { Text("ذخیره") }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("بستن") } },
     )

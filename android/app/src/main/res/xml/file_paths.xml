@@ -3,4 +3,5 @@
     <cache-path name="exports" path="exports/" />
     <files-path name="backups" path="VehicleManager/" />
     <files-path name="attachments" path="attachments/" />
+    <files-path name="statement_pages" path="reconciliation/" />
 </paths>

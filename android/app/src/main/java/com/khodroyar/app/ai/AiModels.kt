@@ -48,12 +48,15 @@ data class ChatEntry(
     val createdAt: Long,
 )
 
+enum class AiMode { LOCAL, ONLINE }
+
 data class Conversation(
     val id: String,
     val title: String,
     val createdAt: Long,
     val updatedAt: Long,
     val messages: List<ChatEntry>,
+    val mode: AiMode = AiMode.ONLINE,
 )
 
 object AiLimits {

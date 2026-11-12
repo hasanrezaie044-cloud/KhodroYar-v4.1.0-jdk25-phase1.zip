@@ -286,6 +286,7 @@ fun CarManagerRoot(
                             ToolDestination.INSURANCE -> InsuranceScreen(repository)
                             ToolDestination.TRAFFIC -> TrafficAssistantScreen(repository)
                             ToolDestination.AI_ASSISTANT -> AiAssistantScreen()
+                            ToolDestination.RECONCILIATION -> ReconciliationScreen()
 
                             /* ----------------------------------------------- tabs */
                             AppDestination.HOME -> DashboardScreen(
@@ -354,6 +355,7 @@ fun CarManagerRoot(
                 "tool_finance" -> listOf("مالی و وام", "وام، اقساط، خرید و درآمد شخصی را ثبت و وضعیت اقساط را مدیریت کنید.")
                 "tool_maintenance" -> listOf("تعمیرات و تعویض روغن", "کیلومتر فعلی و کیلومتر بعدی روغن را ثبت کنید؛ برنامه با سرویس‌های ثبت‌شده موعد هشدار را تشخیص می‌دهد.")
                 "tool_rates" -> listOf("نرخ‌ها", "نرخ‌های هر سال را وارد کنید. تغییر نرخ فقط روی محاسبات همان سال اثر می‌گذارد.")
+                "tool_reconciliation" -> listOf("مغایرت‌گیری کارکرد", "تصویر یا PDF را وارد کنید، ردیف‌ها را با تصویر تأیید کنید و تعداد سرویس، کیلومتر و ساعت هر روز شمسی را مقایسه کنید. هیچ سرویس موجودی تغییر نمی‌کند.")
                 "tool_ai_assistant" -> listOf("دستیار هوشمند", "با دستیار گفتگو کنید، گزارش بگیرید یا ثبت هزینه و سرویس را بخواهید. هر ثبت، ویرایش یا حذف فقط پس از تأیید شما انجام می‌شود.")
                 else -> listOf("آموزش", "این بخش برای مدیریت اطلاعات خودرو است.")
             }
@@ -367,6 +369,7 @@ fun CarManagerRoot(
                 "tool_finance" -> listOf("Finance & Loans", "Record loans, installments, personal purchases and income, and manage installment status.")
                 "tool_maintenance" -> listOf("Maintenance & Oil", "Enter current and next oil-change mileage; the app uses recorded services to determine when the alert is due.")
                 "tool_rates" -> listOf("Rates", "Enter rates for each year. Changing a year's rates affects calculations for that year only.")
+                "tool_reconciliation" -> listOf("Work Reconciliation", "Import a statement, verify extracted rows and compare service counts, kilometres and hours by Jalali day. Existing records remain read-only.")
                 "tool_ai_assistant" -> listOf("Smart Assistant", "Chat, get reports, or ask to record expenses and services. Every save, edit or delete happens only after you confirm.")
                 else -> listOf("Tutorial", "This section helps manage your vehicle information.")
             }

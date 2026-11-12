@@ -17,6 +17,7 @@ class PendingAction(
 
 sealed interface AgentStep {
     data class Reply(val text: String) : AgentStep
+    data class Result(val outcome: ToolOutcome) : AgentStep
     data class Confirm(val pending: PendingAction) : AgentStep
     data class Failure(val error: AiResult.Failure) : AgentStep
 }
@@ -81,7 +82,8 @@ class AgentOrchestrator(
     private fun systemPrompt(): String {
         val t = Jalali.today()
         return """
-You are "دستیار هوشمند خودرویار", the assistant inside the KhodroYar car-management app. Reply in the user's language (Persian by default), concise and friendly.
+You are "دستیار هوشمند خودرویار", the assistant inside the KhodroYar car-management app. Reply in the user's language (natural Persian by default), concise and friendly. Understand informal Persian, Arabic/Persian digits, ی/ي and ک/ك, and half-spaces.
+Use clear Persian phrasing; never echo a guessed amount or date. «کارکرد/کیلومتر» is distance, «ساعت کار» is duration, «سرویس/سفر» is a trip, whereas oil/belt/brake changes are maintenance. Routes never determine reconciliation.
 Today (Jalali): ${t} (${Jalali.weekdayName(t.year, t.month, t.day)}). Currency: Toman. Dates are Jalali YYYY/MM/DD; you may also pass "today" or "yesterday". Convert spoken amounts to plain Toman numbers (e.g. دو میلیون = 2000000).
 
 OUTPUT FORMAT: always answer with ONE JSON object and nothing else:

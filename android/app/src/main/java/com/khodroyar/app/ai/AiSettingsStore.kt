@@ -13,6 +13,7 @@ import java.util.UUID
  */
 data class AiSettings(
     val enabled: Boolean = true,
+    val mode: AiMode = AiMode.LOCAL,
     /** The user has read and accepted what is sent to the server. Nothing is sent before this. */
     val consented: Boolean = false,
     val backendUrl: String = "",
@@ -26,6 +27,7 @@ class AiSettingsStore(context: Context) {
 
     fun load(): AiSettings = AiSettings(
         enabled = prefs.getBoolean("enabled", true),
+        mode = runCatching { AiMode.valueOf(prefs.getString("mode", "LOCAL").orEmpty()) }.getOrDefault(AiMode.LOCAL),
         consented = prefs.getBoolean("consented", false),
         backendUrl = prefs.getString("backend_url", null) ?: BuildConfig.AI_BACKEND_URL,
         model = prefs.getString("model", "") ?: "",
@@ -35,6 +37,7 @@ class AiSettingsStore(context: Context) {
     fun save(s: AiSettings) {
         prefs.edit()
             .putBoolean("enabled", s.enabled)
+            .putString("mode", s.mode.name)
             .putBoolean("consented", s.consented)
             .putString("backend_url", s.backendUrl.trim())
             .putString("model", s.model.trim())

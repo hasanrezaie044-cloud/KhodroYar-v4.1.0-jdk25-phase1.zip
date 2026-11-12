@@ -12,14 +12,19 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import java.util.UUID
 
-enum class ConnectionState { UNKNOWN, CHECKING, ONLINE, OFFLINE, NOT_CONFIGURED, DISABLED, ERROR }
+enum class ConnectionState { LOCAL, NEEDS_CONSENT, UNKNOWN, CHECKING, ONLINE, OFFLINE, NOT_CONFIGURED, DISABLED, ERROR }
 
 class AiAssistantViewModel(app: Application) : AndroidViewModel(app) {
 
     private val settingsStore = AiSettingsStore(app)
     private val conversations = ConversationRepository(app)
     private val provider = GapGPTProvider(app, settingsStore)
-    private val orchestrator = AgentOrchestrator(provider, AgentToolExecutor(AppRepository(app)), settingsStore)
+    private val tools = AgentToolExecutor(AppRepository(app))
+    private val orchestrator = AgentOrchestrator(provider, tools, settingsStore)
+    private val local = LocalAssistant(tools)
+    private var executingAction = false
+    private var generation = 0
+    private var statusJob: Job? = null
 
     var settings by mutableStateOf(settingsStore.load())
         private set
@@ -47,11 +52,11 @@ class AiAssistantViewModel(app: Application) : AndroidViewModel(app) {
     private var queuedText: String? = null
     private var job: Job? = null
 
-    val activeModel: String get() = settings.model.ifBlank { serverModel }
+    val activeModel: String get() = if (settings.mode == AiMode.LOCAL) "دستیار داخلی · بدون مدل سنگین" else settings.model.ifBlank { serverModel }
 
     init {
         viewModelScope.launch {
-            val last = conversations.load().maxByOrNull { it.updatedAt }
+            val last = conversations.load().filter { it.mode == settings.mode }.maxByOrNull { it.updatedAt }
             if (last != null) openConversation(last)
             refreshStatus()
         }
@@ -60,8 +65,12 @@ class AiAssistantViewModel(app: Application) : AndroidViewModel(app) {
     // --------------------------------------------------------------- status
 
     fun refreshStatus() {
+        statusJob?.cancel()
+        if (!settings.enabled) { connection = ConnectionState.DISABLED; return }
+        if (settings.mode == AiMode.LOCAL) { connection = ConnectionState.LOCAL; return }
+        if (!settings.consented) { connection = ConnectionState.NEEDS_CONSENT; return }
         connection = ConnectionState.CHECKING
-        viewModelScope.launch {
+        statusJob = viewModelScope.launch {
             val s = provider.status()
             if (s.defaultModel.isNotBlank()) serverModel = s.defaultModel
             connection = when {
@@ -76,6 +85,14 @@ class AiAssistantViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Real connection test: server reachable, key configured, and the chosen model really exists. */
     fun testConnection() {
+        if (settings.mode == AiMode.LOCAL) {
+            testMessage = "حالت داخلی آماده است؛ بدون اینترنت و API. مدل زبانی عمومی نیست؛ «راهنما» را بفرستید."
+            return
+        }
+        if (!settings.enabled || !settings.consented) {
+            testMessage = "پیش از اتصال آنلاین، پیام بفرستید و رضایت ارسال داده را تأیید کنید."
+            return
+        }
         testMessage = "در حال آزمایش…"
         viewModelScope.launch {
             val s = provider.status()
@@ -98,7 +115,10 @@ class AiAssistantViewModel(app: Application) : AndroidViewModel(app) {
     // ------------------------------------------------------------- settings
 
     fun saveSettings(new: AiSettings) {
-        settingsStore.save(new)
+        if (executingAction) return
+        if (new.mode != settings.mode || new.backendUrl != settings.backendUrl) newChat()
+        val safe = if (new.backendUrl != settings.backendUrl) new.copy(consented = false) else new
+        settingsStore.save(safe)
         settings = settingsStore.load()
         refreshStatus()
     }
@@ -122,7 +142,7 @@ class AiAssistantViewModel(app: Application) : AndroidViewModel(app) {
         val text = raw.trim()
         if (text.isEmpty() || busy || pending != null || !settings.enabled) return
         if (text.length > AiLimits.MAX_USER_CHARS) return
-        if (!settings.consented) {
+        if (settings.mode == AiMode.ONLINE && !settings.consented) {
             queuedText = text
             needsConsent = true
             return
@@ -141,9 +161,14 @@ class AiAssistantViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun runAgent() {
         busy = true
+        val run = ++generation
         job = viewModelScope.launch {
             try {
-                when (val step = orchestrator.run(messages.toList())) {
+                val step = if (settings.mode == AiMode.LOCAL) local.run(messages.last { it.role == ChatRole.USER }.text)
+                    else orchestrator.run(messages.toList())
+                if (run != generation) return@launch
+                when (step) {
+                    is AgentStep.Result -> add(ChatRole.RESULT, (if (step.outcome.ok) "✅ " else "⚠️ ") + step.outcome.text)
                     is AgentStep.Reply -> add(ChatRole.ASSISTANT, step.text)
                     is AgentStep.Confirm -> {
                         if (step.pending.lead.isNotBlank()) add(ChatRole.ASSISTANT, step.pending.lead)
@@ -159,22 +184,31 @@ class AiAssistantViewModel(app: Application) : AndroidViewModel(app) {
                         }
                     }
                 }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                if (run == generation) add(ChatRole.ERROR, "دریافت پاسخ انجام نشد. هیچ عملیات تأییدنشده‌ای اجرا نشد.")
             } finally {
-                busy = false
+                if (run == generation) busy = false
             }
         }
     }
 
     fun confirmPending() {
         val p = pending ?: return
-        if (busy) return
+        if (busy || !settings.enabled) return
         pending = null
         busy = true
+        executingAction = true
         viewModelScope.launch {
             try {
-                val out = orchestrator.execute(p)
+                val out = tools.execute(p.call)
                 add(ChatRole.RESULT, (if (out.ok) "✅ " else "⚠️ ") + out.text)
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e
+            } catch (_: Exception) {
+                add(ChatRole.ERROR, "نتیجهٔ عملیات تأیید نشد؛ قبل از تکرار، سوابق را بررسی کنید.")
             } finally {
+                executingAction = false
                 busy = false
             }
         }
@@ -187,6 +221,8 @@ class AiAssistantViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun stop() {
+        if (executingAction) return
+        generation++
         job?.cancel()
         busy = false
     }
@@ -201,12 +237,14 @@ class AiAssistantViewModel(app: Application) : AndroidViewModel(app) {
     private fun persist() {
         if (messages.isEmpty()) return
         val title = messages.firstOrNull { it.role == ChatRole.USER }?.text?.take(40) ?: "گفتگو"
-        val convo = Conversation(conversationId, title, createdAt, System.currentTimeMillis(), messages.toList())
+        val convo = Conversation(conversationId, title, createdAt, System.currentTimeMillis(), messages.toList(), settings.mode)
         viewModelScope.launch { conversations.save(convo) }
     }
 
     fun newChat() {
-        job?.cancel()
+        if (executingAction) return
+        stop()
+        declineConsent()
         busy = false
         pending = null
         failure = null
@@ -216,11 +254,12 @@ class AiAssistantViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun loadHistory() {
-        viewModelScope.launch { history = conversations.load().sortedByDescending { it.updatedAt } }
+        viewModelScope.launch { history = conversations.load().filter { it.mode == settings.mode }.sortedByDescending { it.updatedAt } }
     }
 
     fun openConversation(c: Conversation) {
-        job?.cancel()
+        if (executingAction || c.mode != settings.mode) return
+        stop()
         busy = false
         pending = null
         failure = null
@@ -234,7 +273,7 @@ class AiAssistantViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             conversations.delete(c.id)
             if (c.id == conversationId) newChat()
-            history = conversations.load().sortedByDescending { it.updatedAt }
+            history = conversations.load().filter { it.mode == settings.mode }.sortedByDescending { it.updatedAt }
         }
     }
 

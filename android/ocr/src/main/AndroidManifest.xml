@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Intentionally NO INTERNET and no storage/media/camera permissions. -->
+    <uses-permission android:name="com.khodroyar.app.permission.LOCAL_OCR" />
+    <queries><package android:name="com.khodroyar.app" /></queries>
+    <application android:label="خودرویار · OCR فارسی آفلاین" android:allowBackup="false" android:supportsRtl="true" android:theme="@android:style/Theme.Material.Light.NoActionBar">
+        <activity android:name=".SetupActivity" android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+        <service android:name=".PersianOcrService" android:exported="true" android:permission="com.khodroyar.app.permission.LOCAL_OCR" />
+        <provider android:name="androidx.core.content.FileProvider" android:authorities="com.khodroyar.ocr.files" android:exported="false" android:grantUriPermissions="true">
+            <meta-data android:name="android.support.FILE_PROVIDER_PATHS" android:resource="@xml/file_paths" />
+        </provider>
+    </application>
+</manifest>

@@ -56,6 +56,7 @@ class ConversationRepository(context: Context) {
         list.forEach { c ->
             arr.put(JSONObject().apply {
                 put("id", c.id); put("title", c.title); put("createdAt", c.createdAt); put("updatedAt", c.updatedAt)
+                put("mode", c.mode.name)
                 put("messages", JSONArray().also { ma ->
                     c.messages.forEach { m ->
                         ma.put(JSONObject().put("id", m.id).put("role", m.role.name).put("text", m.text).put("createdAt", m.createdAt))
@@ -81,6 +82,7 @@ class ConversationRepository(context: Context) {
         }
         val id = o.optString("id", "")
         if (id.isBlank()) return null
-        return Conversation(id, o.optString("title", ""), o.optLong("createdAt", 0L), o.optLong("updatedAt", 0L), msgs)
+        return Conversation(id, o.optString("title", ""), o.optLong("createdAt", 0L), o.optLong("updatedAt", 0L), msgs,
+            runCatching { AiMode.valueOf(o.optString("mode", "ONLINE")) }.getOrDefault(AiMode.LOCAL))
     }
 }

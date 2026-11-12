@@ -1,0 +1,19 @@
+# Local SDK/build output and private signing files
+**/build/
+**/.gradle/
+**/.kotlin/
+android/local.properties
+*.jks
+*.keystore
+.env
+.env.*
+!.env.example
+.verification/
+deliverables/
+*.apk
+*.aab
+*.zip
+__pycache__/
+node_modules/
+# Optional OCR language data is supplied separately, never bundled in the main app.
+*.traineddata
