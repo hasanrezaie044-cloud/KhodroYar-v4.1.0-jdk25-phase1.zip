@@ -15,3 +15,7 @@ android/local.properties
 .env.*
 !.env.example
 .DS_Store
+
+# Owner-local source checkpoints and encrypted-delivery state. Never publish keys/APKs.
+.khodroyar-backups/
+.khodroyar-private/

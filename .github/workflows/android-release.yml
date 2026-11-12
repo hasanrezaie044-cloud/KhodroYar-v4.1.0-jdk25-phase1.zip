@@ -374,11 +374,13 @@ jobs:
           root = Path(os.environ['RUNNER_TEMP']) / 'signed-test-diagnostics'
           for path in sorted(root.rglob('logcat.txt')):
               lines = path.read_text(errors='replace').splitlines()
-              starts = [i for i, line in enumerate(lines) if 'FATAL EXCEPTION' in line]
-              selected = []
-              for start in starts[-2:]:
-                  selected.extend(lines[max(0, start-2):start+45])
-              text = '\n'.join(selected or lines[-70:])[:21000]
+              needles = ('khodroyar', 'androidruntime', 'androidjunitrunner', 'testrunner',
+                  'fatal', 'noclassdeffound', 'nosuchmethod', 'linker', 'exception', 'instrumentation')
+              starts = [i for i, line in enumerate(lines) if any(word in line.lower() for word in needles)]
+              selected = set()
+              for start in starts:
+                  selected.update(range(max(0, start-12), min(len(lines), start+28)))
+              text = '\n'.join(lines[i] for i in sorted(selected))[:28000] if selected else '\n'.join(lines[:180])[:28000]
               for index in range(0, len(text), 3500):
                   piece = text[index:index+3500].replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
                   print(f'::notice title=Synthetic signed-runtime crash {index//3500+1}::' + piece)
