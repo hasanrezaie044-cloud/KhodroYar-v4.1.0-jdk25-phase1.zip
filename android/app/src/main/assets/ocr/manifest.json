@@ -1,5 +1,5 @@
 {
-  "version": 2,
+  "version": 3,
   "license": "Apache-2.0",
   "files": [
     {
@@ -9,6 +9,15 @@
       "bytes": 3325955,
       "sha256": "99e420969b5ddd2cb135b416316a7ed417c59c4faf9e0d28941348f6448114df",
       "git_blob": "326a26e8522dce12596fc0de314710c5cc7055d0"
+    },
+    {
+      "name": "fas_print.traineddata",
+      "upstream_name": "fas.traineddata",
+      "repository": "tesseract-ocr/tessdata",
+      "commit": "074c37215b01ab8cc47a0e06ff7356383883d775",
+      "bytes": 4803733,
+      "sha256": "5d4642e32c66e9450bca9c0ced22cae93188340acfd8c6ca717f02e617b9c154",
+      "git_blob": "d8591da8c4fd7683eb1c97a32bf33ef3cf3f9a4c"
     },
     {
       "name": "ara.traineddata",

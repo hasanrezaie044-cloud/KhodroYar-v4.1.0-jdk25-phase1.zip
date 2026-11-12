@@ -21,6 +21,10 @@ The already-published 5.4.1 APK/Release must not be overwritten.
   Grouped totals are not advertised as proof of every underlying service. No nearest-value guesses.
 - Recoverable private draft v2 reads v1 without inventing service identity. Any edit/link/range
   change invalidates review; changing database records invalidates the old result.
+- Add a source-pinned official Apache-2.0 classic Persian print model, only as a fallback
+  for unknown fixed-form cells/footers. Three bounded photometric views must have an original
+  native score >=85 and consistent accepted values; tiny ink and conflicts stay unknown.
+  No local learning/private glyph dataset. All four models total 13,674,832 bytes.
 - Add source-pinned OFL Parastoo print references with complete offline licence/provenance.
   No document-derived glyphs, employee data, salary amounts or private images are committed.
 

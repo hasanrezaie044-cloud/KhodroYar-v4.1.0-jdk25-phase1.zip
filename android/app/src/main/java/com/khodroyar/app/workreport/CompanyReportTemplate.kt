@@ -24,6 +24,9 @@ internal object ReportLabels {
     fun total(raw: String) = forms(raw).any { s ->
         Regex("(?:^|\\s)(?:جمع|مجموع|جمعکل|total|subtotal)(?:\\s|$)").containsMatchIn(s)
     }
+    fun footerOnly(raw: String) = forms(raw).any { s ->
+        Regex("^(?:جمع(?:\\s*کل)?|جمعکل|مجموع|total|subtotal)$").matches(s)
+    }
 }
 
 /**

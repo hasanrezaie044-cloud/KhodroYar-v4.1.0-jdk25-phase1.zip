@@ -21,7 +21,11 @@ def audit(path):
             data = z.read('assets/ocr/' + entry['name'])
             assert len(data) == entry['bytes'], entry['name']
             assert hashlib.sha256(data).hexdigest() == entry['sha256'], entry['name']
-        assert {r['name'] for r in manifest['files'] if r['name'].endswith('.traineddata')} == {'fas.traineddata', 'ara.traineddata', 'eng.traineddata'}
+        assert {r['name'] for r in manifest['files'] if r['name'].endswith('.traineddata')} == {'fas.traineddata', 'fas_print.traineddata', 'ara.traineddata', 'eng.traineddata'}
+        printed = z.read('assets/ocr/fas_print.traineddata')
+        count = struct.unpack_from('<i', printed)[0]
+        assert count > 5 and 4 + 8 * count < len(printed)
+        assert 4 + 8 * count <= struct.unpack_from('<q', printed, 4 + 3 * 8)[0] < len(printed), 'Print model must contain the native legacy classifier (INTTEMP), not a Cube/LSTM-only model'
         reference_manifest = (Path(__file__).resolve().parents[1] / 'android/app/src/main/assets/ocr/print-references.json').read_bytes()
         assert z.read('assets/ocr/print-references.json') == reference_manifest, 'Packaged print-reference provenance differs'
         references = json.loads(reference_manifest)['files']

@@ -23,7 +23,7 @@ object NumericReadingGrammar {
         return valid.takeIf { it.map { pair -> pair.second }.distinct().size == 1 }?.firstOrNull()?.first
     }
 
-    private fun canonical(field: NumericField, text: String): String? = when (field) {
+    internal fun canonical(field: NumericField, text: String): String? = when (field) {
         NumericField.DATE -> PersianInput.date(text)
         NumericField.COUNT -> PersianInput.count(text)?.toString()
         NumericField.ORDINAL -> PersianInput.count(text)?.takeIf { it > 0 }?.toString()

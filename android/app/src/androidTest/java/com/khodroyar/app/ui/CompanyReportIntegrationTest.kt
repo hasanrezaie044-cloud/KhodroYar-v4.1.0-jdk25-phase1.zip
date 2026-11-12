@@ -30,6 +30,7 @@ import com.khodroyar.app.data.db.ServiceEntity
 import com.khodroyar.app.ui.screens.WorkReportScreen
 import com.khodroyar.app.ui.theme.CarManagerTheme
 import com.khodroyar.app.workreport.*
+import com.googlecode.tesseract.android.TessBaseAPI
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
@@ -53,11 +54,13 @@ class CompanyReportIntegrationTest {
         listOf(listOf("3", "1403/04/18", "65", "2.5"), listOf("4", "1403/04/23", "90", "0")),
         listOf(listOf("5", "1403/04/29", "55", "1.25")),
     )
-    @Before fun resetDisposableEmulatorOnly() = runBlocking {
-        check(Build.HARDWARE.contains("ranchu") || Build.HARDWARE.contains("goldfish"))
-        WorkManager.getInstance(context).cancelAllWork().result.get()
-        withContext(Dispatchers.IO) { db.clearAllTables() }
-        ReportDocuments(context).directory.deleteRecursively()
+    @Before fun resetDisposableEmulatorOnly() {
+        runBlocking {
+            check(Build.HARDWARE.contains("ranchu") || Build.HARDWARE.contains("goldfish"))
+            WorkManager.getInstance(context).cancelAllWork().result.get()
+            withContext(Dispatchers.IO) { db.clearAllTables() }
+            ReportDocuments(context).directory.deleteRecursively()
+        }
     }
     private fun service(id: String, row: List<String>) = ServiceEntity(id, row[1], "night", "soren", row[2].toDouble(), row[3].toDouble(), row[3].toDouble(),
         "07:00", "18:00", "شهر الف", "شهر ب", "", "", 0, 0.0, 0.0, 0.0, 0L, "2026-01-01T00:00:00Z")
@@ -142,6 +145,30 @@ class CompanyReportIntegrationTest {
         assertEquals(listOf(link), loaded.links)
         assertEquals(ServiceMatchStatus.GROUPED, ServiceWorkComparison.compare(loaded.rows, actual, loaded.start, loaded.end, loaded.links).services.single().status)
         assertTrue(runCatching { ServiceWorkComparison.compare(loaded.rows, actual.map { it.copy(hours = "9".toBigDecimal()) }, loaded.start, loaded.end, loaded.links) }.isFailure)
+    }
+
+    @Test fun pinnedClassicPrintModelActuallyRunsButNeverTurnsTinyInkIntoAConfidentDate() {
+        val api = TessBaseAPI()
+        val bitmap = Bitmap.createBitmap(500, 110, Bitmap.Config.ARGB_8888)
+        try {
+            assertTrue(api.init(OfflineReportOcr(context).installModels().path, "fas_print", TessBaseAPI.OEM_TESSERACT_ONLY))
+            api.setVariable("classify_enable_learning", "0"); api.setVariable("user_defined_dpi", "220")
+            var requested = 0
+            val reader = PrintedCellOcr { requested++; api }
+            val region = NumericRegion(NumericField.DATE, 0f, 0f, 1f, 1f)
+            bitmap.eraseColor(Color.WHITE)
+            assertNull(reader.read(bitmap, region)); assertEquals(0, requested)
+            Canvas(bitmap).drawRect(20f, 40f, 24f, 46f, Paint().apply { color = Color.BLACK })
+            assertNull(reader.read(bitmap, region)); assertEquals(0, requested)
+            bitmap.eraseColor(Color.WHITE)
+            val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.BLACK; textSize = 38f; typeface = ResourcesCompat.getFont(context, R.font.parastoo_regular) }
+            Canvas(bitmap).drawText("1402/07/18", 30f, 65f, paint)
+            val logs = mutableListOf<String>()
+            val read = requireNotNull(reader.read(bitmap, region, diagnostics = { logs += it })) { logs.joinToString("\n") }
+            assertEquals("1402/07/18", read.text); assertTrue(read.confidence >= 85f); assertTrue(read.agreeingViews > 0)
+            assertFalse(bitmap.isRecycled)
+            assertTrue(runCatching { reader.read(bitmap, region) { error("cancel") } }.isFailure)
+        } finally { api.recycle(); bitmap.recycle() }
     }
 
     @Test fun slightlyOversizedPhotoRetainsNearFullPrintResolutionWithinTheExistingCaps() {

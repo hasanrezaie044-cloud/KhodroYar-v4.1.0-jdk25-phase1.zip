@@ -109,6 +109,12 @@ class CompanyReportTest {
         assertEquals(ReportRowKind.SERVICE, row.kind); assertEquals(1, row.validated()!!.count)
         assertEquals("64.5", row.km)
     }
+    @Test fun aRouteContainingTotalWordsIsNotAnExactMergedFooterLabel() {
+        assertTrue(ReportLabels.footerOnly("جمع کل")); assertTrue(ReportLabels.footerOnly("عمج"))
+        assertTrue(ReportLabels.footerOnly("SUBTOTAL"))
+        assertFalse(ReportLabels.footerOnly("شهر جمع آوری")); assertFalse(ReportLabels.footerOnly("total route"))
+        assertFalse(ReportLabels.footerOnly("جمع 123")); assertFalse(ReportLabels.footerOnly("جمع 1403/04/12"))
+    }
     @Test fun ordinalGrammarDoesNotAcceptZeroFractionOrUnreadableInk() {
         fun glyphs(s: String) = s.map { listOf(it) }
         assertEquals("27", NumericReadingGrammar.uniqueValue(NumericField.ORDINAL, glyphs("27")))

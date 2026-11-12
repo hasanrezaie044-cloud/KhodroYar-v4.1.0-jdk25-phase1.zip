@@ -45,3 +45,20 @@ No runtime model/network download is performed. These are OCR language models, n
 - Complete upstream licence: `res/raw/parastoo_license.txt`, accessible in Settings → About →
   Offline OCR licences. Exact byte/hash/blob provenance: `assets/ocr/print-references.json`.
   Source and actual-APK audit tools verify both fonts and the licence. No runtime download.
+
+## Supplemental classic Persian print model (5.4.2)
+
+- Official [Tesseract tessdata](https://github.com/tesseract-ocr/tessdata), **Apache-2.0**;
+  upstream states that all repository data, including the 3.04 tree, use this licence.
+- Unmodified `fas.traineddata` from `3.04.00`, revision
+  `074c37215b01ab8cc47a0e06ff7356383883d775`, renamed on disk to `fas_print.traineddata`
+  to keep it separate from the LSTM model. **4,803,733 bytes**; SHA-256
+  `5d4642e32c66e9450bca9c0ced22cae93188340acfd8c6ca717f02e617b9c154`.
+- Uses the existing native classic classifier only for otherwise unreadable fixed-form
+  cells/printed footer labels. Three bounded grayscale/contrast/threshold views; original
+  native numeric confidence must be at least 85 and accepted views must agree. No online
+  recognition, personal training samples, guessed digits, amount/month-specific correction,
+  new JNI library or automatic-learning cache. The generic LSTM path is preserved.
+- Complete Apache-2.0 terms remain in `assets/ocr/LICENSE` and the offline Settings notice.
+  `assets/ocr/manifest.json` records alias, original filename, source commit/blob and exact
+  bytes; source/APK audits check the asset and its legacy classifier component.

@@ -967,3 +967,12 @@ and is the first true source reference JPEG codec.
 More features are being prepared for coming releases...
 
 Please send bug reports, offers of help, etc. to jpeg-info@ijg.org.
+
+
+SUPPLEMENTAL PERSIAN PRINT MODEL (5.4.2)
+Official tesseract-ocr/tessdata, Apache-2.0 (same full terms reproduced above).
+Unmodified fas.traineddata at 3.04.00 / 074c37215b01ab8cc47a0e06ff7356383883d775,
+renamed fas_print.traineddata to separate the classic print engine from the LSTM model.
+4,803,733 bytes; SHA-256 5d4642e32c66e9450bca9c0ced22cae93188340acfd8c6ca717f02e617b9c154.
+Source blob d8591da8c4fd7683eb1c97a32bf33ef3cf3f9a4c. No private reports or glyphs are bundled.
+Exact provenance and all other model hashes: assets/ocr/manifest.json.
