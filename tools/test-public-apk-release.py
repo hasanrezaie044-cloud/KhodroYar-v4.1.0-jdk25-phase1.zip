@@ -130,7 +130,7 @@ class PublicationFixtures(unittest.TestCase):
             html_url='https://github.com/example/repo/releases/tag/v5.4.1')
         published = dict(draft, draft=False)
         replies = [None, None, draft, published, dict(object=dict(sha=HEAD))]
-        with patch.object(publication, 'audit_actual_apk'), patch.object(publication, 'gh_json', side_effect=replies), patch.object(publication.subprocess, 'run') as command, patch.object(publication, 'anonymous_readback') as readback, patch.dict(publication.os.environ, {'GITHUB_STEP_SUMMARY': ''}):
+        with patch.object(publication, 'audit_actual_apk'), patch.object(publication, 'gh_json', side_effect=replies), patch.object(publication.subprocess, 'run') as command, patch.object(publication, 'anonymous_readback') as readback, patch.dict(publication.os.environ, {'GITHUB_STEP_SUMMARY': ''}), patch('builtins.print'):
             receipt = publication.publish(self.root, 'example/repo', HEAD, '123')
         self.assertIn('--draft', command.call_args.args[0])
         self.assertEqual(command.call_args.args[0][command.call_args.args[0].index('--target') + 1], HEAD)
