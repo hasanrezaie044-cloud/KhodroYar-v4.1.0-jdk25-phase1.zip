@@ -4,6 +4,12 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      mode:
+        description: 'Verify native UI only, or build and privately deliver the signed release'
+        type: choice
+        options: [release, ui-only]
+        default: release
   workflow_call:
     inputs:
       ref:
@@ -34,6 +40,7 @@ env:
 
 jobs:
   release:
+    if: ${{ inputs.mode != 'ui-only' }}
     name: Signed APK Release (JDK 25)
     runs-on: ubuntu-latest
     permissions:
@@ -201,6 +208,7 @@ jobs:
       - name: Audit bundled offline OCR and native library alignment
         run: |
           python3 tools/audit-ocr-apk.py android/app/build/outputs/apk/release/app-release.apk android/app/build/outputs/apk/release/verification.json
+          "$ANDROID_HOME/build-tools/${ANDROID_BUILD_TOOLS}/zipalign" -c -P 16 -v 4 android/app/build/outputs/apk/release/app-release.apk
           AAPT="$ANDROID_HOME/build-tools/${ANDROID_BUILD_TOOLS}/aapt2"
           if "$AAPT" dump badging android/app/build/outputs/apk/release/app-release.apk | grep -q "application-debuggable"; then
             echo "Release APK is debuggable"; exit 1
@@ -208,15 +216,8 @@ jobs:
           CERT=$("$ANDROID_HOME/build-tools/${ANDROID_BUILD_TOOLS}/apksigner" verify --print-certs android/app/build/outputs/apk/release/app-release.apk | sed -n 's/^Signer #1 certificate SHA-256 digest: //p')
           test "$CERT" = "03bfbc3575667403c3259fae345f3eb1ad3045373cb62123be376ef4898caaf0" || { echo "Signing identity changed"; exit 1; }
 
-      - name: Upload signed APK
-        uses: actions/upload-artifact@v4
-        with:
-          name: khodroyar-release-signed-${{ steps.version.outputs.version_name }}
-          path: |
-            android/app/build/outputs/apk/release/app-release.apk
-            android/app/build/outputs/apk/release/verification.json
-          if-no-files-found: error
-          retention-days: 30
+      # Do NOT upload an installable APK to artifacts in this public source repo.
+      # The owner explicitly declined public APK publication; private transfer is separate.
 
       - name: Upload R8 mapping
         if: always()
