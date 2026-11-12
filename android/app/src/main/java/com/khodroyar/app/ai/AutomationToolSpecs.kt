@@ -25,7 +25,7 @@ object AutomationToolSpecs {
         ToolSpec("create_traffic_rule", ToolKind.WRITE, "گزارش ترافیک در روزها/ساعت مشخص از نشان؛ نیاز به اینترنت، سهمیه سرویس و اجازهٔ اعلان", schedule(true)),
         ToolSpec("create_service_rule", ToolKind.WRITE, "ثبت تکراری سرویس رفت‌وآمد با نسخهٔ ثابت الگوی ذخیره‌شده؛ مبلغ درآمد طبق نرخ‌های سال هر ثبت", schedule(true)),
         ToolSpec("add_service_from_preset", ToolKind.WRITE, "ثبت یک سرویس رفت‌وآمد با الگوی ذخیره‌شده و تأیید صریح",
-            listOf(ToolParam("date", ParamType.DATE))),
+            listOf(ToolParam("date", ParamType.DATE), ToolParam("service_type", ParamType.ENUM, options = com.khodroyar.app.core.rates.ServiceType.entries.map { it.wire }))),
         ToolSpec("set_automation_enabled", ToolKind.WRITE, "توقف یا فعال‌سازی دوبارهٔ یک قانون؛ سوابق مالی قبلی حذف نمی‌شود",
             listOf(id, ToolParam("state", ParamType.ENUM, true, options = listOf("on", "off")))),
         ToolSpec("remove_automation_rule", ToolKind.DELETE, "حذف فقط قانون و توقف اجراهای آینده؛ هیچ رکورد مالی قبلی حذف نمی‌شود", listOf(id)),

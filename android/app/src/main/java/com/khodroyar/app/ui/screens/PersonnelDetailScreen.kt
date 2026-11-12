@@ -98,7 +98,7 @@ fun PersonnelDetailScreen(repository: AppRepository, personnelId: String) {
         if (!editing) {
             Button(
                 onClick = { editing = true },
-                modifier = Modifier.fillMaxWidth().height(AppDimens.buttonHeight),
+                modifier = Modifier.fillMaxWidth().heightIn(min = AppDimens.buttonHeight),
                 shape = FieldShape,
             ) {
                 Icon(Icons.Outlined.Edit, null)
@@ -126,7 +126,7 @@ fun PersonnelDetailScreen(repository: AppRepository, personnelId: String) {
                                 toast.show("اطلاعات پرسنلی به‌روزرسانی شد")
                             }
                         },
-                        modifier = Modifier.weight(1f).height(AppDimens.buttonHeight),
+                        modifier = Modifier.weight(1f).heightIn(min = AppDimens.buttonHeight),
                         shape = FieldShape,
                     ) { Text("ذخیره تغییرات") }
                     OutlinedButton(
@@ -135,7 +135,7 @@ fun PersonnelDetailScreen(repository: AppRepository, personnelId: String) {
                             costCenter = person.costCenter; phone = person.phone
                             editing = false
                         },
-                        modifier = Modifier.weight(1f).height(AppDimens.buttonHeight),
+                        modifier = Modifier.weight(1f).heightIn(min = AppDimens.buttonHeight),
                         shape = FieldShape,
                     ) { Text(tr("انصراف", "Cancel")) }
                 }

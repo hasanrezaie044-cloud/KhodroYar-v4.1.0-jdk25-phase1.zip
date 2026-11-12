@@ -247,7 +247,7 @@ fun CalendarScreen(
                 Spacer(Modifier.height(16.dp))
                 Button(
                     onClick = { onQuickService(selectedDate) },
-                    modifier = Modifier.fillMaxWidth().height(AppDimens.buttonHeight),
+                    modifier = Modifier.fillMaxWidth().heightIn(min = AppDimens.buttonHeight),
                     shape = FieldShape,
                     colors = ButtonDefaults.buttonColors(
                         containerColor = Color.White,
@@ -497,7 +497,7 @@ private fun ServiceDetailSheet(
             Row(horizontalArrangement = Arrangement.spacedBy(AppDimens.gap)) {
                 Button(
                     onClick = onEdit,
-                    modifier = Modifier.weight(1f).height(AppDimens.buttonHeight),
+                    modifier = Modifier.weight(1f).heightIn(min = AppDimens.buttonHeight),
                     shape = FieldShape,
                 ) {
                     Icon(Icons.Outlined.Edit, null)
@@ -506,7 +506,7 @@ private fun ServiceDetailSheet(
                 }
                 OutlinedButton(
                     onClick = onDelete,
-                    modifier = Modifier.weight(1f).height(AppDimens.buttonHeight),
+                    modifier = Modifier.weight(1f).heightIn(min = AppDimens.buttonHeight),
                     shape = FieldShape,
                 ) {
                     Icon(Icons.Outlined.Delete, null, tint = MaterialTheme.colorScheme.error)

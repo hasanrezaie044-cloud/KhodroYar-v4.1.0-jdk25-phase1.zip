@@ -73,6 +73,7 @@ internal data class QuickMileageJournal(
         suspend fun recover(db: AppDatabase, settings: SettingsStore): Recovery {
             val encoded=settings.pendingQuickMileage
             if (encoded.isNullOrBlank()) return Recovery.NONE
+            if (JSONObject(encoded).optInt("version") == 2) return ServiceBatchJournal.recover(encoded, db, settings)
             val journal=decode(encoded)
             val row: Any?=when(journal.kind) {
                 QuickKind.SERVICE -> db.services().byId(journal.id)

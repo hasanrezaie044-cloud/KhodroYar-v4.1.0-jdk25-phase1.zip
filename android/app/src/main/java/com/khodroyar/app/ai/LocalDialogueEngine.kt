@@ -40,7 +40,9 @@ class LocalDialogueEngine(
         var endDate: String = "",
         var time: String = "21:00",
         var ruleId: String? = null,
+        var serviceType: String? = null,
     )
+    private val serviceCommands = ServiceCommandDialogue(today)
     private var draft: Draft? = null
     private var repeatDates: Pair<String, String>? = null
     private var waiting = ""
@@ -49,9 +51,12 @@ class LocalDialogueEngine(
     var context = LocalDialogueContext()
         private set
 
-    fun reset() { repeatDates = null; draft = null; waiting = ""; management = null; lastRuleId = null; context = LocalDialogueContext() }
-    fun discardDraft() { repeatDates = null; draft = null; management = null; waiting = ""; context = LocalDialogueContext() }
+    fun reset() { serviceCommands.reset(); repeatDates = null; draft = null; waiting = ""; management = null; lastRuleId = null; context = LocalDialogueContext() }
+    fun discardDraft() { serviceCommands.discard(); repeatDates = null; draft = null; management = null; waiting = ""; context = LocalDialogueContext() }
     fun completed(call: ValidatedCall, success: Boolean) {
+        if (call.spec.name in ServiceCommandSpecs.names) {
+            serviceCommands.completed(call, success); context = serviceCommands.context; return
+        }
         if (success) {
             if (call.spec.name.startsWith("create_") && call.spec.name.endsWith("_rule")) lastRuleId = call.str("operation_id")
             if (call.spec.name in setOf("update_expense_rule", "set_automation_enabled")) lastRuleId = call.str("id")
@@ -75,6 +80,7 @@ class LocalDialogueEngine(
             discardDraft()
             return reply("چیزی ثبت یا فعال نمی‌کنم. اگر می‌خواهی یک کار خودکار قبلی را متوقف کنی، بگو «قانون قهوه را متوقف کن».")
         }
+        if (draft == null) serviceCommands.parse(t)?.let { context = serviceCommands.context; return it }
         if (has(t, "سوخت", "بنزین") && has(t, "تعمیر", "روغن", "لنت", "لاستیک") && has(t, "ثبت", "بزن")) return reply("سوخت و تعمیر دو ثبت جدا هستند؛ هر بار یکی را تنظیم کنیم.")
         if (Regex("(?: و |؛|;)\\s*(?:ثبت|اضافه|ذخیره|هر روز)").containsMatchIn(t) ||
             categoryHits(t).size > 1 && (has(t, "ثبت", "بزن", "روزانه", "هر روز") || draft != null || repeatDates != null)) {
@@ -215,6 +221,13 @@ class LocalDialogueEngine(
             if (has(t, "آزاد", "ازاد")) d.fuelType = "free"
             if (has(t, "نیمه")) d.fuelType = "semi"
         }
+        if (d.kind == Kind.SERVICE) {
+            val types = listOf("night" to listOf("شب", "شبانه"), "holiday" to listOf("تعطیل"), "request" to listOf("درخواستی"),
+                "available" to listOf("در اختیار"), "fixed" to listOf("ثابت"), "mission" to listOf("مأموریت", "ماموریت"))
+                .filter { (_, words) -> words.any { word -> Regex("(?<![\\p{L}])${Regex.escape(word)}(?![\\p{L}])").containsMatchIn(t) } }.map { it.first }
+            if (types.size > 1) return question(d, "کدام نوع سرویس؟ یکی را مشخص کن.", "service_type")
+            types.singleOrNull()?.let { d.serviceType = it }
+        }
         if (d.kind == Kind.MAINTENANCE) {
             maintenanceTypes.firstOrNull { (_, words) -> words.any { t.contains(it) } }?.let { d.maintenanceType = it.first }
             if (d.title.isBlank()) d.title = t.take(80)
@@ -228,8 +241,7 @@ class LocalDialogueEngine(
         val matches = datePattern.findAll(t).toList()
         if (matches.size > 2 || matches.size == 2 && !has(t, "تا ")) return question(d, "بازه روشن نیست؛ یک تاریخ شروع و در صورت نیاز «تا تاریخ پایان» بنویس.", "date")
         for (match in matches) {
-            val parts = match.value.replace('-', '/').replace('.', '/').split('/').map { it.toIntOrNull() }
-            val value = if (parts.all { it != null }) Jalali.format(parts[0]!!, parts[1]!!, parts[2]!!) else ""
+            val value = com.khodroyar.app.core.text.PersianInput.date(match.value).orEmpty()
             if (!validDate(value)) return question(d, "این تاریخ شمسی معتبر نیست. مثلاً ۱۴۰۵/۰۸/۲۰ بنویس.", "date")
             val before = t.substring(0, match.range.first).trimEnd()
             if (before.endsWith("تا") || before.endsWith("تا تاریخ")) d.endDate = value else { d.date = value; d.dateSpecified = true }
@@ -285,7 +297,7 @@ class LocalDialogueEngine(
                 d.km?.let { args.put("km", it) }
                 if (d.maintenanceType == "repair") prepared(d, "add_repair", args) else prepared(d, "add_car_service", args.put("service_type", d.maintenanceType))
             }
-            Kind.SERVICE -> prepared(d, "add_service_from_preset", args)
+            Kind.SERVICE -> prepared(d, "add_service_from_preset", args.apply { d.serviceType?.let { put("service_type", it) } })
             Kind.TRAFFIC -> tool("get_traffic_status")
         }
     }
@@ -340,6 +352,7 @@ class LocalDialogueEngine(
             has(t, "تعمیر", "روغن", "نگهداری") -> AgentSection.MAINTENANCE
             has(t, "بیمه", "مدارک") -> AgentSection.INSURANCE
             has(t, "نرخ", "تعرفه") -> AgentSection.RATES
+            has(t, "کارکرد شرکت", "ocr", "گزارش شرکت") -> AgentSection.WORK_REPORT
             has(t, "گزارش") -> AgentSection.REPORTS
             has(t, "تقویم") -> AgentSection.CALENDAR
             has(t, "تنظیم") -> AgentSection.SETTINGS
@@ -417,7 +430,7 @@ class LocalDialogueEngine(
 
     companion object {
         val STARTERS = listOf("روزای کاری هزینه قهوه‌مو ثبت کن", "هر روز برام سرویس ثبت کن", "ترافیک الان چطوره", "کارهای خودکارم")
-        const val HELP = "من دستیار تخصصی خودرویارم؛ مدل چت عمومی نیستم. کوتاه بگو، اطلاعات ناقص را مرحله‌به‌مرحله می‌پرسم.\n\n• روزای کاری هزینه قهوه‌مو ثبت کن\n• هر روز برام سرویس ثبت کن (از الگوی ذخیره‌شده)\n• ترافیک الان چطوره / هر روز ساعت ۸ ترافیک رو بگو\n• قانون قهوه را متوقف کن / مبلغش را تغییر بده\n• برو تب سوخت / گزارش این ماه\n• همون هزینه دیروز رو برای امروز ثبت کن\n• این ماه نسبت به ماه قبل چطور بود؟\n• کدوم کارهای خودکارم اجرا نشده؟\n• بنزین زدم ثبت کن / یادم بنداز بیمه\n\nهزینه و سرویس بدون API هوش مصنوعی کار می‌کنند؛ ترافیک تازه به اینترنت و کلید نشان نیاز دارد. هر تغییر ابتدا خلاصه و تأیید دارد. پرداخت، چت عمومی و کنترل اپ‌های دیگر ندارم."
+        const val HELP = "من دستیار تخصصی خودرویارم؛ مدل چت عمومی نیستم. کوتاه بگو، اطلاعات ناقص را مرحله‌به‌مرحله می‌پرسم.\n\n• روزای کاری هزینه قهوه‌مو ثبت کن\n• هر روز برام سرویس ثبت کن (از الگوی ذخیره‌شده)\n• ترافیک الان چطوره / هر روز ساعت ۸ ترافیک رو بگو\n• قانون قهوه را متوقف کن / مبلغش را تغییر بده\n• برو تب سوخت / گزارش این ماه\n• همون هزینه دیروز رو برای امروز ثبت کن\n• این ماه نسبت به ماه قبل چطور بود؟\n• کدوم کارهای خودکارم اجرا نشده؟\n• سرویس‌های شب از ۱۴۰۳۰۱۰۱ تا ۱۴۰۳۱۲۲۹ ثبت کن\n• جستجوی سرویس‌های شب از ۱۴۰۳۰۱۰۱ تا ۱۴۰۳۰۱۱۰\n• ویرایش سرویس‌های شب از ۱۴۰۳۰۱۰۱ تا ۱۴۰۳۰۱۱۰؛ سپس مقدارها\n• برو مقایسه کارکرد شرکت (عکس و PDF آفلاین)\n• بنزین زدم ثبت کن / یادم بنداز بیمه\n\nهزینه و سرویس بدون API هوش مصنوعی کار می‌کنند؛ ترافیک تازه به اینترنت و کلید نشان نیاز دارد. هر تغییر ابتدا خلاصه و تأیید دارد. پرداخت، چت عمومی و کنترل اپ‌های دیگر ندارم."
         fun normalize(text: String): String = LocalIntentParser.normalize(text)
             .replace("روزای کاری", "روزهای کاری").replace("روز های کاری", "روزهای کاری")
             .replace("هزنیه", "هزینه").replace("هزینه هام", "هزینه ها")
@@ -427,7 +440,7 @@ class LocalDialogueEngine(
             .replace("هر شب", "هر روز شب").replace("هر صبح", "هر روز صبح")
             .replace("تومن", "تومان").replace("بذار", "ثبت کن").replace("کنسلش کن", "لغو")
             .replace(Regex("\\s+"), " ").trim()
-        private val datePattern = Regex("(?<!\\d)\\d{4}[/.-]\\d{1,2}[/.-]\\d{1,2}(?!\\d)")
+        private val datePattern = com.khodroyar.app.core.text.PersianInput.datePattern
         private val dayNames = listOf("شنبه", "یکشنبه", "دوشنبه", "سه شنبه", "چهارشنبه", "پنجشنبه", "جمعه")
         private val categories = listOf(
             ("قهوه" to "coffee") to listOf("قهوه", "کافی", "coffee"),

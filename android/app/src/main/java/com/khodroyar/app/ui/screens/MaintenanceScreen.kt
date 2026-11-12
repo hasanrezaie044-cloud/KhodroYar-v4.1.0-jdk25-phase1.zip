@@ -219,7 +219,7 @@ fun MaintenanceScreen(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = AppDimens.screenPadding, vertical = 10.dp)
-                    .height(AppDimens.buttonHeight),
+                    .heightIn(min = AppDimens.buttonHeight),
                 shape = FieldShape,
             ) {
                 Icon(Icons.Outlined.Add, null)
@@ -407,7 +407,7 @@ private fun MaintenanceForm(
         }
         Surface(color = MaterialTheme.colorScheme.surfaceContainerLowest, shadowElevation = 8.dp) {
             Row(Modifier.fillMaxWidth().padding(horizontal = AppDimens.screenPadding, vertical = 10.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton(onClick = onClose, modifier = Modifier.weight(1f).height(AppDimens.buttonHeight), shape = FieldShape) { Text(tr("انصراف", "Cancel")) }
+                OutlinedButton(onClick = onClose, modifier = Modifier.weight(1f).heightIn(min = AppDimens.buttonHeight), shape = FieldShape) { Text(tr("انصراف", "Cancel")) }
                 Button(onClick = {
                     scope.launch {
                         // Only a record that is the newest of its type touches tracking;
@@ -438,7 +438,7 @@ private fun MaintenanceForm(
                         }
                         onClose()
                     }
-                }, modifier = Modifier.weight(1f).height(AppDimens.buttonHeight), shape = FieldShape) { Text(tr("ذخیره", "Save")) }
+                }, modifier = Modifier.weight(1f).heightIn(min = AppDimens.buttonHeight), shape = FieldShape) { Text(tr("ذخیره", "Save")) }
             }
         }
     }
@@ -511,7 +511,7 @@ private fun TrackedServiceKmEditor(
             ) {
                 OutlinedButton(
                     onClick = onClose,
-                    modifier = Modifier.weight(1f).height(AppDimens.buttonHeight),
+                    modifier = Modifier.weight(1f).heightIn(min = AppDimens.buttonHeight),
                     shape = FieldShape,
                 ) { Text(tr("انصراف", "Cancel")) }
                 Button(
@@ -521,7 +521,7 @@ private fun TrackedServiceKmEditor(
                         if (next <= 0 && cur > 0 && intervalKm > 0) next = cur + intervalKm
                         onSave(cur, next)
                     },
-                    modifier = Modifier.weight(1f).height(AppDimens.buttonHeight),
+                    modifier = Modifier.weight(1f).heightIn(min = AppDimens.buttonHeight),
                     shape = FieldShape,
                 ) { Text(tr("ذخیره", "Save")) }
             }

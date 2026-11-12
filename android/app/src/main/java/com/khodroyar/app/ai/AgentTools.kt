@@ -125,7 +125,7 @@ object AgentToolRegistry {
         ToolSpec("delete_expense", ToolKind.DELETE, "حذف یک هزینهٔ شخصی", listOf(id)),
         ToolSpec("delete_maintenance", ToolKind.DELETE, "حذف یک سابقهٔ تعمیر/سرویس", listOf(id)),
         ToolSpec("delete_fuel", ToolKind.DELETE, "حذف یک سوخت‌گیری", listOf(id)),
-    ) + AutomationToolSpecs.tools + DailyToolSpecs.tools
+    ) + AutomationToolSpecs.tools + DailyToolSpecs.tools + ServiceCommandSpecs.tools
 
     private val byName: Map<String, ToolSpec> = tools.associateBy { it.name }
 
@@ -244,15 +244,8 @@ object AgentActionValidator {
         val today = Jalali.todayString()
         if (s == "today" || s == "امروز") return Coerced.Good(today)
         if (s == "yesterday" || s == "دیروز") return Coerced.Good(Jalali.addDays(today, -1))
-        val parts = s.replace('-', '/').replace('.', '/').split('/')
-        if (parts.size != 3) return Coerced.Bad("تاریخ باید شمسی و به شکل YYYY/MM/DD باشد.")
-        val y = parts[0].toIntOrNull()
-        val m = parts[1].toIntOrNull()
-        val d = parts[2].toIntOrNull()
-        if (y == null || m == null || d == null) return Coerced.Bad("تاریخ نامعتبر است.")
-        if (y < 1300 || y > 1600) return Coerced.Bad("تاریخ باید شمسی باشد (مثل 1405/08/20).")
-        if (!Jalali.isValid(y, m, d)) return Coerced.Bad("چنین تاریخی در تقویم شمسی وجود ندارد.")
-        val normalized = Jalali.format(y, m, d)
+        val normalized = com.khodroyar.app.core.text.PersianInput.date(s)
+            ?: return Coerced.Bad("تاریخ شمسی معتبر لازم است؛ مانند ۱۴۰۳۰۱۰۱ یا ۱۴۰۳/۰۱/۰۱.")
         if (!allowFuture && normalized > today) return Coerced.Bad("تاریخ نمی‌تواند در آینده باشد.")
         return Coerced.Good(normalized)
     }

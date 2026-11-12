@@ -21,8 +21,8 @@ android {
         applicationId 'com.khodroyar.app'
         minSdk 24
         targetSdk 35
-        versionCode 60
-        versionName '5.4.0'
+        versionCode 63
+        versionName '5.4.1'
         testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
         vectorDrawables.useSupportLibrary = true
         // Public URL of the AI backend (NOT a secret). Set with -PaiBackendUrl=https://... or leave
@@ -32,6 +32,7 @@ android {
 
     androidResources {
         localeFilters += ['fa', 'en']
+        noCompress += ['traineddata']
     }
 
     signingConfigs {
@@ -107,6 +108,10 @@ dependencies {
     def composeBom = platform('androidx.compose:compose-bom:2026.02.00')
     implementation composeBom
     androidTestImplementation composeBom
+
+    // Bundled native OCR; no cloud SDK, model downloads or extra installation.
+    implementation 'cz.adaptech.tesseract4android:tesseract4android:4.9.0'
+    implementation 'androidx.exifinterface:exifinterface:1.4.1'
 
     implementation 'androidx.core:core-ktx:1.17.0'
     implementation 'androidx.activity:activity-compose:1.11.0'

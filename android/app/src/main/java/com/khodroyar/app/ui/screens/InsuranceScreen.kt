@@ -134,7 +134,7 @@ fun InsuranceScreen(repository: AppRepository) {
         SurfaceCard(modifier = Modifier.padding(horizontal = AppDimens.screenPadding, vertical = 10.dp)) {
             Button(
                 onClick = { editingId = null; showForm = true },
-                modifier = Modifier.fillMaxWidth().height(AppDimens.buttonHeight),
+                modifier = Modifier.fillMaxWidth().heightIn(min = AppDimens.buttonHeight),
                 shape = FieldShape,
             ) {
                 Icon(Icons.Outlined.Add, null)
@@ -225,7 +225,7 @@ private fun InsuranceForm(repository: AppRepository, editingId: String?, onClose
                 Modifier.fillMaxWidth().padding(horizontal = AppDimens.screenPadding, vertical = 10.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                OutlinedButton(onClick = onClose, modifier = Modifier.weight(1f).height(AppDimens.buttonHeight), shape = FieldShape) {
+                OutlinedButton(onClick = onClose, modifier = Modifier.weight(1f).heightIn(min = AppDimens.buttonHeight), shape = FieldShape) {
                     Text(tr("انصراف", "Cancel"))
                 }
                 Button(
@@ -248,7 +248,7 @@ private fun InsuranceForm(repository: AppRepository, editingId: String?, onClose
                             onClose()
                         }
                     },
-                    modifier = Modifier.weight(1f).height(AppDimens.buttonHeight),
+                    modifier = Modifier.weight(1f).heightIn(min = AppDimens.buttonHeight),
                     shape = FieldShape,
                 ) { Text(tr("ذخیره", "Save")) }
             }

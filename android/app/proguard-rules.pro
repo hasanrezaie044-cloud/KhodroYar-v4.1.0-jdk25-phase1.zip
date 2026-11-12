@@ -18,3 +18,7 @@
 # Annotation-only artifacts pulled in for R8 (jsr305 / error_prone).
 -dontwarn javax.annotation.**
 -dontwarn com.google.errorprone.annotations.**
+
+# JNI names used by the bundled Tesseract4Android engine.
+-keep class com.googlecode.tesseract.android.** { *; }
+-keep class com.googlecode.leptonica.android.** { *; }

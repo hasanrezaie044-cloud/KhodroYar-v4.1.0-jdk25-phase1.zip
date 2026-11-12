@@ -46,6 +46,7 @@ class AppRepository(context: Context) {
     private val settingsStore = SettingsStore.get(context)
     val insights: InsightsDao get() = db.insights()
     val quickEntries by lazy { QuickEntries(db, settingsStore, ::ratesFor) }
+    val serviceBatches by lazy { ServiceBatchOperations(db, settingsStore, ::ratesFor) }
 
     fun comparison(window: com.khodroyar.app.core.analytics.ReportWindow,
         previous: com.khodroyar.app.core.analytics.ReportWindow = window.previous()
@@ -242,6 +243,10 @@ class AppRepository(context: Context) {
 
     suspend fun servicesForDateOnce(date: String): List<ServiceEntity> =
         withContext(io) { db.services().rangeOnce(date, date) }
+
+    /** Read-only company-report comparison; identical hours semantics to existing reports. */
+    suspend fun workReportDays(start: String, end: String): List<DailyTotals> =
+        withContext(io) { db.services().dailyInRangeOnce(start, end) }
 
     suspend fun servicesInRangeOnce(start: String, end: String): List<ServiceEntity> =
         withContext(io) { db.services().rangeOnce(start, end) }

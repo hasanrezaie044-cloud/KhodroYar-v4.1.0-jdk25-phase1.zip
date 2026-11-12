@@ -427,7 +427,7 @@ private fun ServiceFormBody(
                             if (settings.autoServiceCarType.isNotBlank()) carType = CarType.fromWire(settings.autoServiceCarType)
                             toast.show("فرم از ثبت خودکار پر شد")
                         },
-                        modifier = Modifier.fillMaxWidth().height(AppDimens.buttonHeight),
+                        modifier = Modifier.fillMaxWidth().heightIn(min = AppDimens.buttonHeight),
                         shape = FieldShape,
                     ) {
                         Icon(Icons.Outlined.Bolt, null)
@@ -451,7 +451,7 @@ private fun ServiceFormBody(
                         }
                         toast.show("برای ثبت خودکار ذخیره شد")
                     },
-                    modifier = Modifier.fillMaxWidth().height(AppDimens.buttonHeight),
+                    modifier = Modifier.fillMaxWidth().heightIn(min = AppDimens.buttonHeight),
                     shape = FieldShape,
                 ) {
                     Icon(Icons.Outlined.SaveAlt, null)
@@ -563,7 +563,7 @@ private fun ServiceFormBody(
                             presetName = ""
                             toast.show("پریست ذخیره شد")
                         },
-                        modifier = Modifier.fillMaxWidth().height(AppDimens.buttonHeight),
+                        modifier = Modifier.fillMaxWidth().heightIn(min = AppDimens.buttonHeight),
                         shape = FieldShape,
                     ) {
                         Icon(Icons.Outlined.BookmarkAdd, null)
@@ -581,7 +581,7 @@ private fun ServiceFormBody(
             if (editing != null) {
                 OutlinedButton(
                     onClick = { confirmDelete = true },
-                    modifier = Modifier.fillMaxWidth().height(AppDimens.buttonHeight),
+                    modifier = Modifier.fillMaxWidth().heightIn(min = AppDimens.buttonHeight),
                     shape = FieldShape,
                 ) {
                     Icon(Icons.Outlined.Delete, null, tint = MaterialTheme.colorScheme.error)
@@ -620,7 +620,7 @@ private fun ServiceFormBody(
                 Button(
                     onClick = { save() },
                     enabled = !saving,
-                    modifier = Modifier.height(AppDimens.buttonHeight),
+                    modifier = Modifier.heightIn(min = AppDimens.buttonHeight),
                     shape = FieldShape,
                 ) {
                     Icon(Icons.Outlined.Check, null)

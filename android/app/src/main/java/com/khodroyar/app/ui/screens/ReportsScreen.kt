@@ -53,7 +53,7 @@ import java.io.File
  * the PDF and the Excel workbook, so the three can never disagree.
  */
 @Composable
-fun ReportsScreen(repository: AppRepository, onOpenService: (ServiceEntity) -> Unit = {}) {
+fun ReportsScreen(repository: AppRepository, onOpenService: (ServiceEntity) -> Unit = {}, onWorkReport: () -> Unit = {}) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val toast = LocalToast.current
@@ -306,6 +306,13 @@ fun ReportsScreen(repository: AppRepository, onOpenService: (ServiceEntity) -> U
             }
         }
 
+        item {
+            Box(Modifier.testTag("open-work-report")) {
+                ActionRow(title = "مقایسهٔ کارکرد شرکت", subtitle = "عکس / PDF · خواندن آفلاین و اختلاف روزبه‌روز",
+                    icon = Icons.Outlined.DocumentScanner, onClick = onWorkReport)
+            }
+        }
+
         /* ------------------------------------------------------------- filters */
         item {
             FormSection("بازه گزارش", Icons.Outlined.DateRange) {
@@ -430,7 +437,7 @@ fun ReportsScreen(repository: AppRepository, onOpenService: (ServiceEntity) -> U
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
                     OutlinedButton(
                         onClick = { saveExcel.launch(excelFileName) },
-                        modifier = Modifier.weight(1f).height(AppDimens.buttonHeight),
+                        modifier = Modifier.weight(1f).heightIn(min = AppDimens.buttonHeight),
                         shape = FieldShape,
                     ) { Icon(Icons.Outlined.SaveAlt, null); Spacer(Modifier.width(6.dp)); Text(tr("ذخیره Excel", "Save Excel")) }
                     OutlinedButton(
@@ -445,7 +452,7 @@ fun ReportsScreen(repository: AppRepository, onOpenService: (ServiceEntity) -> U
                                     .onFailure { toast.show("ساخت خروجی Excel انجام نشد") }
                             }
                         },
-                        modifier = Modifier.weight(1f).height(AppDimens.buttonHeight),
+                        modifier = Modifier.weight(1f).heightIn(min = AppDimens.buttonHeight),
                         shape = FieldShape,
                     ) { Icon(Icons.Outlined.GridOn, null); Spacer(Modifier.width(6.dp)); Text(tr("اشتراک Excel", "Share Excel")) }
                 }
@@ -461,7 +468,7 @@ fun ReportsScreen(repository: AppRepository, onOpenService: (ServiceEntity) -> U
                                 .onFailure { toast.show("ساخت خروجی PDF انجام نشد") }
                         }
                     },
-                    modifier = Modifier.fillMaxWidth().height(AppDimens.buttonHeight),
+                    modifier = Modifier.fillMaxWidth().heightIn(min = AppDimens.buttonHeight),
                     shape = FieldShape,
                 ) { Icon(Icons.Outlined.PictureAsPdf, null); Spacer(Modifier.width(6.dp)); Text(tr("خروجی PDF", "PDF Export")) }
             }

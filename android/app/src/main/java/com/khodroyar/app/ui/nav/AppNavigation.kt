@@ -28,5 +28,6 @@ enum class ToolDestination(val title: String, val englishTitle: String, val subt
     RATES("نرخ‌ها", "Rates", "نرخ کیلومتر، ساعت، سوخت و عوارضی", "Km, hour, fuel and toll rates", Icons.Outlined.Percent),
     INSURANCE("بیمه و مدارک", "Insurance", "بیمه بدنه، شخص ثالث و مدارک خودرو", "Body, third-party insurance and documents", Icons.Outlined.Shield),
     TRAFFIC("دستیار ترافیک", "Traffic Assistant", "", "", Icons.Outlined.DirectionsCar),
+    WORK_REPORT("مقایسهٔ کارکرد شرکت", "Work Report OCR", "OCR آفلاین و مقایسهٔ روزانه", "Offline OCR and daily comparison", Icons.Outlined.DocumentScanner),
     AI_ASSISTANT("دستیار هوشمند", "Smart Assistant", "گفتگو و مدیریت اطلاعات با هوش مصنوعی", "Chat and manage your records with AI", Icons.Outlined.AutoAwesome),
 }

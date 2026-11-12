@@ -30,6 +30,11 @@ interface ServiceDao {
     @Query("SELECT * FROM services WHERE date BETWEEN :start AND :end ORDER BY date, startTime")
     suspend fun rangeOnce(start: String, end: String): List<ServiceEntity>
 
+    @Query("""SELECT date, COUNT(*) AS count, COALESCE(SUM(km),0) AS totalKm,
+        COALESCE(SUM(hours),0) AS totalHours, COALESCE(SUM(income),0) AS totalIncome
+        FROM services WHERE date BETWEEN :start AND :end GROUP BY date ORDER BY date""")
+    suspend fun dailyInRangeOnce(start: String, end: String): List<DailyTotals>
+
     @Query("SELECT * FROM services WHERE date LIKE :prefix || '%' ORDER BY date, startTime")
     suspend fun byDatePrefixOnce(prefix: String): List<ServiceEntity>
 

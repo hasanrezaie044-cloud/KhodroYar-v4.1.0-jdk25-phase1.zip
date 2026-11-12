@@ -111,6 +111,7 @@ jobs:
         run: |
           chmod +x ./gradlew
           STATIC_ONLY=1 bash ../tools/check-permissions.sh
+          python3 ../tools/verify-ocr-assets.py
           set +e
           ./gradlew testDebugUnitTest --stacktrace 2>&1 | tee "$RUNNER_TEMP/khodroyar-tests.log"
           TEST_EXIT=${PIPESTATUS[0]}
@@ -197,11 +198,23 @@ jobs:
           AAPT="$ANDROID_HOME/build-tools/${ANDROID_BUILD_TOOLS}/aapt2"
           "$AAPT" dump badging "$APK" | grep -E "^package: name='com\.khodroyar\.app'" || exit 1
 
+      - name: Audit bundled offline OCR and native library alignment
+        run: |
+          python3 tools/audit-ocr-apk.py android/app/build/outputs/apk/release/app-release.apk android/app/build/outputs/apk/release/verification.json
+          AAPT="$ANDROID_HOME/build-tools/${ANDROID_BUILD_TOOLS}/aapt2"
+          if "$AAPT" dump badging android/app/build/outputs/apk/release/app-release.apk | grep -q "application-debuggable"; then
+            echo "Release APK is debuggable"; exit 1
+          fi
+          CERT=$("$ANDROID_HOME/build-tools/${ANDROID_BUILD_TOOLS}/apksigner" verify --print-certs android/app/build/outputs/apk/release/app-release.apk | sed -n 's/^Signer #1 certificate SHA-256 digest: //p')
+          test "$CERT" = "03bfbc3575667403c3259fae345f3eb1ad3045373cb62123be376ef4898caaf0" || { echo "Signing identity changed"; exit 1; }
+
       - name: Upload signed APK
         uses: actions/upload-artifact@v4
         with:
           name: khodroyar-release-signed-${{ steps.version.outputs.version_name }}
-          path: android/app/build/outputs/apk/release/app-release.apk
+          path: |
+            android/app/build/outputs/apk/release/app-release.apk
+            android/app/build/outputs/apk/release/verification.json
           if-no-files-found: error
           retention-days: 30
 

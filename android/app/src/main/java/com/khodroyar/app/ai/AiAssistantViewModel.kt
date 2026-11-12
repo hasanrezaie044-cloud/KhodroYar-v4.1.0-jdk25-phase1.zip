@@ -301,11 +301,16 @@ class AiAssistantViewModel(app: Application) : AndroidViewModel(app) {
             if (settings.mode != AiMode.LOCAL) return
             messages.add(ChatEntry(UUID.randomUUID().toString(), ChatRole.USER, text, System.currentTimeMillis()))
             persist()
-            when (LocalApprovalInput.classify(text, pending!!.destructive)) {
+            val grouped = pending!!.call.spec.name.startsWith("bulk_")
+            val baseDecision = LocalApprovalInput.classify(text, false)
+            val decision = if (grouped) {
+                if (baseDecision == LocalApprovalInput.Decision.CONFIRM) LocalApprovalInput.Decision.REQUIRE_BUTTON else baseDecision
+            } else LocalApprovalInput.classify(text, pending!!.destructive)
+            when (decision) {
                 LocalApprovalInput.Decision.CONFIRM -> { confirmPending(); return }
                 LocalApprovalInput.Decision.CANCEL -> { cancelPending(); return }
                 LocalApprovalInput.Decision.REQUIRE_BUTTON -> {
-                    add(ChatRole.ASSISTANT, "حذف فقط با دکمهٔ قرمز همین خلاصه تأیید می‌شود؛ برای انصراف «لغو» بگو.")
+                    add(ChatRole.ASSISTANT, "عملیات گروهی یا حذف فقط با دکمهٔ تأیید همین خلاصه انجام می‌شود؛ برای انصراف «لغو» بگو.")
                     return
                 }
                 LocalApprovalInput.Decision.REVISE -> Unit

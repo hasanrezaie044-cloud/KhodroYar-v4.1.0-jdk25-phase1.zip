@@ -164,7 +164,7 @@ fun SettingsScreen(repository: AppRepository, settings: AppSettings, onToggleThe
                             repository.updateSettings { it.copy(userFirstName = f, userLastName = l) }
                             toast.show(if (settings.language == AppSettings.LANGUAGE_EN) "Profile saved" else "پروفایل ذخیره شد")
                         },
-                        modifier = Modifier.fillMaxWidth().height(AppDimens.buttonHeight),
+                        modifier = Modifier.fillMaxWidth().heightIn(min = AppDimens.buttonHeight),
                         shape = FieldShape,
                     ) { Text(if (settings.language == AppSettings.LANGUAGE_EN) "Save" else "ذخیره") }
                     if (settings.displayName.isNotBlank()) {
@@ -278,7 +278,7 @@ fun SettingsScreen(repository: AppRepository, settings: AppSettings, onToggleThe
                         repository.updateSettings { it.copy(monthlyIncomeGoal = goalText.asDouble()) }
                         toast.show("هدف درآمد ماهانه ذخیره شد")
                     },
-                    modifier = Modifier.fillMaxWidth().height(AppDimens.buttonHeight),
+                    modifier = Modifier.fillMaxWidth().heightIn(min = AppDimens.buttonHeight),
                     shape = FieldShape,
                 ) { Text("ذخیره هدف") }
             }
@@ -667,7 +667,7 @@ private fun NotificationHealthCard(
         if (!status.permissionGranted) {
             Button(
                 onClick = onGrant,
-                modifier = Modifier.fillMaxWidth().height(AppDimens.buttonHeight),
+                modifier = Modifier.fillMaxWidth().heightIn(min = AppDimens.buttonHeight),
                 shape = FieldShape,
             ) {
                 Icon(Icons.Outlined.NotificationsActive, null)
@@ -679,12 +679,12 @@ private fun NotificationHealthCard(
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             OutlinedButton(
                 onClick = onSendTest,
-                modifier = Modifier.weight(1f).height(AppDimens.buttonHeight),
+                modifier = Modifier.weight(1f).heightIn(min = AppDimens.buttonHeight),
                 shape = FieldShape,
             ) { Text(tr("اعلان آزمایشی", "Test notification")) }
             OutlinedButton(
                 onClick = onRecheck,
-                modifier = Modifier.weight(1f).height(AppDimens.buttonHeight),
+                modifier = Modifier.weight(1f).heightIn(min = AppDimens.buttonHeight),
                 shape = FieldShape,
             ) { Text(tr("بررسی مجدد", "Check again")) }
         }
@@ -845,7 +845,7 @@ private fun ManualHolidaysCard(repository: AppRepository) {
                     toast.show("تعطیل دستی افزوده شد")
                 }
             },
-            modifier = Modifier.fillMaxWidth().height(AppDimens.buttonHeight),
+            modifier = Modifier.fillMaxWidth().heightIn(min = AppDimens.buttonHeight),
             shape = FieldShape,
         ) { Text(tr("افزودن تعطیل", "Add holiday")) }
 
@@ -912,7 +912,7 @@ private fun PersonnelCard(repository: AppRepository) {
                     toast.show("پرسنل افزوده شد")
                 }
             },
-            modifier = Modifier.fillMaxWidth().height(AppDimens.buttonHeight),
+            modifier = Modifier.fillMaxWidth().heightIn(min = AppDimens.buttonHeight),
             shape = FieldShape,
         ) { Text(tr("افزودن پرسنل", "Add personnel")) }
 

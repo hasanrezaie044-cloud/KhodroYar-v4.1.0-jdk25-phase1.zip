@@ -445,7 +445,7 @@ private fun LoansSection(repository: AppRepository) {
                                 )
                             }
                         },
-                        modifier = Modifier.fillMaxWidth().height(AppDimens.buttonHeight),
+                        modifier = Modifier.fillMaxWidth().heightIn(min = AppDimens.buttonHeight),
                         shape = FieldShape,
                     ) { Text(tr("علامت‌گذاری اقساط سررسیدشده", "Mark Due Installments")) }
                 }
@@ -456,7 +456,7 @@ private fun LoansSection(repository: AppRepository) {
             modifier = Modifier
                 .padding(horizontal = AppDimens.screenPadding, vertical = 10.dp)
                 .fillMaxWidth()
-                .height(AppDimens.buttonHeight),
+                .heightIn(min = AppDimens.buttonHeight),
             shape = FieldShape,
         ) { Icon(Icons.Outlined.Add, null); Spacer(Modifier.width(8.dp)); Text(tr("ثبت وام", "Add Loan")) }
     }
@@ -562,7 +562,7 @@ private fun LoanCard(
         Row(horizontalArrangement = Arrangement.spacedBy(AppDimens.gap)) {
             Button(
                 onClick = onEdit,
-                modifier = Modifier.weight(1f).height(AppDimens.buttonHeight),
+                modifier = Modifier.weight(1f).heightIn(min = AppDimens.buttonHeight),
                 shape = FieldShape,
             ) {
                 Icon(Icons.Outlined.Edit, null)
@@ -571,7 +571,7 @@ private fun LoanCard(
             }
             OutlinedButton(
                 onClick = onDelete,
-                modifier = Modifier.weight(1f).height(AppDimens.buttonHeight),
+                modifier = Modifier.weight(1f).heightIn(min = AppDimens.buttonHeight),
                 shape = FieldShape,
             ) {
                 Icon(Icons.Outlined.Delete, null, tint = MaterialTheme.colorScheme.error)
@@ -727,7 +727,7 @@ private fun LoanForm(repository: AppRepository, editing: LoanEntity?, onClose: (
             ) {
                 OutlinedButton(
                     onClick = onClose,
-                    modifier = Modifier.weight(1f).height(AppDimens.buttonHeight),
+                    modifier = Modifier.weight(1f).heightIn(min = AppDimens.buttonHeight),
                     shape = FieldShape,
                 ) { Text(tr("انصراف", "Cancel")) }
                 Button(
@@ -749,7 +749,7 @@ private fun LoanForm(repository: AppRepository, editing: LoanEntity?, onClose: (
                             onClose()
                         }
                     },
-                    modifier = Modifier.weight(1f).height(AppDimens.buttonHeight),
+                    modifier = Modifier.weight(1f).heightIn(min = AppDimens.buttonHeight),
                     shape = FieldShape,
                 ) { Text(tr("ذخیره", "Save")) }
             }
@@ -859,7 +859,7 @@ private fun PurchasesSection(
             modifier = Modifier
                 .padding(horizontal = AppDimens.screenPadding, vertical = 10.dp)
                 .fillMaxWidth()
-                .height(AppDimens.buttonHeight),
+                .heightIn(min = AppDimens.buttonHeight),
             shape = FieldShape,
         ) { Icon(Icons.Outlined.Add, null); Spacer(Modifier.width(8.dp)); Text(tr("ثبت خرید شخصی", "Add Personal Purchase")) }
     }
@@ -956,7 +956,7 @@ private fun IncomesSection(repository: AppRepository, year: Int) {
             modifier = Modifier
                 .padding(horizontal = AppDimens.screenPadding, vertical = 10.dp)
                 .fillMaxWidth()
-                .height(AppDimens.buttonHeight),
+                .heightIn(min = AppDimens.buttonHeight),
             shape = FieldShape,
         ) { Icon(Icons.Outlined.Add, null); Spacer(Modifier.width(8.dp)); Text(tr("ثبت درآمد شخصی", "Add Personal Income")) }
     }
@@ -1066,12 +1066,12 @@ private fun LedgerForm(
             ) {
                 OutlinedButton(
                     onClick = onClose,
-                    modifier = Modifier.weight(1f).height(AppDimens.buttonHeight),
+                    modifier = Modifier.weight(1f).heightIn(min = AppDimens.buttonHeight),
                     shape = FieldShape,
                 ) { Text(tr("انصراف", "Cancel")) }
                 Button(
                     onClick = { onSave(date, category, label.trim(), value.asDouble()) },
-                    modifier = Modifier.weight(1f).height(AppDimens.buttonHeight),
+                    modifier = Modifier.weight(1f).heightIn(min = AppDimens.buttonHeight),
                     shape = FieldShape,
                 ) { Text(tr("ذخیره", "Save")) }
             }

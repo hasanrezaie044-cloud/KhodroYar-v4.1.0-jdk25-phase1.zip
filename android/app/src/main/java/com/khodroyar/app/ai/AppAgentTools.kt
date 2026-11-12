@@ -24,6 +24,7 @@ import java.util.UUID
 class AppAgentTools(context: Context, private val repo: AppRepository) : AgentToolRunner {
     private val app = context.applicationContext
     private val records = AgentToolExecutor(repo)
+    private val serviceRecords = ServiceRecordTools(repo)
     private val store = AutomationStore.get(app)
     private val extraNames = (AutomationToolSpecs.tools + DailyToolSpecs.tools).map { it.name }.toSet()
 
@@ -36,6 +37,7 @@ class AppAgentTools(context: Context, private val repo: AppRepository) : AgentTo
     }
 
     override suspend fun prepare(call: ValidatedCall): ValidatedCall {
+        if (call.spec.name in ServiceCommandSpecs.names) return serviceRecords.prepare(call)
         if (call.spec.name !in extraNames) return records.prepare(call)
         val args = call.args.toMutableMap()
         if (call.spec.name == "repeat_expense") {
@@ -60,7 +62,11 @@ class AppAgentTools(context: Context, private val repo: AppRepository) : AgentTo
             args["operation_id"] = UUID.randomUUID().toString()
         }
         if (call.spec.name in setOf("create_service_rule", "add_service_from_preset")) {
-            args["service_snapshot"] = AutomationCodec.templateJson(template()).toString()
+            val saved = template()
+            val requestedType = call.str("service_type")
+            val chosen = if (requestedType == null) saved else saved.copy(type = requestedType)
+            userCheck(chosen.valid(), "الگوی سرویس با نوع انتخاب‌شده کامل نیست؛ مقادیر واقعی را بررسی کن.")
+            args["service_snapshot"] = AutomationCodec.templateJson(chosen).toString()
         }
         if (call.spec.name in setOf("set_automation_enabled", "update_expense_rule", "remove_automation_rule")) {
             val rule = find(call.str("id"))
@@ -82,6 +88,7 @@ class AppAgentTools(context: Context, private val repo: AppRepository) : AgentTo
     }
 
     override fun describe(call: ValidatedCall): String = when (call.spec.name) {
+        in ServiceCommandSpecs.names -> serviceRecords.describe(call)
         "repeat_expense" -> "تکرار هزینهٔ «${call.str("source_title") }» از ${call.str("source_date")} برای ${call.str("date")}\nمبلغ: ${Analytics.formatNumber(call.dbl("source_amount") ?: 0.0)} تومان\nیک ثبت جدید؛ سابقهٔ قبلی تغییر نمی‌کند."
         "create_expense_rule", "create_service_rule", "create_traffic_rule" -> ruleSummary(ruleFrom(call)) +
             (if (call.spec.name == "create_traffic_rule") "\n\nاجازهٔ دریافت آنلاین و اعلان ترافیک در زمان‌های همین قانون؛ مصرف سهمیهٔ نشان محتمل است، نه API هوش مصنوعی." else "\n\nاجازهٔ ثبت خودکار واقعی برای همین قانون؛ تا توقف یا پایان آن.") +
@@ -98,10 +105,11 @@ class AppAgentTools(context: Context, private val repo: AppRepository) : AgentTo
         else -> records.describe(call)
     }
 
-    override suspend fun describeTarget(call: ValidatedCall): String? = if (call.spec.name == "remove_automation_rule")
+    override suspend fun describeTarget(call: ValidatedCall): String? = if (call.spec.name in ServiceCommandSpecs.names) serviceRecords.describeTarget(call) else if (call.spec.name == "remove_automation_rule")
         store.rules.value.singleOrNull { it.id == call.str("id") }?.let { ruleSummary(it) } else records.describeTarget(call)
 
     override suspend fun execute(call: ValidatedCall): ToolOutcome {
+        if (call.spec.name in ServiceCommandSpecs.names) return serviceRecords.execute(call)
         if (call.spec.name !in extraNames) return records.execute(call)
         return try {
             withContext(Dispatchers.IO) { executeExtra(call) }

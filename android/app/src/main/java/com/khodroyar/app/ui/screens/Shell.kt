@@ -230,7 +230,11 @@ fun CarManagerRoot(
                     Modifier
                         .fillMaxSize()
                         .padding(padding)
-                        .imePadding(),
+                        .consumeWindowInsets(padding)
+                        // Consume Scaffold's bar once; overlays have no bottom bar and
+                        // still need gesture/three-button navigation protection. union
+                        // takes max(IME, navigation), never adds both heights.
+                        .windowInsetsPadding(WindowInsets.systemBars.only(WindowInsetsSides.Horizontal + WindowInsetsSides.Bottom).union(WindowInsets.ime)),
                 ) {
                     AppTopBar(
                         title = title,
@@ -287,6 +291,7 @@ fun CarManagerRoot(
                             )
 
                             /* ---------------------------------------------- tools */
+                            ToolDestination.WORK_REPORT -> WorkReportScreen()
                             ToolDestination.FUEL -> FuelScreen(
                                 repository,
                                 quickDate = quick?.takeIf { it.tool == ToolDestination.FUEL }?.date,
@@ -322,6 +327,7 @@ fun CarManagerRoot(
                                     AgentSection.RATES -> tool = ToolDestination.RATES
                                     AgentSection.TRAFFIC -> tool = ToolDestination.TRAFFIC
                                     AgentSection.SEARCH -> overlay = Overlay.Search
+                                    AgentSection.WORK_REPORT -> tool = ToolDestination.WORK_REPORT
                                 }
                             })
 
@@ -353,7 +359,7 @@ fun CarManagerRoot(
                                 onQuickExpense = { date -> quick = QuickEntry(ToolDestination.FINANCE, date); tool = ToolDestination.FINANCE },
                                 onEditService = { overlay = Overlay.EditService(it) },
                             )
-                            AppDestination.REPORTS -> ReportsScreen(repository, onOpenService = { overlay = Overlay.EditService(it) })
+                            AppDestination.REPORTS -> ReportsScreen(repository, onOpenService = { overlay = Overlay.EditService(it) }, onWorkReport = { tool = ToolDestination.WORK_REPORT })
                             AppDestination.SETTINGS -> SettingsScreen(repository, settings, onToggleTheme)
                             else -> DashboardScreen(
                                 repository = repository,

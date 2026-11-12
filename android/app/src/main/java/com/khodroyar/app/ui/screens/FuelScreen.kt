@@ -154,7 +154,7 @@ fun FuelScreen(
             modifier = Modifier
                 .padding(horizontal = AppDimens.screenPadding, vertical = 10.dp)
                 .fillMaxWidth()
-                .height(AppDimens.buttonHeight),
+                .heightIn(min = AppDimens.buttonHeight),
             shape = FieldShape,
         ) { Icon(Icons.Outlined.Add, null); Spacer(Modifier.width(8.dp)); Text(tr("ثبت سوخت", "Add Fuel")) }
     }
@@ -294,7 +294,7 @@ private fun FuelForm(repository: AppRepository, initialDate: String?, onClose: (
             ) {
                 OutlinedButton(
                     onClick = onClose,
-                    modifier = Modifier.weight(1f).height(AppDimens.buttonHeight),
+                    modifier = Modifier.weight(1f).heightIn(min = AppDimens.buttonHeight),
                     shape = FieldShape,
                 ) { Text(tr("انصراف", "Cancel")) }
                 Button(
@@ -306,7 +306,7 @@ private fun FuelForm(repository: AppRepository, initialDate: String?, onClose: (
                             onClose()
                         }
                     },
-                    modifier = Modifier.weight(1f).height(AppDimens.buttonHeight),
+                    modifier = Modifier.weight(1f).heightIn(min = AppDimens.buttonHeight),
                     shape = FieldShape,
                 ) { Text(tr("ذخیره سوخت", "Save Fuel")) }
             }

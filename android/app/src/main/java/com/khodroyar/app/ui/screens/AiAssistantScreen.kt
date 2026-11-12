@@ -60,6 +60,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
@@ -358,10 +359,13 @@ private fun ConfirmCard(p: PendingAction, onConfirm: () -> Unit, onCancel: () ->
     ) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text(
-                if (danger) "تأیید حذف (غیرقابل بازگشت)" else "تأیید عملیات",
+                if (danger) "تأیید حذف (غیرقابل بازگشت)" else if (p.call.spec.name.startsWith("bulk_")) "تأیید تغییرات گروهی" else "تأیید عملیات",
                 style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold, color = accent,
             )
-            Text(p.summary, style = LocalTextStyle.current.copy(textDirection = TextDirection.Content))
+            SelectionContainer {
+                Text(p.summary, modifier = Modifier.fillMaxWidth().heightIn(max = 240.dp).verticalScroll(rememberScrollState()).testTag("agent-action-summary"),
+                    style = LocalTextStyle.current.copy(textDirection = TextDirection.Content))
+            }
             p.target?.let {
                 Text("رکورد: $it", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
@@ -372,7 +376,7 @@ private fun ConfirmCard(p: PendingAction, onConfirm: () -> Unit, onCancel: () ->
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 Button(
                     onClick = onConfirm,
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier.weight(1f).heightIn(min = 48.dp).testTag("agent-confirm-action"),
                     colors = if (danger) ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error, contentColor = MaterialTheme.colorScheme.onError) else ButtonDefaults.buttonColors(),
                 ) { Text(if (danger) "بله، حذف شود" else "تأیید و انجام") }
                 OutlinedButton(onClick = onCancel, modifier = Modifier.weight(1f)) { Text("لغو") }
