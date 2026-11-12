@@ -418,6 +418,34 @@ jobs:
           run-id: ${{ inputs.evidence_run_id }}
           github-token: ${{ github.token }}
           path: ${{ runner.temp }}/signed-test-diagnostics
+      - name: Read only disposable native fixture evidence
+        uses: actions/download-artifact@v4
+        with:
+          name: khodroyar-orbit-native-ui
+          run-id: ${{ inputs.evidence_run_id }}
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/native-test-diagnostics
+      - name: Expose fixed-form synthetic header and cell diagnostics
+        run: |
+          python3 - <<'PY'
+          import json, os, re
+          from pathlib import Path
+          root = Path(os.environ['RUNNER_TEMP']) / 'native-test-diagnostics'
+          for path in root.rglob('company-template-ocr.json'):
+              assert path.stat().st_size <= 1_000_000
+              data = json.loads(path.read_text())
+              assert data['environment'] == 'Synthetic fixed recurring form; three PDF pages plus repeated PNG; native offline engine'
+              messages = data.get('diagnostics', [])
+              for index, message in enumerate(m for m in messages if m.startswith('Page ')):
+                  words = re.findall(r'OcrWord\(text=(.*?), left=([^,]+), top=([^,]+), right=([^,]+), bottom=([^,]+), confidence=([^\)]+)\)', message)
+                  text = json.dumps([dict(text=t, x=(float(l)+float(r))/2, top=float(y), bottom=float(b), confidence=float(c)) for t,l,y,r,b,c in words if float(y) < .23], ensure_ascii=False)
+                  piece = text[:3500].replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
+                  print(f'::notice title=Synthetic fixed form header {index+1}::' + piece)
+              text = '\n'.join(m for m in messages if 'Fixed-form ' in m or m.startswith('Printed '))[:17500]
+              for index in range(0, len(text), 3500):
+                  piece = text[index:index+3500].replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
+                  print(f'::notice title=Synthetic fixed form cells {index//3500+1}::' + piece)
+          PY
       - name: Expose bounded emulator crash diagnostics through checks
         run: |
           python3 - <<'PY'
