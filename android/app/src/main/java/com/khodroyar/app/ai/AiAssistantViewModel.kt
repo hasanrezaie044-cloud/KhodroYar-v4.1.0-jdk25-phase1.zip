@@ -303,7 +303,7 @@ class AiAssistantViewModel(app: Application) : AndroidViewModel(app) {
             persist()
             val grouped = pending!!.call.spec.name.startsWith("bulk_")
             val baseDecision = LocalApprovalInput.classify(text, false)
-            val decision = if (grouped) {
+            val decision = if (grouped || pending!!.destructive) {
                 if (baseDecision == LocalApprovalInput.Decision.CONFIRM) LocalApprovalInput.Decision.REQUIRE_BUTTON else baseDecision
             } else LocalApprovalInput.classify(text, pending!!.destructive)
             when (decision) {

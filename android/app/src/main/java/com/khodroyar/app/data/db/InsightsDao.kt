@@ -81,6 +81,10 @@ interface InsightsDao {
     @Query("SELECT * FROM personal_incomes WHERE date BETWEEN :start AND :end ORDER BY date")
     fun incomeRecords(start: String, end: String): Flow<List<PersonalIncomeEntity>>
 
+    @Query("SELECT * FROM fuels WHERE id LIKE :prefix || '%' LIMIT 2") suspend fun fuelByIdPrefix(prefix: String): List<FuelEntity>
+    @Query("SELECT * FROM maintenances WHERE id LIKE :prefix || '%' LIMIT 2") suspend fun maintenanceByIdPrefix(prefix: String): List<MaintenanceEntity>
+    @Query("SELECT * FROM personal_expenses WHERE id LIKE :prefix || '%' LIMIT 2") suspend fun expenseByIdPrefix(prefix: String): List<PersonalExpenseEntity>
+
     @Query("SELECT * FROM fuels WHERE id = :id") suspend fun fuel(id: String): FuelEntity?
     @Query("SELECT * FROM maintenances WHERE id = :id") suspend fun maintenance(id: String): MaintenanceEntity?
     @Query("SELECT * FROM personal_expenses WHERE id = :id") suspend fun expense(id: String): PersonalExpenseEntity?

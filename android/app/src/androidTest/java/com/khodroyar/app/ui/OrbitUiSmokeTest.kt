@@ -57,6 +57,7 @@ class OrbitUiSmokeTest {
     private val context get() = InstrumentationRegistry.getInstrumentation().targetContext
     private lateinit var repository: AppRepository
     @Volatile private var imeVisible = false
+    @Volatile private var imePixels = 0
 
     @Before fun fixture() {
         check(Build.HARDWARE.contains("ranchu") || Build.HARDWARE.contains("goldfish") || Build.FINGERPRINT.contains("generic")) {
@@ -91,13 +92,14 @@ class OrbitUiSmokeTest {
         }
     }
 
-    private fun render(dark: Boolean = false, rtl: Boolean = true, fontScale: Float = 1f, content: @Composable () -> Unit) {
+    private fun render(dark: Boolean = false, rtl: Boolean = true, fontScale: Float = 1f, edgeToEdge: Boolean = false, content: @Composable () -> Unit) {
         compose.setContent {
             val density = LocalDensity.current
             val activity = LocalContext.current.hostActivity()
             val imeBottom = WindowInsets.ime.getBottom(density)
-            SideEffect { imeVisible = imeBottom > 0 }
+            SideEffect { imeVisible = imeBottom > 0; imePixels = imeBottom }
             DisposableEffect(activity) {
+                if (edgeToEdge) activity?.window?.let { androidx.core.view.WindowCompat.setDecorFitsSystemWindows(it, false) }
                 val previous = activity?.window?.attributes?.softInputMode
                 // Match MainActivity's manifest instead of the test host's adjust-pan default.
                 activity?.window?.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
@@ -336,8 +338,36 @@ class OrbitUiSmokeTest {
         compose.onAllNodesWithText("آموزش", substring = true).assertCountEquals(0)
     }
 
+    @Test fun imeAndNavigationKeepServiceActionsVisibleAtSamsungSizedLargeText() {
+        render(fontScale = 1.35f, edgeToEdge = true) {
+            Box(Modifier.width(320.dp).fillMaxHeight().testTag("ime-app-window")) { CarManagerRoot(repository) }
+        }
+        compose.onNodeWithTag("nav-SERVICES").performClick()
+        val km = compose.onNode(hasText("کیلومتر") and hasSetTextAction())
+        km.performScrollTo().performClick()
+        km.performTextInput("80")
+        km.performClick()
+        compose.waitUntil(15000) { imeVisible }
+        val save = compose.onNodeWithTag("service-save").assertIsDisplayed().assertIsEnabled().fetchSemanticsNode().boundsInRoot
+        val cancel = compose.onNodeWithTag("service-cancel").assertIsDisplayed().assertIsEnabled().fetchSemanticsNode().boundsInRoot
+        val window = compose.onNodeWithTag("ime-app-window").fetchSemanticsNode().boundsInRoot
+        assertTrue("Save must be above actual software IME", save.bottom <= window.bottom - imePixels + 2)
+        assertTrue("Cancel must be above actual software IME", cancel.bottom <= window.bottom - imePixels + 2)
+        shot("34-service-actions-above-ime-320-large-font")
+        val count = runBlocking { AppDatabase.get(context).services().allOnce().size }
+        compose.onNodeWithTag("service-cancel").performClick()
+        assertEquals(count, runBlocking { AppDatabase.get(context).services().allOnce().size })
+        compose.waitUntil(15000) { !imeVisible }
+        compose.onNodeWithTag("nav-REPORTS").performClick()
+        compose.onNodeWithTag("report-list").performScrollToNode(hasTestTag("open-work-report"))
+        compose.onNodeWithText("مقایسهٔ کارکرد شرکت").performClick()
+        compose.onNodeWithTag("work-report-screen").assertIsDisplayed()
+        compose.onNodeWithTag("report-import").assertIsDisplayed()
+        shot("35-integrated-work-report-entry")
+    }
+
     @Test fun quickExpenseRequiresReviewSupportsCorrectionAndConfirmedUndoAtLargeFont() {
-        render(fontScale = 1.35f) {
+        render(fontScale = 1.35f, edgeToEdge = true) {
             Box(Modifier.width(320.dp).testTag("compact-app").fillMaxHeight()) { CarManagerRoot(repository) }
         }
         compose.onNodeWithTag("dashboard-list").performScrollToNode(hasTestTag("home-quick-add"))

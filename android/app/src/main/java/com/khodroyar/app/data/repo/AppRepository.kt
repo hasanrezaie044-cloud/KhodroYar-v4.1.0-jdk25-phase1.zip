@@ -66,6 +66,51 @@ class AppRepository(context: Context) {
         insights.mileageDays(Jalali.addDays(today, -55), today).map { com.khodroyar.app.core.analytics.MaintenanceForecast.pace(it, today) }
 
 
+    /** Resolve exactly one explicit assistant ID; bounded lookup, never a title guess. */
+    suspend fun agentRecord(kind: String, prefix: String): Any? = withContext(io) {
+        require(Regex("[A-Za-z0-9-]{4,40}").matches(prefix))
+        when (kind) {
+            "expense" -> db.insights().expenseByIdPrefix(prefix).singleOrNull()
+            "fuel" -> db.insights().fuelByIdPrefix(prefix).singleOrNull()
+            "maintenance" -> db.insights().maintenanceByIdPrefix(prefix).singleOrNull()
+            else -> null
+        }
+    }
+
+    /** Expected-row check and write/readback share one Room transaction and writer gate. */
+    suspend fun applyApprovedAgentRecord(before: Any, after: Any?) = withContext(io + kotlinx.coroutines.NonCancellable) {
+        RecordMutations.mutate(db, settingsStore, invalidateReceipt = true) {
+            db.withTransaction {
+                val actual: Any? = when (before) {
+                    is PersonalExpenseEntity -> db.insights().expense(before.id)
+                    is FuelEntity -> db.insights().fuel(before.id)
+                    is MaintenanceEntity -> db.insights().maintenance(before.id)
+                    else -> error("نوع رکورد مجاز نیست.")
+                }
+                if (actual == after) return@withTransaction
+                check(actual == before) { "رکورد بعد از پیش‌نمایش تغییر یا حذف شده؛ دوباره انتخاب و تأیید کنید." }
+                when (before) {
+                    is PersonalExpenseEntity -> if (after == null) db.personalExpenses().deleteById(before.id) else {
+                        require(after is PersonalExpenseEntity && after.id == before.id); db.personalExpenses().insert(after)
+                    }
+                    is FuelEntity -> if (after == null) db.fuels().deleteById(before.id) else {
+                        require(after is FuelEntity && after.id == before.id); db.fuels().insert(after)
+                    }
+                    is MaintenanceEntity -> if (after == null) db.maintenances().deleteById(before.id) else {
+                        require(after is MaintenanceEntity && after.id == before.id); db.maintenances().insert(after)
+                    }
+                }
+                val saved: Any? = when (before) {
+                    is PersonalExpenseEntity -> db.insights().expense(before.id)
+                    is FuelEntity -> db.insights().fuel(before.id)
+                    is MaintenanceEntity -> db.insights().maintenance(before.id)
+                    else -> null
+                }
+                check(saved == after) { "بازخوانی رکورد تأیید نشد." }
+            }
+        }
+    }
+
     // ----------------------------------------------------------- app settings
 
     /** Appearance, privacy mode, income goal and reminder switches. */

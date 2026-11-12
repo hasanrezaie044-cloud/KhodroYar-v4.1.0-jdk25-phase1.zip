@@ -12,7 +12,7 @@ class ServiceRecordTools(private val repository: AppRepository) : AgentToolRunne
     override suspend fun prepare(call: ValidatedCall): ValidatedCall = try {
         require(call.spec.name in ServiceCommandSpecs.names)
         val plan = repository.serviceBatches.prepare(call.spec.name, requireNotNull(call.str("start_date")), requireNotNull(call.str("end_date")),
-            requireNotNull(call.str("service_type")), call.int("per_day"), call.str("days") == "workdays", call.dbl("km"), call.dbl("hours"), call.str("new_type"))
+            requireNotNull(call.str("service_type")), call.int("per_day"), call.str("days") == "workdays", call.dbl("km"), call.dbl("hours"), call.str("new_type")).copy(reportAfter = call.str("report_after") == "on")
         ValidatedCall(call.spec, call.args + ("service_plan" to plan))
     } catch (e: CancellationException) { throw e }
     catch (e: IllegalArgumentException) { throw AgentUserException(e.message ?: "اطلاعات سرویس کامل نیست؛ چیزی تغییر نکرد.") }
@@ -28,9 +28,11 @@ class ServiceRecordTools(private val repository: AppRepository) : AgentToolRunne
         if (call.spec.kind == ToolKind.READ) read(call) else {
             val p = plan(call)
             val n = repository.serviceBatches.execute(p)
-            ToolOutcome(true, "$n سرویس طبق همین پیش‌نمایش در پایگاه‌داده تأیید و بازخوانی شد.\n${p.start} تا ${p.end}\n" +
+            val result = "$n سرویس طبق همین پیش‌نمایش در پایگاه‌داده تأیید و بازخوانی شد.\n${p.start} تا ${p.end}\n" +
                 "رکوردهای بعد: ${p.created.size} سرویس · ${p.created.sumOf { it.km }} کیلومتر · ${p.created.sumOf { it.hours }} ساعت\n" +
-                "این اعداد فقط رکوردهای تغییرکرده‌اند؛ برای کل بازه بگو «گزارش همونا رو بده». ثبت‌های موجود دوباره ایجاد نشدند.")
+                "این اعداد فقط رکوردهای تغییرکرده‌اند؛ برای کل بازه بگو «گزارش همونا رو بده». ثبت‌های موجود دوباره ایجاد نشدند."
+            val report = if (p.reportAfter) read(ValidatedCall(requireNotNull(AgentToolRegistry.find("report_services_range")), call.args)).text else ""
+            ToolOutcome(true, result + if (report.isNotEmpty()) "\n\nگزارش پس از عملیات:\n$report" else "")
         }
     } catch (e: CancellationException) { throw e }
     catch (e: AgentUserException) { ToolOutcome(false, e.userMessage) }

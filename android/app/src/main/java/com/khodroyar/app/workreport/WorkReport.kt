@@ -41,11 +41,10 @@ data class WorkTotals(val count: Int, val km: BigDecimal, val hours: BigDecimal)
 enum class DayStatus(val label: String) { MATCH("مطابق"), MISSING_IN_APP("در خودرویار ثبت نشده"), MISSING_IN_REPORT("در گزارش شرکت نیست"), DIFFERENT("مغایرت روزانه") }
 data class WorkDayComparison(val date: String, val company: DailyWork?, val app: DailyWork?) {
     val status: DayStatus get() = when {
+        countDifference == 0 && kmDifference.abs() <= BigDecimal("0.000001") && hoursDifference.abs() <= BigDecimal("0.000001") -> DayStatus.MATCH
         app == null -> DayStatus.MISSING_IN_APP
         company == null -> DayStatus.MISSING_IN_REPORT
-        company.count != app.count || (company.km - app.km).abs() > BigDecimal("0.000001") ||
-            (company.hours - app.hours).abs() > BigDecimal("0.000001") -> DayStatus.DIFFERENT
-        else -> DayStatus.MATCH
+        else -> DayStatus.DIFFERENT
     }
     val countDifference get() = (company?.count ?: 0) - (app?.count ?: 0)
     val kmDifference get() = (company?.km ?: BigDecimal.ZERO) - (app?.km ?: BigDecimal.ZERO)
@@ -81,6 +80,7 @@ object WorkReportParser {
     private fun excluded(s: String): String? = when {
         Regex("(?:^|\\s)(?:جمع|مجموع|جمعکل|subtotal|total)(?:\\s|$)").containsMatchIn(s) -> "ردیف جمع؛ در محاسبهٔ روزها استفاده نمی‌شود"
         s.contains("صفحه") || Regex("^page\\s+[0-9]").containsMatchIn(s) -> "پاورقی صفحه"
+        listOf("تاریخ چاپ", "تاریخ تهیه", "نام راننده", "شماره خودرو", "کد پرسنلی").any { s.contains(it) } -> "سربرگ گزارش"
         else -> null
     }
     fun lines(words: List<OcrWord>): List<List<OcrWord>> {

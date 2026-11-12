@@ -16,6 +16,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
@@ -88,6 +91,8 @@ private fun ServiceFormBody(
     onFinished: () -> Unit,
 ) {
     val scope = rememberCoroutineScope()
+    val focus = LocalFocusManager.current
+    val keyboard = LocalSoftwareKeyboardController.current
     val toast = LocalToast.current
     val ratesByYear by repository.ratesByYear.collectAsState(initial = RatesByYear.empty())
     val settings by repository.settings.collectAsState(initial = repository.settingsNow)
@@ -209,7 +214,7 @@ private fun ServiceFormBody(
     }
 
     fun save() {
-        if (Jalali.parse(date) == null) { toast.show("تاریخ سرویس معتبر نیست"); return }
+        if (com.khodroyar.app.core.text.PersianInput.date(date) == null) { toast.show("تاریخ سرویس معتبر نیست"); return }
         if (saving) return
         saving = true
         scope.launch {
@@ -252,7 +257,7 @@ private fun ServiceFormBody(
                 if (editing != null && editing.attachmentPath != attachmentPath) {
                     Attachments.delete(context, editing.attachmentPath)
                 }
-                onFinished()
+                focus.clearFocus(force = true); keyboard?.hide(); onFinished()
             } catch (e: Exception) {
                 toast.show("ثبت سرویس انجام نشد")
             } finally {
@@ -591,41 +596,25 @@ private fun ServiceFormBody(
             }
         }
 
-        /* --------------------------------------------------------- pinned save */
-        Surface(
-            color = MaterialTheme.colorScheme.surfaceContainerLowest,
-            shadowElevation = 8.dp,
-        ) {
-            Row(
-                Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = AppDimens.screenPadding, vertical = 10.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Column(Modifier.weight(1f)) {
-                    Text(
-                        "جمع نهایی",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    Text(
-                        "${money(breakdown.finalAmount)} تومان",
-                        style = MaterialTheme.typography.titleLarge,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.primary,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
+        /* Responsive, pinned actions: price, Save AND Cancel remain above IME/navigation. */
+        Surface(color = MaterialTheme.colorScheme.surfaceContainerLowest, shadowElevation = 8.dp) {
+            Column(Modifier.fillMaxWidth().padding(horizontal = AppDimens.screenPadding, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Text("جمع نهایی", Modifier.weight(1f), style = MaterialTheme.typography.labelMedium)
+                    Text("${money(breakdown.finalAmount)} تومان", Modifier.weight(1.6f),
+                        style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary,
+                        maxLines = 2, overflow = TextOverflow.Ellipsis)
                 }
-                Button(
-                    onClick = { save() },
-                    enabled = !saving,
-                    modifier = Modifier.heightIn(min = AppDimens.buttonHeight),
-                    shape = FieldShape,
-                ) {
-                    Icon(Icons.Outlined.Check, null)
-                    Spacer(Modifier.width(8.dp))
-                    Text(if (editing != null) "ذخیره تغییرات" else "ذخیره سرویس")
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(onClick = { focus.clearFocus(force = true); keyboard?.hide(); onFinished() }, enabled = !saving,
+                        modifier = Modifier.weight(1f).heightIn(min = 52.dp).testTag("service-cancel"), shape = FieldShape) {
+                        Text(if (standalone) "پاک کردن فرم" else "انصراف")
+                    }
+                    Button(onClick = { save() }, enabled = !saving,
+                        modifier = Modifier.weight(1.3f).heightIn(min = 52.dp).testTag("service-save"), shape = FieldShape) {
+                        Icon(Icons.Outlined.Check, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp))
+                        Text(if (editing != null) "ذخیره تغییرات" else "ذخیره سرویس", maxLines = 2)
+                    }
                 }
             }
         }

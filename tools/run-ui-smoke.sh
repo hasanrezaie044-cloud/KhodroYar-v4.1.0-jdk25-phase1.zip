@@ -5,6 +5,10 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SCREENSHOTS="${RUNNER_TEMP:-/tmp}/orbit-ui-screenshots"
 mkdir -p "$SCREENSHOTS"
 cd "$ROOT/android"
+# Exercise actual software IME rather than relying on a hidden hardware keyboard.
+adb shell settings put secure show_ime_with_hard_keyboard 1
+adb shell input keyevent KEYCODE_WAKEUP
+adb shell wm dismiss-keyguard || true
 set +e
 ./gradlew connectedDebugAndroidTest --stacktrace 2>&1 | tee "${RUNNER_TEMP:-/tmp}/khodroyar-ui-tests.log"
 RESULT=${PIPESTATUS[0]}

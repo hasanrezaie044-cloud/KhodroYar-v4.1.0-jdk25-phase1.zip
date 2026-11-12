@@ -1,6 +1,26 @@
 # مدیریت خودرو — Native Android
 
-## Current release: 5.4.0 (versionCode 60)
+## Current source: 5.4.1 (versionCode 63), based on restored 5.4.0
+
+Fully integrated into the existing `com.khodroyar.app`, with Room 6 and the existing signing identity:
+- **Offline Persian work-report OCR** in Reports/toolkit: bundled Tesseract + Persian/Arabic/English
+  models, multiple images and PDF pages, preview/rotation/order/removal, strict editable review,
+  cross-page duplicate flags and daily company/app comparison. Unknown values are never zero.
+- **Local service-range dialogue**: compact/separated Jalali dates, explicit daily counts, saved
+  values, exact before/after previews, button-only bulk approval, atomic mutations, stale-record
+  rejection, retry deduplication, and recoverable mileage updates. Search/report/edit/delete and
+  follow-up context stay inside the existing assistant. Existing expense/fuel/maintenance edits
+  also accept explicit IDs locally and require fresh app-owned snapshots.
+- **Android form safety**: consumed Scaffold insets plus IME/navigation union, pinned Save/Cancel,
+  large-text minimum button heights, bounded confirmation text and native page/column review.
+
+Read the [Persian usage, safety and verification contract](docs/OFFLINE-WORK-REPORTS.md).
+No cloud OCR/backend/Firebase, separate installation, new permission, public Release or financial
+formula/export rewrite is introduced. Existing optional online/traffic features are retained,
+not required by OCR or the internal assistant. Compilation and runtime verification are separate:
+only the final commit-specific CI results establish a passing release, not this feature list.
+
+## Preserved 5.4.0 baseline (versionCode 60)
 
 Five practical upgrades, on the same native app and Room 6 data:
 - **Quick add**: actual-history drafts, frequent recorded amounts, separate review/confirmation,

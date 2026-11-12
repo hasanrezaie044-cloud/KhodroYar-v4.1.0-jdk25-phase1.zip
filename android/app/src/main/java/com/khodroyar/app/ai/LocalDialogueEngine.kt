@@ -43,6 +43,7 @@ class LocalDialogueEngine(
         var serviceType: String? = null,
     )
     private val serviceCommands = ServiceCommandDialogue(today)
+    private val recordCommands = RecordCommandDialogue()
     private var draft: Draft? = null
     private var repeatDates: Pair<String, String>? = null
     private var waiting = ""
@@ -51,9 +52,12 @@ class LocalDialogueEngine(
     var context = LocalDialogueContext()
         private set
 
-    fun reset() { serviceCommands.reset(); repeatDates = null; draft = null; waiting = ""; management = null; lastRuleId = null; context = LocalDialogueContext() }
-    fun discardDraft() { serviceCommands.discard(); repeatDates = null; draft = null; management = null; waiting = ""; context = LocalDialogueContext() }
+    fun reset() { serviceCommands.reset(); recordCommands.reset(); repeatDates = null; draft = null; waiting = ""; management = null; lastRuleId = null; context = LocalDialogueContext() }
+    fun discardDraft() { serviceCommands.discard(); recordCommands.reset(); repeatDates = null; draft = null; management = null; waiting = ""; context = LocalDialogueContext() }
     fun completed(call: ValidatedCall, success: Boolean) {
+        if (call.spec.name in RecordCommandDialogue.names) {
+            recordCommands.completed(call, success); context = recordCommands.context; return
+        }
         if (call.spec.name in ServiceCommandSpecs.names) {
             serviceCommands.completed(call, success); context = serviceCommands.context; return
         }
@@ -80,6 +84,7 @@ class LocalDialogueEngine(
             discardDraft()
             return reply("چیزی ثبت یا فعال نمی‌کنم. اگر می‌خواهی یک کار خودکار قبلی را متوقف کنی، بگو «قانون قهوه را متوقف کن».")
         }
+        if (draft == null) recordCommands.parse(t)?.let { context = recordCommands.context; return it }
         if (draft == null) serviceCommands.parse(t)?.let { context = serviceCommands.context; return it }
         if (has(t, "سوخت", "بنزین") && has(t, "تعمیر", "روغن", "لنت", "لاستیک") && has(t, "ثبت", "بزن")) return reply("سوخت و تعمیر دو ثبت جدا هستند؛ هر بار یکی را تنظیم کنیم.")
         if (Regex("(?: و |؛|;)\\s*(?:ثبت|اضافه|ذخیره|هر روز)").containsMatchIn(t) ||

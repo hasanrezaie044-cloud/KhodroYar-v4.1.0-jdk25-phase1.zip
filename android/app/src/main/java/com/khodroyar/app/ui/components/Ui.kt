@@ -17,6 +17,7 @@ import androidx.compose.material.icons.outlined.ChevronRight
 import androidx.compose.material.icons.outlined.ChevronLeft
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.unit.LayoutDirection
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
@@ -974,7 +975,7 @@ fun ConfirmDialog(
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(title, style = MaterialTheme.typography.titleLarge) },
-        text = { Text(message, style = MaterialTheme.typography.bodyLarge) },
+        text = { Text(message, modifier = Modifier.heightIn(max = 280.dp).verticalScroll(androidx.compose.foundation.rememberScrollState()), style = MaterialTheme.typography.bodyLarge) },
         shape = MaterialTheme.shapes.extraLarge,
         confirmButton = {
             if (destructive) {

@@ -164,10 +164,10 @@ private fun ReportRowEditor(row: ReportRow, scroll: ScrollState, enabled: Boolea
     SurfaceCard(contentPadding = 8.dp) {
         Row(Modifier.horizontalScroll(scroll).width(760.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
             Checkbox(row.included, { onChange(row.copy(included = it)) }, enabled = enabled, modifier = Modifier.width(48.dp))
-            ReportCell(row.date, "تاریخ", 160, enabled, row.included && PersianInput.date(row.date) == null) { onChange(row.copy(date = it)) }
-            ReportCell(row.count, "تعداد", 90, enabled, row.included && PersianInput.count(row.count) == null) { onChange(row.copy(count = it)) }
-            ReportCell(row.km, "کیلومتر", 120, enabled, row.included && PersianInput.decimal(row.km) == null) { onChange(row.copy(km = it)) }
-            ReportCell(row.hours, "ساعت", 120, enabled, row.included && PersianInput.hours(row.hours) == null) { onChange(row.copy(hours = it)) }
+            ReportCell(row.date, "تاریخ", 160, enabled, row.included && PersianInput.date(row.date) == null, "report-cell-${row.id}-date") { onChange(row.copy(date = it)) }
+            ReportCell(row.count, "تعداد", 90, enabled, row.included && PersianInput.count(row.count) == null, "report-cell-${row.id}-count") { onChange(row.copy(count = it)) }
+            ReportCell(row.km, "کیلومتر", 120, enabled, row.included && PersianInput.decimal(row.km) == null, "report-cell-${row.id}-km") { onChange(row.copy(km = it)) }
+            ReportCell(row.hours, "ساعت", 120, enabled, row.included && PersianInput.hours(row.hours) == null, "report-cell-${row.id}-hours") { onChange(row.copy(hours = it)) }
             TextButton(onClick = onPreview, modifier = Modifier.width(120.dp)) { Text("صفحهٔ ${row.page}") }
         }
         Text(row.note, color = if (row.included && row.validated() == null) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelSmall)
@@ -175,8 +175,8 @@ private fun ReportRowEditor(row: ReportRow, scroll: ScrollState, enabled: Boolea
     }
 }
 @Composable
-private fun ReportCell(value: String, label: String, width: Int, enabled: Boolean, invalid: Boolean, change: (String) -> Unit) {
-    OutlinedTextField(value, { change(it.take(40)) }, modifier = Modifier.width(width.dp), label = { Text(label) }, singleLine = true,
+private fun ReportCell(value: String, label: String, width: Int, enabled: Boolean, invalid: Boolean, tag: String, change: (String) -> Unit) {
+    OutlinedTextField(value, { change(it.take(40)) }, modifier = Modifier.width(width.dp).testTag(tag), label = { Text(label) }, singleLine = true,
         enabled = enabled, isError = invalid, textStyle = LocalTextStyle.current.copy(textDirection = TextDirection.Ltr),
         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Ascii), colors = fieldColors())
 }
@@ -210,15 +210,21 @@ private fun FullReportDialog(onClose: () -> Unit, title: String, content: @Compo
 private fun ColumnMappingDialog(onApply: (ReportColumns) -> Unit, onDismiss: () -> Unit) {
     var count by remember { mutableStateOf("") }; var km by remember { mutableStateOf("") }; var hours by remember { mutableStateOf("") }
     val mapping = ReportColumns(PersianInput.count(count), PersianInput.count(km), PersianInput.count(hours))
-    AlertDialog(onDismissRequest = onDismiss, title = { Text("ستون‌های جدول") }, text = {
-        Column(Modifier.verticalScroll(rememberScrollState()).imePadding(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("اگر سرستون‌ها خوانا نیستند، شمارهٔ خانه‌های عددی را از راست به چپ وارد کنید؛ خانهٔ تاریخ هم شمرده می‌شود. نتیجه را حتماً با تصویر تطبیق دهید. اعمال این تنظیم ویرایش‌های جدول را بازنشانی می‌کند.")
-            OutlinedTextField(count, { count = it }, label = { Text("شمارهٔ ستون تعداد") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number))
-            OutlinedTextField(km, { km = it }, label = { Text("شمارهٔ ستون کیلومتر") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number))
-            OutlinedTextField(hours, { hours = it }, label = { Text("شمارهٔ ستون ساعت") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number))
+    FullReportDialog(onDismiss, "ستون‌های جدول") {
+        Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text("اگر سرستون‌ها خوانا نیستند، شمارهٔ خانه‌های عددی را از راست به چپ وارد کنید؛ خانهٔ تاریخ هم شمرده می‌شود. نتیجه را با تصویر تطبیق دهید. اعمال این تنظیم ویرایش‌های جدول را بازنشانی می‌کند.")
+            OutlinedTextField(count, { count = it }, label = { Text("شمارهٔ ستون تعداد") }, modifier = Modifier.fillMaxWidth(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number))
+            OutlinedTextField(km, { km = it }, label = { Text("شمارهٔ ستون کیلومتر") }, modifier = Modifier.fillMaxWidth(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number))
+            OutlinedTextField(hours, { hours = it }, label = { Text("شمارهٔ ستون ساعت") }, modifier = Modifier.fillMaxWidth(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number))
         }
-    }, confirmButton = { TextButton(onClick = { onApply(mapping) }, enabled = mapping.valid()) { Text("اعمال ستون‌ها") } },
-        dismissButton = { TextButton(onClick = { onApply(ReportColumns()) }) { Text("تشخیص از سرستون‌ها") } })
+        Column(Modifier.fillMaxWidth().padding(12.dp)) {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(onClick = { onApply(mapping) }, enabled = mapping.valid(), modifier = Modifier.weight(1f).heightIn(min = 48.dp)) { Text("اعمال ستون‌ها") }
+                OutlinedButton(onClick = onDismiss, modifier = Modifier.weight(1f).heightIn(min = 48.dp)) { Text("انصراف") }
+            }
+            TextButton(onClick = { onApply(ReportColumns()) }, modifier = Modifier.fillMaxWidth()) { Text("تشخیص از سرستون‌ها") }
+        }
+    }
 }
 @Composable
 private fun WorkComparisonDialog(result: WorkComparison, close: () -> Unit) {

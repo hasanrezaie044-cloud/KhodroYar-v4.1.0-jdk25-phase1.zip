@@ -58,6 +58,7 @@ class OfflineReportOcr(private val context: Context) {
                         }
                         result += OcrPage(page.id, index + 1, words, text)
                     } finally { api.clear(); bitmap.recycle() }
+                    require(result.sumOf { it.words.size } <= 200000) { "متن این مقایسه بیش از حد بزرگ است؛ سند را به چند بخش تقسیم کنید." }
                 }
                 result
             } finally { active = null; api.recycle() }

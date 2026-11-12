@@ -528,6 +528,7 @@ fun SettingsScreen(repository: AppRepository, settings: AppSettings, onToggleThe
         item { AboutCard() }
         item { TermsLinkCard() }
         item { FontLicenseLink() }
+        item { OcrLicenseLink() }
     }
 
         }
@@ -772,6 +773,23 @@ private fun FontLicenseLink() {
             text = { Column(Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState())) {
                 Text(licence, style = MaterialTheme.typography.bodySmall.copy(textDirection = androidx.compose.ui.text.style.TextDirection.Ltr))
             } }, confirmButton = { TextButton(onClick = { show = false }) { Text(tr("بستن", "Close")) } })
+    }
+}
+
+/** Native OCR and model licences are bundled and readable with all radios disabled. */
+@Composable
+private fun OcrLicenseLink() {
+    var show by remember { mutableStateOf(false) }
+    val context = LocalContext.current
+    OutlinedButton(onClick = { show = true }, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp), shape = FieldShape) {
+        Text(tr("مجوزهای OCR آفلاین", "Offline OCR licences"))
+    }
+    if (show) {
+        val licence = remember(context) { context.resources.openRawResource(R.raw.ocr_licenses).bufferedReader().use { it.readText() } }
+        AlertDialog(onDismissRequest = { show = false }, title = { Text("Tesseract · Offline OCR") },
+            text = { Text(licence, modifier = Modifier.heightIn(max = 360.dp).verticalScroll(rememberScrollState()),
+                style = MaterialTheme.typography.bodySmall.copy(textDirection = androidx.compose.ui.text.style.TextDirection.Ltr)) },
+            confirmButton = { TextButton(onClick = { show = false }) { Text(tr("بستن", "Close")) } })
     }
 }
 

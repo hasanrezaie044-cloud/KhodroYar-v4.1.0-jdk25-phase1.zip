@@ -1,3 +1,11 @@
+# 5.4.1 — Native offline OCR and guarded Persian work-record commands
+
+Built from the recovered 5.4.0 tree, not the later 5.5/ALBERT implementation. Adds integrated
+read-only work-report OCR/comparison, explicit review, guarded date-range record management,
+and IME/navigation-safe native forms. Room stays at 6; package/signing identity and existing
+financial/export calculations stay unchanged. Version code 63 permits update over code 62.
+See [usage, limits and verification contract](docs/OFFLINE-WORK-REPORTS.md).
+
 ## 5.4.0
 ثبت سریع چهارنوعی با پیشنهاد واقعی/مبلغ پرتکرار، بررسی و تأیید، اصلاح و برگرداندن امن ثبت اخیر؛ بازیابی تغییر کیلومتر در مرز Room/تنظیمات؛ ایجنت محلی برای تکرار هزینهٔ دیروز، مقایسهٔ هم‌طول و وضعیت خودکار؛ شاخص خالص خودرو/کیلومتر و ساعت؛ موعد تقریبی نگهداری با شواهد و مقصد ثبت همان قطعه؛ ظاهر، نمودار و ناوبری بومی تازه، خواندن SQL محدود و آزمون ۱۲هزاررکوردی. نسخهٔ 60، Room 6 و همان بسته/امضا؛ بدون دانلود مدل یا تغییر فرمول‌های PDF/XLSX. جزئیات و محدودیت آزمون گوشی: CHANGES_5.4.0.md
 

@@ -9,14 +9,15 @@ object ServiceCommandSpecs {
     private val types = ServiceType.entries.map { it.wire }
     private val range = listOf(ToolParam("start_date", ParamType.DATE, true), ToolParam("end_date", ParamType.DATE, true),
         ToolParam("service_type", ParamType.ENUM, true, options = types + "all"))
+    private val after = ToolParam("report_after", ParamType.ENUM, options = listOf("on", "off"))
     val tools = listOf(
         ToolSpec("bulk_register_services", ToolKind.WRITE, "ثبت محدود و تأییددار سرویس‌ها در بازهٔ شمسی؛ فقط از الگوی واقعی ذخیره‌شده",
             range + listOf(ToolParam("per_day", ParamType.INT, true, min = 1.0, max = 20.0),
                 ToolParam("days", ParamType.ENUM, true, options = listOf("all", "workdays")),
-                ToolParam("km", ParamType.NUMBER, max = 3000.0), ToolParam("hours", ParamType.NUMBER, max = 24.0))),
+                ToolParam("km", ParamType.NUMBER, max = 3000.0), ToolParam("hours", ParamType.NUMBER, max = 24.0), after)),
         ToolSpec("bulk_edit_services", ToolKind.WRITE, "ویرایش سرویس‌های انتخاب‌شده پس از خلاصهٔ قبل/بعد و تأیید تازه",
-            range + listOf(ToolParam("km", ParamType.NUMBER, max = 3000.0), ToolParam("hours", ParamType.NUMBER, max = 24.0), ToolParam("new_type", ParamType.ENUM, options = types))),
-        ToolSpec("bulk_delete_services", ToolKind.DELETE, "حذف سرویس‌های دقیقاً انتخاب‌شده؛ فقط با دکمهٔ تأیید حذف", range),
+            range + listOf(ToolParam("km", ParamType.NUMBER, max = 3000.0), ToolParam("hours", ParamType.NUMBER, max = 24.0), ToolParam("new_type", ParamType.ENUM, options = types), after)),
+        ToolSpec("bulk_delete_services", ToolKind.DELETE, "حذف سرویس‌های دقیقاً انتخاب‌شده؛ فقط با دکمهٔ تأیید حذف", range + after),
         ToolSpec("search_services_range", ToolKind.READ, "جستجوی سرویس‌ها در بازهٔ دقیق و نوع مشخص", range),
         ToolSpec("report_services_range", ToolKind.READ, "گزارش تعداد، کیلومتر، ساعت و درآمد واقعی روزهای بازه", range),
     )
@@ -27,7 +28,7 @@ object ServiceCommandSpecs {
 class ServiceCommandDialogue(private val today: () -> String) {
     private data class Scope(val start: String, val end: String, val type: String)
     private data class Draft(var action: String, var start: String? = null, var end: String? = null, var type: String? = null,
-        var perDay: Int? = null, var workdays: Boolean = false, var km: Double? = null, var hours: Double? = null, var newType: String? = null)
+        var perDay: Int? = null, var workdays: Boolean = false, var km: Double? = null, var hours: Double? = null, var newType: String? = null, var reportAfter: Boolean = false)
     private var draft: Draft? = null
     private var last: Scope? = null
     private var waiting = ""
@@ -40,7 +41,9 @@ class ServiceCommandDialogue(private val today: () -> String) {
         draft = null; waiting = ""; context = LocalDialogueContext("سرویس‌های بازه", "${last!!.start} تا ${last!!.end}", listOf("گزارش همونا رو بده", "جستجوی همون سرویس‌ها"))
     }
     fun parse(raw: String): LocalIntent? {
-        val t = PersianInput.latin(raw).lowercase()
+        val original = PersianInput.latin(raw).lowercase()
+        val after = Regex("(?:و\\s+)?(?:بعدش|بعد|سپس|then)\\s*(?:گزارش|جمع|report)").find(original)
+        val t = if (after != null) original.substring(0, after.range.first).trim() else original
         val dates = PersianInput.dates(t)
         val service = has(t, "سرویس", "services", "night-shift") && !has(t, "تعویض", "روغن", "لنت", "نگهداری", "کارواش", "قانون")
         val follow = last != null && has(t, "همونا", "همان ها", "همون", "گزارشش", "این سرویس")
@@ -63,6 +66,7 @@ class ServiceCommandDialogue(private val today: () -> String) {
             if (follow) last?.let { scope -> draft!!.start = scope.start; draft!!.end = scope.end; draft!!.type = scope.type }
         }
         val d = requireNotNull(draft)
+        if (after != null) d.reportAfter = true
         if (action != null && action != d.action) {
             d.action = action; d.km = null; d.hours = null; d.newType = null; d.perDay = null
         }
@@ -108,6 +112,7 @@ class ServiceCommandDialogue(private val today: () -> String) {
         if (d.action == "bulk_register_services" && days.size * requireNotNull(d.perDay) > 1000) return question("حداکثر ۱۰۰۰ سرویس در یک پیش‌نمایش پشتیبانی می‌شود؛ تعداد روزانه یا بازه را کمتر کنید.", "count")
         if (d.action == "bulk_edit_services" && d.km == null && d.hours == null && d.newType == null) return question("کدام مقدار تغییر کند؟ مثلاً «کیلومترش ۸۰ و ساعتش ۳٫۵ بشه». مبلغ درآمد با نرخ همان سال محاسبه می‌شود.", "changes")
         val args = JSONObject().put("start_date", d.start).put("end_date", d.end).put("service_type", d.type)
+        if (d.reportAfter) args.put("report_after", "on")
         if (d.action == "bulk_register_services") args.put("per_day", d.perDay).put("days", if (d.workdays) "workdays" else "all")
         d.km?.let { args.put("km", it) }; d.hours?.let { args.put("hours", it) }; d.newType?.let { args.put("new_type", it) }
         waiting = ""

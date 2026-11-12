@@ -26,7 +26,7 @@ data class ServiceBatchPlan(
     val action: String, val operationId: String, val start: String, val end: String,
     val sourceHash: String, val changes: List<ServiceChange>, val skipped: Int,
     val presetHash: String?, val rates: Map<Int, String>, val mileageBefore: Double, val mileageAfter: Double,
-    val template: ServiceTemplate?, val perDay: Int?, val workdaysOnly: Boolean,
+    val template: ServiceTemplate?, val perDay: Int?, val workdaysOnly: Boolean, val reportAfter: Boolean = false,
 ) {
     val created get() = changes.mapNotNull { it.after }
     fun summary(): String = buildString {
@@ -43,6 +43,7 @@ data class ServiceBatchPlan(
             val b = rows.mapNotNull { it.before }; val a = rows.mapNotNull { it.after }
             append("$date: ${b.size} → ${a.size} سرویس؛ ${b.sumOf { it.km }} → ${a.sumOf { it.km }} km؛ ${b.sumOf { it.hours }} → ${a.sumOf { it.hours }} ساعت\n")
         }
+        if (reportAfter) append("\nپس از انجام همین عملیات، گزارش تازهٔ همین بازه از پایگاه‌داده خوانده می‌شود.\n")
         append("\nهیچ تاریخ یا مقدار ناخوانایی حدس زده نمی‌شود. فقط همین خلاصه با دکمهٔ تأیید اجرا می‌شود.")
     }
 }
@@ -60,6 +61,7 @@ class ServiceBatchOperations(private val db: AppDatabase, private val settings: 
         require(km == null || km.isFinite() && km in 0.0..3000.0)
         require(hours == null || hours.isFinite() && hours in 0.0..24.0)
         val s = settings.current
+        val originalTemplate = savedTemplate(s)
         val source = db.services().rangeOnce(start, end)
         val selected = source.filter { type == "all" || it.type == type }
         val changes = mutableListOf<ServiceChange>()
@@ -76,8 +78,8 @@ class ServiceBatchOperations(private val db: AppDatabase, private val settings: 
         when (action) {
             "bulk_register_services" -> {
                 require(type != "all" && perDay != null && perDay in 1..20 && dates.size * perDay <= 1000) { "حداکثر ۱۰۰۰ سرویس و ۲۰ سرویس در روز مجاز است." }
-                template = requireNotNull(savedTemplate()) { "ابتدا مسیر و مقدارهای واقعی را در تب ثبت سرویس با «ذخیره فرم فعلی برای ثبت خودکار» ذخیره کن؛ سپس بگو «الگو را ذخیره کردم». هنوز ثبتی انجام نشده است." }
-                    .copy(type = type, km = km ?: savedTemplate()!!.km, hours = hours ?: savedTemplate()!!.hours)
+                template = requireNotNull(originalTemplate) { "ابتدا مسیر و مقدارهای واقعی را در تب ثبت سرویس با «ذخیره فرم فعلی برای ثبت خودکار» ذخیره کن؛ سپس بگو «الگو را ذخیره کردم». هنوز ثبتی انجام نشده است." }
+                    .copy(type = type, km = km ?: originalTemplate.km, hours = hours ?: originalTemplate.hours)
                 val t = requireNotNull(template)
                 require(t.valid()) { "الگوی سرویس ناقص است؛ مسیر، کیلومتر و ساعت واقعی را در تب ثبت سرویس ذخیره کن. سپس به همین گفتگو برگرد." }
                 require(s.isRental || ServiceType.fromWire(type) !in ServiceType.RENTAL_TYPES) { "نوع اجاره‌ای در تنظیمات این خودرو فعال نیست." }
@@ -109,7 +111,7 @@ class ServiceBatchOperations(private val db: AppDatabase, private val settings: 
         val delta = changes.sumOf { mileage(it.after) - mileage(it.before) }
         val before = s.vehicleCurrentKm.toFloat().toDouble()
         ServiceBatchPlan(action, op, start, end, hashRows(source), changes.toList(), skipped,
-            if (template != null) presetHash() else null, rateRows.mapValues { it.value.toString() }, before,
+            if (template != null) hash(requireNotNull(originalTemplate).toString()) else null, rateRows.mapValues { it.value.toString() }, before,
             (before + delta).coerceAtLeast(0.0).toFloat().toDouble(), template, perDay, workdays)
     }
 

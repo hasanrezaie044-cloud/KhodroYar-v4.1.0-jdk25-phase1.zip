@@ -23,6 +23,34 @@ import java.util.UUID
  */
 class AgentToolExecutor(private val repo: AppRepository) : AgentToolRunner {
 
+    override suspend fun prepare(call: ValidatedCall): ValidatedCall {
+        if (call.spec.name !in RecordCommandDialogue.names) return call
+        val kind = call.spec.name.substringAfter('_')
+        val row = repo.agentRecord(kind, requireNotNull(call.str("id")))
+            ?: throw AgentUserException("شناسهٔ رکورد پیدا نشد یا یکتا نیست؛ از فهرست سوابق دوباره انتخاب کنید.")
+        val id = when (row) { is PersonalExpenseEntity -> row.id; is FuelEntity -> row.id; is MaintenanceEntity -> row.id; else -> error("Record kind") }
+        return ValidatedCall(call.spec, call.args + mapOf("id" to id, "expected_record" to row, "record_summary" to recordSummary(row)))
+    }
+    private fun recordSummary(row: Any): String = when (row) {
+        is PersonalExpenseEntity -> "هزینه ${n(row.amount)} تومان · ${clip(row.title)} · ${row.date}"
+        is FuelEntity -> "سوخت ${n(row.liters)} لیتر · ${n(row.total)} تومان · ${row.date}"
+        is MaintenanceEntity -> "${clip(row.typeText)} · ${n(row.cost)} تومان · ${n(row.km)} کیلومتر · ${row.date}"
+        else -> ""
+    }
+    private suspend fun guardedRecord(call: ValidatedCall): ToolOutcome {
+        val old = call.args["expected_record"] ?: throw AgentUserException("پیش‌نمایش معتبر موجود نیست؛ دوباره درخواست بدهید.")
+        val next: Any? = if (call.spec.kind == ToolKind.DELETE) null else when (old) {
+            is PersonalExpenseEntity -> old.copy(amount = call.dbl("amount") ?: old.amount, title = call.str("title") ?: old.title,
+                category = call.str("category") ?: old.category, date = call.str("date") ?: old.date)
+            is FuelEntity -> old.copy(liters = call.dbl("liters") ?: old.liters, total = call.dbl("total_cost") ?: old.total, date = call.str("date") ?: old.date)
+            is MaintenanceEntity -> old.copy(cost = call.dbl("amount") ?: old.cost, km = call.dbl("km") ?: old.km,
+                description = call.str("description") ?: old.description, date = call.str("date") ?: old.date)
+            else -> throw AgentUserException("نوع رکورد مجاز نیست.")
+        }
+        repo.applyApprovedAgentRecord(old, next)
+        return ToolOutcome(true, if (next == null) "حذف رکورد مشخص‌شده در دیتابیس تأیید شد: ${recordSummary(old)}" else "ویرایش و بازخوانی تأیید شد: ${recordSummary(next)}")
+    }
+
     // ------------------------------------------------------------ formatting
 
     private fun n(v: Double): String = Analytics.formatNumber(v)
@@ -105,8 +133,8 @@ class AgentToolExecutor(private val repo: AppRepository) : AgentToolRunner {
             "create_reminder" -> "ایجاد یادآور: «${a.str("title")}» · انقضا ${a.str("expiry_date")}" +
                 (a.str("company")?.let { " · $it" } ?: "") + (amt("cost")?.let { " · $it" } ?: "")
             "update_expense", "update_maintenance", "update_fuel" -> {
-                val changes = a.args.filterKeys { it != "id" }.entries.joinToString("، ") { (k, v) -> "${fieldLabel(k)}: ${if (v is Double) n(v) else v}" }
-                "ویرایش رکورد ${short(a.str("id") ?: "")}: $changes"
+                val changes = a.args.filterKeys { key -> key != "id" && a.spec.params.any { it.name == key } }.entries.joinToString("، ") { (k, v) -> "${fieldLabel(k)}: ${if (v is Double) n(v) else v}" }
+                "ویرایش رکورد ${short(a.str("id") ?: "")} · ${a.str("record_summary").orEmpty()}\nتغییرها: $changes"
             }
             "delete_expense", "delete_maintenance", "delete_fuel" -> "حذف دائمی رکورد ${short(a.str("id") ?: "")}"
             else -> a.spec.name
@@ -146,12 +174,12 @@ class AgentToolExecutor(private val repo: AppRepository) : AgentToolRunner {
             "add_car_service" -> addMaintenance(call, MaintenanceType.fromWire(call.str("service_type")))
             "add_fuel" -> addFuel(call)
             "create_reminder" -> createReminder(call)
-            "update_expense" -> updateExpense(call)
-            "update_maintenance" -> updateMaintenance(call)
-            "update_fuel" -> updateFuel(call)
-            "delete_expense" -> deleteExpense(call)
-            "delete_maintenance" -> deleteMaintenance(call)
-            "delete_fuel" -> deleteFuel(call)
+            "update_expense" -> guardedRecord(call)
+            "update_maintenance" -> guardedRecord(call)
+            "update_fuel" -> guardedRecord(call)
+            "delete_expense" -> guardedRecord(call)
+            "delete_maintenance" -> guardedRecord(call)
+            "delete_fuel" -> guardedRecord(call)
             else -> ToolOutcome(false, "ابزار مجاز نیست.")
         }
     } catch (e: CancellationException) {
@@ -487,6 +515,7 @@ class AgentToolExecutor(private val repo: AppRepository) : AgentToolRunner {
 
     /** Human-readable description of the record a delete would remove (shown before confirming). */
     override suspend fun describeTarget(call: ValidatedCall): String? {
+        call.str("record_summary")?.let { return it }
         val idArg = call.str("id") ?: return null
         return when (call.spec.name) {
             "delete_expense" -> resolve(idArg, repo.personalExpenses("").first()) { it.id }?.let { "هزینه ${n(it.amount)} تومان · ${clip(it.title)} · ${it.date}" }
