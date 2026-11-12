@@ -53,7 +53,7 @@ jobs:
         working-directory: android
         run: |
           set +e
-          ./gradlew assembleDebug assembleDebugAndroidTest --stacktrace 2>&1 | tee "$RUNNER_TEMP/khodroyar-ui-compile.log"
+          ./gradlew :app:assembleDebug :app:assembleDebugAndroidTest --stacktrace 2>&1 | tee "$RUNNER_TEMP/khodroyar-ui-compile.log"
           RESULT=${PIPESTATUS[0]}
           set -e
           python3 ../tools/annotate-build-errors.py "$RUNNER_TEMP/khodroyar-ui-compile.log"

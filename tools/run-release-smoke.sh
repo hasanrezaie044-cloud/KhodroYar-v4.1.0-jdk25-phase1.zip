@@ -21,16 +21,41 @@ BEFORE=$(sha256sum app/build/outputs/apk/release/app-release.apk | awk '{print $
 # disguise whether the exact external signed test actually started and completed.
 set -e
 APK=app/build/outputs/apk/release/app-release.apk
-TEST_APK=app/build/outputs/apk/androidTest/release/app-release-androidTest.apk
+TEST_APK=release-smoke/build/outputs/apk/release/release-smoke-release.apk
 test -s "$TEST_APK"
+AAPT="$ANDROID_HOME/build-tools/${ANDROID_BUILD_TOOLS:-36.0.0}/aapt2"
+HARNESS_PACKAGE=$("$AAPT" dump badging "$TEST_APK" | sed -n "s/^package: name='\([^']*\)'.*/\1/p")
+case "$HARNESS_PACKAGE" in
+  com.khodroyar.app.releasesmoke|com.khodroyar.app.releasesmoke.test) ;;
+  *) echo "::error::Unexpected standalone test package: $HARNESS_PACKAGE"; exit 1 ;;
+esac
+check_installed_target_hash() {
+  local path installed
+  path=$(adb shell pm path com.khodroyar.app | tr -d '\r' | sed -n 's/^package://p')
+  [[ "$path" =~ ^/data/app/[A-Za-z0-9_./~+=-]+/base\.apk$ ]] || {
+    echo "::error::Expected exactly the original installed base APK"; return 1;
+  }
+  installed=$(adb shell sha256sum "$path" | tr -d '\r' | awk '{print $1}')
+  test "$installed" = "$BEFORE" || {
+    echo "::error::Installed target differs from the original audited release APK"; return 1;
+  }
+  printf '%s\n' "$installed" > "$EVIDENCE/target-installed-sha256.txt"
+}
 APKSIGNER="$ANDROID_HOME/build-tools/${ANDROID_BUILD_TOOLS:-36.0.0}/apksigner"
 TEST_CERT=$("$APKSIGNER" verify --print-certs "$TEST_APK" | sed -n 's/^Signer #1 certificate SHA-256 digest: //p')
 test "$TEST_CERT" = "03bfbc3575667403c3259fae345f3eb1ad3045373cb62123be376ef4898caaf0" || {
-  echo "::error::Instrumentation APK must share the release signing identity to test a non-debuggable target"; exit 1;
+  echo "::error::Disposable instrumentation APK signing identity unexpectedly changed"; exit 1;
 }
 adb install --no-incremental -r "$APK"
 adb install --no-incremental -r -t "$TEST_APK"
-echo "::notice title=Signed test installation::Original non-debuggable audited APK and same-signed external instrumentation installed on disposable emulator."
+# Fail before running unless Android registers the harness against ITSELF. It
+# must never inject runner/shared-runtime classes into the minified production app.
+adb shell pm list instrumentation | tr -d '\r' | grep -Fx \
+  "instrumentation:$HARNESS_PACKAGE/androidx.test.runner.AndroidJUnitRunner (target=$HARNESS_PACKAGE)" || {
+  echo "::error::Release smoke must be self-instrumenting, not attached to the production package"; exit 1;
+}
+check_installed_target_hash
+echo "::notice title=Signed test installation::Original non-debuggable audited APK and same-signed self-instrumenting accessibility harness installed on disposable emulator; independent process and class loader."
 # Distinguish a genuine launcher startup from instrumentation bootstrap. Never
 # make the target debuggable or change its signature to collect this evidence.
 adb logcat -c
@@ -45,7 +70,7 @@ set +e
 timeout --signal=TERM --kill-after=30s 12m adb shell am instrument -w -r \
   -e class com.khodroyar.app.ui.ReleaseApkSmokeTest \
   -e timeout_msec 600000 \
-  com.khodroyar.app.test/androidx.test.runner.AndroidJUnitRunner 2>&1 | tee "$EVIDENCE/instrumentation.log"
+  "$HARNESS_PACKAGE/androidx.test.runner.AndroidJUnitRunner" 2>&1 | tee "$EVIDENCE/instrumentation.log"
 RESULT=${PIPESTATUS[0]}
 set -e
 if [ "$LAUNCH_RESULT" -ne 0 ]; then RESULT=1; fi
@@ -62,6 +87,7 @@ if [ "$BEFORE" != "$AFTER" ]; then
   echo "::error::Tested release APK differs from the already audited candidate"
   RESULT=1
 fi
+if ! check_installed_target_hash; then RESULT=1; fi
 adb logcat -d -t 1500 > "$EVIDENCE/logcat.txt"
 adb logcat -d -b crash > "$EVIDENCE/crash.txt"
 adb shell dumpsys dropbox --print data_app_anr > "$EVIDENCE/anr.txt"
@@ -107,6 +133,10 @@ evidence = json.loads(p.read_text())
 text = json.dumps(evidence, ensure_ascii=False).replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
 print('::notice title=Actual signed-release runtime trace::' + text)
 assert evidence['passed'] is True, 'Signed-release runtime assertions did not pass'
+assert evidence['target_package'] == 'com.khodroyar.app'
+assert evidence['target_debuggable'] is False
+assert evidence['instrumentation_package'] != evidence['target_package']
+assert evidence['target_uid'] != evidence['instrumentation_uid'], 'Test must run outside the production process'
 PY
 then
   RESULT=1

@@ -171,7 +171,7 @@ jobs:
           STATIC_ONLY=1 bash ../tools/check-permissions.sh
           python3 ../tools/verify-ocr-assets.py
           set +e
-          ./gradlew testDebugUnitTest --stacktrace 2>&1 | tee "$RUNNER_TEMP/khodroyar-tests.log"
+          ./gradlew :app:testDebugUnitTest --stacktrace 2>&1 | tee "$RUNNER_TEMP/khodroyar-tests.log"
           TEST_EXIT=${PIPESTATUS[0]}
           set -e
           python3 ../tools/annotate-build-errors.py "$RUNNER_TEMP/khodroyar-tests.log"
@@ -197,7 +197,7 @@ jobs:
         run: |
           chmod +x ./gradlew
           set +e
-          ./gradlew clean assembleRelease assembleReleaseAndroidTest -PkhodroyarTestBuildType=release --stacktrace 2>&1 | tee "$RUNNER_TEMP/khodroyar-release.log"
+          ./gradlew clean :app:assembleRelease :release-smoke:assembleRelease --stacktrace 2>&1 | tee "$RUNNER_TEMP/khodroyar-release.log"
           BUILD_EXIT=${PIPESTATUS[0]}
           set -e
           python3 ../tools/annotate-build-errors.py "$RUNNER_TEMP/khodroyar-release.log"

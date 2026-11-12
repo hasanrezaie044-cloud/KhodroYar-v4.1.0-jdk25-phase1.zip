@@ -93,9 +93,8 @@ android {
         }
     }
 
-    // Opt-in CI test of the actual non-debuggable, originally signed R8 APK.
-    // Normal developer/UI smoke builds continue to target debug; no test host enters release.
-    testBuildType (project.findProperty('khodroyarTestBuildType') ?: 'debug')
+    // Internal Compose/repository tests target debug only. Black-box release
+    // verification runs in :release-smoke's independent process/class loader.
     testOptions {
         unitTests.returnDefaultValues = true
     }

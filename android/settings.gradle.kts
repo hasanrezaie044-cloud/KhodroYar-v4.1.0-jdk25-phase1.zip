@@ -12,3 +12,5 @@ dependencyResolutionManagement {
 }
 rootProject.name = "CarManagement"
 include(":app")
+// CI-only, self-instrumenting black-box tests; never part of the delivered app.
+include(":release-smoke")

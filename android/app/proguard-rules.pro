@@ -19,12 +19,6 @@
 -dontwarn javax.annotation.**
 -dontwarn com.google.errorprone.annotations.**
 
-# AndroidJUnitRunner shares this runtime dependency with the target APK. AGP
-# removes the duplicate from the instrumentation APK, so retain its public entry
-# points even when the app's calls are otherwise fully inlined by R8. Keep just
-# this small bridge, not the app/test framework or an unminified/debug target.
--keep class androidx.tracing.Trace { *; }
-
 # JNI names used by the bundled Tesseract4Android engine.
 -keep class com.googlecode.tesseract.android.** { *; }
 -keep class com.googlecode.leptonica.android.** { *; }

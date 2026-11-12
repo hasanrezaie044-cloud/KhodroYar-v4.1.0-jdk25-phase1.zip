@@ -39,15 +39,22 @@ class ReleaseApkSmokeTest {
     @Test(timeout = 600000) fun signedMinifiedApkLaunchesAndReadsPersianReportWithRadiosDisabled() {
         check(Build.HARDWARE.contains("ranchu") || Build.HARDWARE.contains("goldfish"))
         val instrumentation = InstrumentationRegistry.getInstrumentation()
-        val context = instrumentation.targetContext
+        val context = instrumentation.context
+        val targetPackage = "com.khodroyar.app"
+        // Self-instrumenting test APK: never load the runner/Kotlin runtime in the
+        // optimised target. All app interactions below cross accessibility/SAF.
+        assertEquals(context.packageName, instrumentation.targetContext.packageName)
+        assertNotEquals(targetPackage, context.packageName)
+        val targetInfo = context.packageManager.getApplicationInfo(targetPackage, 0)
+        assertEquals(targetPackage, targetInfo.packageName)
+        assertNotEquals("Test process must not share the target UID", targetInfo.uid, android.os.Process.myUid())
+        assertEquals(0, targetInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE)
         // Orbit has native ongoing animations. Bound the accessibility idle wait
         // rather than spending ten seconds on every lookup. Explicit selector
         // waits and every real OCR/review assertion remain unchanged.
         Configurator.getInstance().waitForIdleTimeout = 1000
         val device = UiDevice.getInstance(instrumentation)
         assertEquals("Gesture navigation must really be enabled", 2, android.provider.Settings.Secure.getInt(context.contentResolver, "navigation_mode", -1))
-        assertEquals("com.khodroyar.app", context.packageName)
-        assertEquals(0, context.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE)
         val stages = mutableListOf<String>()
         fun stage(value: String) {
             stages += value
@@ -58,7 +65,7 @@ class ReleaseApkSmokeTest {
             publishSyntheticEvidence(context, "KhodroYar-Release-Smoke", "stage-${stages.size.toString().padStart(2, '0')}.json",
                 "application/json", trace.toString().toByteArray())
         }
-        stage("external instrumentation attached to original non-debuggable release")
+        stage("independent UIAutomator process; original target verified non-debuggable")
         fun find(selector: BySelector, timeout: Long = 30000): UiObject2 = device.wait(Until.findObject(selector), timeout)
             ?: throw AssertionError("UI element not found: $selector; stages=$stages")
         fun tagged(value: String, timeout: Long = 30000) = find(By.res(value), timeout)
@@ -96,7 +103,9 @@ class ReleaseApkSmokeTest {
             // Emulator permission only, not a new application permission or a bypass on a phone.
             device.executeShellCommand("pm grant com.khodroyar.app android.permission.POST_NOTIFICATIONS")
             device.executeShellCommand("svc wifi disable"); device.executeShellCommand("svc data disable")
-            context.startActivity(requireNotNull(context.packageManager.getLaunchIntentForPackage(context.packageName)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            assertEquals("0", device.executeShellCommand("settings get global wifi_on").trim())
+            assertEquals("0", device.executeShellCommand("settings get global mobile_data").trim())
+            context.startActivity(requireNotNull(context.packageManager.getLaunchIntentForPackage(targetPackage)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
             stage("real launcher opened, radios disabled")
             tagged("terms-agree").click(); tagged("terms-continue").click()
             stage("terms accepted through UI")
@@ -147,6 +156,9 @@ class ReleaseApkSmokeTest {
         } finally {
             val trace = JSONObject().put("environment", "API35 x86_64 emulator; original signed non-debuggable R8 APK; gesture navigation; not physical Samsung proof")
                 .put("passed", passed).put("stages", JSONArray(stages)).put("extracted", extracted)
+                .put("target_package", targetPackage).put("target_debuggable", false)
+                .put("instrumentation_package", context.packageName)
+                .put("target_uid", targetInfo.uid).put("instrumentation_uid", android.os.Process.myUid())
             publishSyntheticEvidence(context, "KhodroYar-Release-Smoke", "runtime.json", "application/json", trace.toString(2).toByteArray())
             val hierarchy = ByteArrayOutputStream()
             device.dumpWindowHierarchy(hierarchy)
