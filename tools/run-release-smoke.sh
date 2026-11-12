@@ -5,6 +5,12 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 EVIDENCE="${RUNNER_TEMP:-/tmp}/khodroyar-release-smoke"
 mkdir -p "$EVIDENCE"
 cd "$ROOT/android"
+# Stop BEFORE installing/uninstalling anything if a real phone is attached.
+HARDWARE=$(adb shell getprop ro.hardware | tr -d '\r')
+case "$HARDWARE" in
+  ranchu|goldfish) ;;
+  *) echo "::error::Synthetic tests require a disposable emulator; refusing to install/reset on this device"; exit 2 ;;
+esac
 adb shell cmd overlay enable-exclusive --category com.android.internal.systemui.navbar.gestural
 adb shell settings put secure show_ime_with_hard_keyboard 1
 adb shell input keyevent KEYCODE_WAKEUP
@@ -44,6 +50,16 @@ then
   RESULT=1
 fi
 if [ "$RESULT" -eq 0 ]; then
+  python3 - app/build/outputs/apk/release/verification.json "$EVIDENCE/runtime.json" <<'PY'
+import json, sys
+from pathlib import Path
+proof_path = Path(sys.argv[1])
+proof = json.loads(proof_path.read_text())
+runtime = json.loads(Path(sys.argv[2]).read_text())
+assert runtime['passed'] is True
+proof['signed_runtime'] = runtime
+proof_path.write_text(json.dumps(proof, indent=2) + '\n')
+PY
   echo "::notice title=Signed release runtime verification::Non-debuggable originally signed R8 APK launched, real Persian OCR with radios disabled and actual SAF picker passed; gesture navigation; exact audited APK hash preserved."
 fi
 exit "$RESULT"

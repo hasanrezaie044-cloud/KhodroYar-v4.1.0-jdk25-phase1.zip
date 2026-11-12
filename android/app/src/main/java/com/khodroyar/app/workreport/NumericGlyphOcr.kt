@@ -23,7 +23,9 @@ import kotlin.math.ln
  * ink with glyphs rendered from the app's licensed fonts and Android's fonts.
  * It does NOT correct strings with likely dates, totals, neighbouring values or
  * fixture constants. Every glyph must pass both a shape-distance and a distinct
- * runner-up margin. Unknown/touching/ambiguous glyphs reject the entire cell.
+ * runner-up margin for digits. Punctuation is accepted only when all valid
+ * spellings agree on one numeric value. Unknown/touching/ambiguous digits reject
+ * the entire cell; ambiguous amounts such as 1,234 vs 1.234 remain unknown.
  *
  * Position relative to the whole row is retained: Persian/Arabic zero is not a
  * decimal point, and the lower Arabic decimal separator is not a date slash.
@@ -70,11 +72,11 @@ class NumericGlyphOcr(context: Context) {
         if (rowBottom - rowTop < 12) return emptyMap()
         return cells.associate { cell ->
             checkCancelled()
-            cell.region to read(cell.mask, rowTop - cell.top, rowBottom - cell.top, diagnostics?.let { callback -> { message -> callback("${cell.region.field}: $message") } }, checkCancelled)
+            cell.region to read(cell.mask, rowTop - cell.top, rowBottom - cell.top, cell.region.field, diagnostics?.let { callback -> { message -> callback("${cell.region.field}: $message") } }, checkCancelled)
         }
     }
 
-    private fun read(mask: Mask, rowTop: Int, rowBottom: Int, diagnostics: ((String) -> Unit)?, checkCancelled: () -> Unit): Reading? {
+    private fun read(mask: Mask, rowTop: Int, rowBottom: Int, field: NumericField, diagnostics: ((String) -> Unit)?, checkCancelled: () -> Unit): Reading? {
         val columns = BooleanArray(mask.width)
         for (y in 0 until mask.height) for (x in 0 until mask.width) if (mask.ink[y * mask.width + x]) columns[x] = true
         val groups = mutableListOf<Pair<Int, Int>>()
@@ -84,7 +86,8 @@ class NumericGlyphOcr(context: Context) {
             else if (start >= 0) { groups += start to x; start = -1 }
         }
         if (groups.isEmpty() || groups.size > 40) return null
-        val text = StringBuilder()
+        val glyphs = mutableListOf<List<Char>>()
+        var ambiguousPunctuation = false
         var maximumDistance = 0f; var minimumMargin = 1f
         for ((left, right) in groups) {
             checkCancelled()
@@ -98,14 +101,20 @@ class NumericGlyphOcr(context: Context) {
             }
             val ordered = scores.indices.sortedBy { scores[it] }
             val best = scores[ordered[0]]; val margin = scores[ordered[1]] - best
-            if (best > MAX_DISTANCE || margin < MIN_MARGIN) {
-                diagnostics?.invoke("Rejected fragment $box after '$text': best=${LABELS[ordered[0]]}:$best, runner=${LABELS[ordered[1]]}:${scores[ordered[1]]}, margin=$margin, aspect=${feature.aspect}, height=${feature.height}, middle=${feature.middle}")
+            val options = ordered.filter { scores[it] - best < MIN_MARGIN }.map { LABELS[it] }
+            if (best > MAX_DISTANCE || options.isEmpty() || options.size > 1 &&
+                (options.any { it in '0'..'9' } || options.any { scores[LABELS.indexOf(it)] > MAX_DISTANCE })) {
+                diagnostics?.invoke("Rejected fragment $box after '$glyphs': best=${LABELS[ordered[0]]}:$best, runner=${LABELS[ordered[1]]}:${scores[ordered[1]]}, margin=$margin, aspect=${feature.aspect}, height=${feature.height}, middle=${feature.middle}")
                 return null
             }
-            text.append(LABELS[ordered[0]])
-            maximumDistance = maxOf(maximumDistance, best); minimumMargin = minOf(minimumMargin, margin)
+            if (options.size > 1) ambiguousPunctuation = true
+            glyphs += options
+            maximumDistance = maxOf(maximumDistance, options.maxOf { scores[LABELS.indexOf(it)] }); minimumMargin = minOf(minimumMargin, margin)
         }
-        return Reading(text.toString(), (98f - 240f * maximumDistance).coerceIn(70f, 98f), maximumDistance, minimumMargin)
+        val text = NumericReadingGrammar.uniqueValue(field, glyphs) ?: return null
+        if (ambiguousPunctuation) diagnostics?.invoke("Punctuation shapes $glyphs have just one valid numeric value; spelling=$text. No uncertain digit was substituted.")
+        val confidence = (98f - 240f * maximumDistance).coerceIn(70f, if (ambiguousPunctuation) 79f else 98f)
+        return Reading(text, confidence, maximumDistance, minimumMargin)
     }
 
     /** A printed footer word is read from its own pixels, not inferred from sums. */

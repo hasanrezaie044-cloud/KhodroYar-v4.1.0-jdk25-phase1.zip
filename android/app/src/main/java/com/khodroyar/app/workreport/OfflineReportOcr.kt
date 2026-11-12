@@ -101,7 +101,7 @@ class OfflineReportOcr(private val context: Context) {
             val digits = "0123456789۰۱۲۳۴۵۶۷۸۹٠١٢٣٤٥٦٧٨٩"
             val whitelist = when (region.field) {
                 NumericField.DATE -> "" // Also preserve readable «جمع»/footer labels in the date cell.
-                NumericField.COUNT -> digits
+                NumericField.COUNT -> digits + ".٫,٬"
                 NumericField.KM -> digits + ".٫,٬"
                 NumericField.HOURS -> digits + ".٫:"
             }

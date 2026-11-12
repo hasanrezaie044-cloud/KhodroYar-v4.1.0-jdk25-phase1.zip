@@ -23,6 +23,12 @@ spec = importlib.util.spec_from_file_location("receiver", Path(__file__).with_na
 receiver = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(receiver)
 
+for name, filename in [('sender', 'send-private-apk.py'), ('fetcher', 'fetch-private-apk.py')]:
+    module_spec = importlib.util.spec_from_file_location(name, Path(__file__).with_name(filename))
+    module = importlib.util.module_from_spec(module_spec)
+    module_spec.loader.exec_module(module)
+    globals()[name] = module
+
 
 class PrivateTransferTest(unittest.TestCase):
     def test_range_and_resume_are_bounded(self):
@@ -33,6 +39,41 @@ class PrivateTransferTest(unittest.TestCase):
         for value in ["bytes=-", "bytes=100-", "bytes=-0", "bytes=1-0", "bytes=0-1,4-5", "bad"]:
             with self.assertRaises(ValueError):
                 receiver.byte_range(value, 100)
+
+    def test_git_object_encryption_requires_private_key_exact_hash_commit_and_real_runtime_proof(self):
+        # Cryptographic unit fixture, NOT an APK/build/signature verification result.
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            private = rsa.generate_private_key(public_exponent=65537, key_size=3072)
+            public = private.public_key().public_bytes(serialization.Encoding.PEM, serialization.PublicFormat.SubjectPublicKeyInfo).decode()
+            plain = b'Explicit transport-only non-APK fixture.' * 100
+            sha = hashlib.sha256(plain).hexdigest()
+            fixture = root / 'fixture.txt'; fixture.write_bytes(plain)
+            proof = dict(bytes=len(plain), sha256=sha, head_sha='b' * 40, package='com.khodroyar.app', certificate_sha256=receiver.ORIGINAL_CERT,
+                         debuggable=False, signed_runtime=dict(passed=True))
+            path = root / 'fixture-proof.json'; path.write_text(json.dumps(proof))
+            meta, cipher, key = sender.encrypt_payload(fixture, path, public, root)
+            self.assertEqual(plain, fetcher.decrypt(meta, cipher.read_bytes(), private, 'b' * 40, sha))
+            with self.assertRaises(ValueError):
+                fetcher.decrypt(meta, cipher.read_bytes(), private, 'c' * 40, sha)
+            with self.assertRaises(ValueError):
+                fetcher.decrypt(meta, cipher.read_bytes()[:-1], private, 'b' * 40, sha)
+            wrong_key = rsa.generate_private_key(public_exponent=65537, key_size=3072)
+            with self.assertRaises(ValueError):
+                fetcher.decrypt(meta, cipher.read_bytes(), wrong_key, 'b' * 40, sha)
+            from cryptography.exceptions import InvalidTag
+            with self.assertRaises(InvalidTag):
+                fetcher.decrypt(meta | dict(verification=proof | dict(signed_runtime=dict(passed=True, changed=True))), cipher.read_bytes(), private, 'b' * 40, sha)
+            with self.assertRaises(InvalidTag):
+                fetcher.decrypt(meta | dict(tag=base64.b64encode(bytes(16)).decode()), cipher.read_bytes(), private, 'b' * 40, sha)
+            data = cipher.read_bytes()
+            object_sha = hashlib.sha1(b'blob ' + str(len(data)).encode() + b'\0' + data).hexdigest()
+            with patch.object(sender.subprocess, 'check_output', return_value=json.dumps(dict(sha=object_sha)).encode()) as github:
+                self.assertEqual(object_sha, sender.git_blob('owner/repository', data, root))
+                self.assertIn('repos/owner/repository/git/blobs', github.call_args.args[0])
+            path.write_text(json.dumps(proof | dict(signed_runtime=dict(passed=False))))
+            with self.assertRaises(ValueError):
+                sender.encrypt_payload(fixture, path, public, root)
 
     def test_encrypted_upload_cannot_publish_or_disclose_plaintext_without_private_capability(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -82,6 +123,23 @@ class PrivateTransferTest(unittest.TestCase):
                     with self.assertRaises(urllib.error.HTTPError) as error:
                         request(route)
                     self.assertEqual(404, error.exception.code)
+                # Public-key encryption is not sender authentication. A caller who
+                # knows the public endpoint must NOT replace a completed manifest
+                # with a new wrapped key and mint a readback token for existing bytes.
+                attacker_key = secrets.token_bytes(32)
+                attacker_wrapped = private.public_key().encrypt(attacker_key, padding.OAEP(mgf=padding.MGF1(hashes.SHA256()), algorithm=hashes.SHA256(), label=None))
+                replacement = meta | {"wrapped_key": base64.b64encode(attacker_wrapped).decode()}
+                with self.assertRaises(urllib.error.HTTPError) as error:
+                    request(endpoint + "/manifest", json.dumps(replacement).encode(), headers)
+                self.assertEqual(400, error.exception.code)
+                self.assertEqual(meta, delivery.manifest)
+                attacker_token = hmac.new(attacker_key, b"khodroyar-ci-download:" + sha.encode(), hashlib.sha256).hexdigest()
+                with self.assertRaises(urllib.error.HTTPError) as error:
+                    request(endpoint + "/verify/" + attacker_token)
+                self.assertEqual(404, error.exception.code)
+                reloaded = receiver.PrivateDelivery(delivery.root, config)
+                self.assertEqual(meta, reloaded.manifest)
+                self.assertFalse(reloaded.can_verify("verify/" + attacker_token))
                 token = hmac.new(key, b"khodroyar-ci-download:" + sha.encode(), hashlib.sha256).hexdigest()
                 with request(endpoint + "/verify/" + token) as response:
                     self.assertEqual(plain, response.read())

@@ -5,6 +5,12 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SCREENSHOTS="${RUNNER_TEMP:-/tmp}/orbit-ui-screenshots"
 mkdir -p "$SCREENSHOTS"
 cd "$ROOT/android"
+# Stop BEFORE installing/uninstalling anything if a real phone is attached.
+HARDWARE=$(adb shell getprop ro.hardware | tr -d '\r')
+case "$HARDWARE" in
+  ranchu|goldfish) ;;
+  *) echo "::error::Synthetic tests require a disposable emulator; refusing to install/reset on this device"; exit 2 ;;
+esac
 # Exercise actual software IME rather than relying on a hidden hardware keyboard.
 adb shell cmd overlay enable-exclusive --category com.android.internal.systemui.navbar.threebutton
 adb shell settings put secure show_ime_with_hard_keyboard 1

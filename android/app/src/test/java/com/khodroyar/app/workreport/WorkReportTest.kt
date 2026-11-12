@@ -123,6 +123,16 @@ class WorkReportTest {
         assertEquals(DayStatus.MATCH, WorkDayComparison(zero.date, zero, zero.copy(km = BigDecimal("0.0000000001"))).status)
     }
 
+    @Test fun punctuationMayUseStrictSyntaxButNeverChooseBetweenDifferentReadableAmountsOrDigits() {
+        fun glyphs(left: String, options: List<Char>, right: String) = left.map { listOf(it) } + listOf(options) + right.map { listOf(it) }
+        assertEquals("580.09", NumericReadingGrammar.uniqueValue(NumericField.KM, glyphs("580", listOf(',', '.'), "09")))
+        assertNull(NumericReadingGrammar.uniqueValue(NumericField.KM, glyphs("1", listOf(',', '.'), "234")))
+        assertNull(NumericReadingGrammar.uniqueValue(NumericField.COUNT, glyphs("1", listOf(',', '.'), "000")))
+        assertNull(NumericReadingGrammar.uniqueValue(NumericField.DATE, glyphs("140", listOf('3', '4'), "/12/30")))
+        assertEquals("2.00", NumericReadingGrammar.uniqueValue(NumericField.HOURS, glyphs("2", listOf('.', ':'), "00")))
+        assertNull(NumericReadingGrammar.uniqueValue(NumericField.HOURS, glyphs("2", listOf('.', ':'), "30")))
+    }
+
     @Test fun numericReReadsUseExplicitHeadersAndDoNotGuessHeaderlessColumnOrder() {
         val regions = ReportTableGeometry.regions(page().words)
         assertEquals(4, regions.size)

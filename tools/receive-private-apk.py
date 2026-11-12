@@ -127,10 +127,14 @@ class PrivateDelivery:
                         and re.fullmatch(r"[0-9a-f]{40}", proof["head_sha"])):
                     raise ValueError("Invalid APK proof")
                 self.unwrap(meta)  # Wrong recipient/corrupt RSA wrapping is rejected before any file write.
-                if self.manifest is None or self.manifest["sha256"] != sha:
-                    (self.root / "ready.json").unlink(missing_ok=True)
-                    for file in self.root.glob("part-*.bin"):
-                        file.unlink()
+                # The upload URL/public RSA key are PUBLIC workflow inputs. Freeze
+                # the complete encryption identity, not just the APK hash: replacing
+                # the wrapped key for an existing hash would otherwise let a caller
+                # mint their own HMAC capability and read somebody else's APK.
+                if self.manifest is not None and meta != self.manifest:
+                    raise ValueError("This one-use delivery already has an immutable encryption manifest")
+                if self.manifest is None and ((self.root / FILE_NAME).exists() or (self.root / "ready.json").exists()):
+                    raise ValueError("An owner reset is required before accepting another candidate")
                 self.manifest = meta
                 (self.root / "received-manifest.json").write_text(json.dumps(meta, indent=2) + "\n")
                 request.json_response({"ok": True})
