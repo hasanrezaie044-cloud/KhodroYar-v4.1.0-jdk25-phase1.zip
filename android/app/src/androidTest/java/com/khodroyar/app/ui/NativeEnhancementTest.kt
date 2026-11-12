@@ -206,7 +206,8 @@ class NativeEnhancementTest {
         // Device recognition must work with all data radios disabled, not a mocked OCR provider.
         automation.executeShellCommand("svc wifi disable").close(); automation.executeShellCommand("svc data disable").close()
         try {
-            val recognized = runBlocking { OfflineReportOcr(context).recognize(imported.take(2), true) {} }
+            val diagnostics = mutableListOf<String>()
+            val recognized = runBlocking { OfflineReportOcr(context).recognize(imported.take(2), true, diagnostics = { diagnostics += it }) {} }
             val rows = WorkReportParser.extract(recognized)
             println("Synthetic offline OCR text: ${recognized.map { it.text }}")
             println("Synthetic OCR rows: $rows")
@@ -216,7 +217,9 @@ class NativeEnhancementTest {
                 .put("pages", org.json.JSONArray().apply { recognized.forEach { page -> put(JSONObject().put("text", page.text)
                     .put("words", org.json.JSONArray().apply { page.words.forEach { w -> put(JSONObject().put("text", w.text).put("x", w.x.toDouble()).put("y", w.y.toDouble()).put("confidence", w.confidence.toDouble())) } })) } })
                 .put("rows", org.json.JSONArray().apply { rows.forEach { row -> put(JSONObject().put("date", row.date).put("count", row.count).put("km", row.km).put("hours", row.hours).put("included", row.included).put("duplicate", row.duplicateOf != null).put("raw", row.raw)) } })
-            File(context.getExternalFilesDir(null), "native-evidence/offline-ocr.json").also { it.parentFile!!.mkdirs() }.writeText(evidence.toString(2))
+            evidence.put("diagnostics", org.json.JSONArray(diagnostics))
+            publishSyntheticEvidence(context, "KhodroYar-UI-Smoke", "offline-ocr.json", "application/json", evidence.toString(2).toByteArray())
+            publishSyntheticEvidence(context, "KhodroYar-UI-Smoke", "fixture-native-ocr.png", "image/png", image.readBytes())
             val selected = rows.filter { it.included }
             assertEquals("Three data rows; second PDF page is a duplicate. Raw: $rows", 3, selected.size)
             assertEquals(listOf("1403/01/01", "1403/01/02", "1403/01/03"), selected.map { it.date }.sorted())
@@ -260,6 +263,52 @@ class NativeEnhancementTest {
             pdf.delete(); image.delete()
         }
     }
+    @Test fun reviewDraftRestoresAnAtomicBackupAfterInterruptedReplacement() {
+        val directory = File(context.cacheDir, "draft-recovery-synthetic").also { it.mkdirs() }
+        try {
+            val store = WorkReportDraft(directory)
+            store.save(WorkReportDraft.Draft(emptyList(), emptyList(), emptyList(), "1403/01/01", "1403/01/02"))
+            assertTrue(File(directory, "draft.json").renameTo(File(directory, "draft.json.bak")))
+            val recovered = requireNotNull(store.load())
+            assertEquals("1403/01/01", recovered.start); assertEquals("1403/01/02", recovered.end)
+            assertTrue(File(directory, "draft.json").isFile)
+        } finally { directory.deleteRecursively() }
+    }
+
+    @Test fun visualNumericReaderPreservesFiveEightZeroScriptsAndRejectsUnknownInk() {
+        val scripts = listOf("۰۱۲۳۴۵۶۷۸۹", "٠١٢٣٤٥٦٧٨٩", "0123456789")
+        val fonts = listOf(ResourcesCompat.getFont(context, R.font.vazirmatn_bold), android.graphics.Typeface.create("sans-serif", android.graphics.Typeface.NORMAL),
+            android.graphics.Typeface.create("serif", android.graphics.Typeface.NORMAL))
+        val regions = listOf(NumericField.DATE, NumericField.COUNT, NumericField.KM, NumericField.HOURS).mapIndexed { n, field ->
+            val x = .8f - n * .2f
+            NumericRegion(field, x - .095f, .15f, x + .095f, .8f)
+        }
+        val reader = NumericGlyphOcr(context)
+        for ((index, font) in fonts.withIndex()) {
+            val bitmap = Bitmap.createBitmap(2400, 360, Bitmap.Config.ARGB_8888)
+            try {
+                val canvas = Canvas(bitmap).apply { drawColor(Color.WHITE) }
+                val paint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply { typeface = font; textSize = 64f; color = Color.BLACK }
+                val digits = scripts[index]
+                fun script(text: String) = text.map { if (it in '0'..'9') digits[it - '0'] else if (it == '.' && index < 2) '٫' else it }.joinToString("")
+                fun cell(text: String, x: Float) {
+                    val value = script(text)
+                    val layout = StaticLayout.Builder.obtain(value, 0, value.length, paint, 440).setAlignment(Layout.Alignment.ALIGN_CENTER)
+                        .setTextDirection(TextDirectionHeuristics.LTR).setIncludePad(false).build()
+                    canvas.save(); canvas.translate(x - 220f, 100f); layout.draw(canvas); canvas.restore()
+                }
+                val expected = listOf("1403/11/27", "8", "580.09", "5:45")
+                expected.forEachIndexed { n, value -> cell(value, 1920f - n * 480) }
+                val values = reader.readRow(bitmap, regions)
+                expected.forEachIndexed { n, value -> assertEquals("font=$index, field=${regions[n].field}, readings=$values", value, values[regions[n]]?.text) }
+                // Not every mark in a numeric cell is a number, including a missing zero.
+                canvas.drawRect(1150f, 50f, 1750f, 300f, Paint().apply { color = Color.WHITE })
+                cell("?", 1440f)
+                assertNull(reader.readRow(bitmap, regions)[regions[1]])
+            } finally { bitmap.recycle() }
+        }
+    }
+
     private fun drawFixture(canvas: Canvas) {
         canvas.drawColor(Color.WHITE)
         val font = ResourcesCompat.getFont(context, R.font.vazirmatn_regular)

@@ -19,3 +19,6 @@ for index, page in enumerate(evidence['pages']):
     message = ' | '.join(f'{w["text"]}@{w["x"]:.3f},{w["y"]:.3f} ({w["confidence"]:.0f}%)' for w in page['words'])
     notice(f'Actual OCR geometry page {index+1}', message[:16000])
 notice('Actual OCR extracted rows', json.dumps(evidence['rows'], ensure_ascii=False)[:24000])
+
+for index, message in enumerate(evidence.get('diagnostics', [])):
+    notice(f'Native OCR diagnostic {index+1}', message[:12000])

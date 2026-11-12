@@ -47,6 +47,7 @@ class WorkReportViewModel(app: Application) : AndroidViewModel(app) {
                     pages = saved.pages; recognized = saved.recognized; rows = saved.rows; start = saved.start; end = saved.end
                 }
             } catch (e: CancellationException) { throw e }
+            catch (_: OutOfMemoryError) { error = "برای باز کردن پیش‌نویس حافظه کافی نبود؛ فایل‌های اصلی حفظ شده‌اند. می‌توانید پیش‌نویس را پاک و سند کوچک‌تری انتخاب کنید." }
             catch (_: Exception) { error = "پیش‌نویس قبلی قابل بازیابی نیست؛ فایل‌های اصلی پاک نشده‌اند. برای شروع دوباره «پاک کردن پیش‌نویس» را انتخاب کنید." }
             finally { busy = false }
         }
@@ -65,6 +66,7 @@ class WorkReportViewModel(app: Application) : AndroidViewModel(app) {
             delay(150)
             try { withContext(Dispatchers.IO) { persistLock.withLock { draft.save(snapshot) } } }
             catch (e: CancellationException) { throw e }
+            catch (_: OutOfMemoryError) { error = "حافظه برای ذخیرهٔ پیش‌نویس کافی نیست؛ سند را به چند بخش کوچک‌تر تقسیم کنید. نتیجهٔ فعلی هنوز در صفحه است." }
             catch (_: Exception) { error = "ذخیرهٔ پیش‌نویس کامل نشد؛ فضای گوشی را بررسی کنید. نتیجه هنوز در این صفحه موجود است." }
         }
     }

@@ -5,6 +5,11 @@ import android.os.Bundle
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.testTagsAsResourceId
 import androidx.compose.runtime.*
 import androidx.fragment.app.FragmentActivity
 import com.khodroyar.app.data.prefs.AppSettings
@@ -28,6 +33,7 @@ class MainActivity : FragmentActivity() {
         intent.getStringExtra(Notifications.EXTRA_TARGET)?.let { launchTarget = it }
     }
 
+    @OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
     override fun onCreate(savedInstanceState: Bundle?) {
         // Draw behind the system bars so the app's themed toolbar fills the
         // cutout / status-bar strip instead of leaving an empty band there. The bars
@@ -64,16 +70,20 @@ class MainActivity : FragmentActivity() {
             val palette = AppPalette.fromWire(settings.themeColor)
 
             CarManagerTheme(darkTheme = darkTheme, palette = palette) {
-                AuthGate(pinStore, settingsStore) {
-                    CarManagerRoot(
-                        repository,
-                        launchTarget = launchTarget,
-                        onLaunchHandled = { launchTarget = null },
-                    ) {
-                        settingsStore.update {
-                            it.copy(
-                                themeMode = if (darkTheme) AppSettings.THEME_LIGHT else AppSettings.THEME_DARK
-                            )
+                // Stable accessibility IDs also let external UI tests exercise the
+                // actual R8 APK without loading/reflection into optimised app code.
+                Box(Modifier.fillMaxSize().semantics { testTagsAsResourceId = true }) {
+                    AuthGate(pinStore, settingsStore) {
+                        CarManagerRoot(
+                            repository,
+                            launchTarget = launchTarget,
+                            onLaunchHandled = { launchTarget = null },
+                        ) {
+                            settingsStore.update {
+                                it.copy(
+                                    themeMode = if (darkTheme) AppSettings.THEME_LIGHT else AppSettings.THEME_DARK
+                                )
+                            }
                         }
                     }
                 }

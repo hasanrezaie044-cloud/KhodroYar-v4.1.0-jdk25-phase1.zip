@@ -21,13 +21,9 @@ fi
 if ! adb pull /sdcard/Download/KhodroYar-UI-Smoke/. "$SCREENSHOTS/"; then
     RESULT=1
 fi
-if adb pull /sdcard/Android/data/com.khodroyar.app/files/native-evidence/. "$SCREENSHOTS/offline-ocr/"; then
-    python3 "$ROOT/tools/annotate-ocr-evidence.py" "$SCREENSHOTS/offline-ocr/offline-ocr.json" || RESULT=1
-else
-    echo "::error::Missing real native OCR fixture evidence"
-    RESULT=1
-fi
-COUNT=$(find "$SCREENSHOTS" -type f -name '*.png' | wc -l)
+# MediaStore Downloads survives UTP's automatic uninstall; app-specific files do not.
+python3 "$ROOT/tools/annotate-ocr-evidence.py" "$SCREENSHOTS/offline-ocr.json" || RESULT=1
+COUNT=$(find "$SCREENSHOTS" -type f -name '*.png' ! -name 'fixture-*' | wc -l)
 echo "::notice title=Native UI screenshots::$COUNT PNGs captured from API 35 emulator"
 if [ "$COUNT" -lt 33 ]; then
     echo "::error::Expected 33 native UI screenshots; found $COUNT"

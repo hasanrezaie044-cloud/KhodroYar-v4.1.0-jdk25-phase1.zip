@@ -53,8 +53,11 @@ class ReportDocuments(private val context: Context) {
                 require(directory.listFiles().orEmpty().filter { it.extension in setOf("pdf", "img") }.sumOf { it.length() } <= 250_000_000L) {
                     "حجم سندهای این مقایسه از ۲۵۰ مگابایت بیشتر است؛ گزارش را به چند مقایسه تقسیم کنید."
                 }
-                val count = if (pdf) ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY).use { fd -> PdfRenderer(fd).use { it.pageCount } }
-                else {
+                val count = if (pdf) try {
+                    ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY).use { fd -> PdfRenderer(fd).use { it.pageCount } }
+                } catch (e: Exception) {
+                    throw IllegalArgumentException("PDF قابل باز شدن نیست؛ فایل خراب یا رمزدار است. PDF سالم و بدون رمز انتخاب کنید.", e)
+                } else {
                     val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
                     BitmapFactory.decodeFile(file.path, options)
                     require(options.outWidth > 0 && options.outHeight > 0) { "تصویر قابل خواندن نیست؛ PNG یا JPEG انتخاب کنید." }
@@ -124,15 +127,20 @@ class WorkReportDraft(private val directory: File) {
         try { out.write(data); file.finishWrite(out) } catch (e: Throwable) { file.failWrite(out); throw e }
     }
     fun load(): Draft? {
-        if (!file.baseFile.exists()) return null
-        require(file.baseFile.length() <= 32_000_000)
-        val j = JSONObject(file.openRead().bufferedReader().use { it.readText() }); require(j.getInt("version") == 1)
+        // openRead restores .bak after a crash; checking only the base file first
+        // would wrongly discard a perfectly recoverable draft on older Androids.
+        val input = try { file.openRead() } catch (e: java.io.FileNotFoundException) {
+            if (!file.baseFile.exists() && !File(directory, "draft.json.bak").exists()) return null else throw e
+        }
+        val j = input.use { require(file.baseFile.length() <= 32_000_000); JSONObject(it.bufferedReader().readText()) }
+        require(j.getInt("version") == 1)
         val pages = j.getJSONArray("pages").objects().map { p -> ReportPage(p.getString("id"), p.getString("file"), p.getString("name"), p.getInt("pdf"), p.getInt("rotation").also { require(it in 0..3) }) }
         require(pages.size <= ReportDocuments.MAX_PAGES)
         val recognized = j.getJSONArray("ocr").objects().map { p ->
             val words = p.getJSONArray("words"); require(words.length() <= 50000)
             OcrPage(p.getString("id"), p.getInt("number"), (0 until words.length()).map { i -> words.getJSONArray(i).let { a -> OcrWord(a.getString(0), a.getDouble(1).toFloat(), a.getDouble(2).toFloat(), a.getDouble(3).toFloat(), a.getDouble(4).toFloat(), a.getDouble(5).toFloat()) } }, p.getString("text"))
         }
+        require(recognized.size <= pages.size && recognized.sumOf { it.words.size } <= 200000)
         val rowArray = j.getJSONArray("rows"); require(rowArray.length() <= 10000)
         val rows = rowArray.objects().map { r -> ReportRow(r.getString("id"), r.getString("pageId"), r.getInt("page"), r.getInt("line"), r.getString("raw"), r.getString("date"), r.getString("count"), r.getString("km"), r.getString("hours"), r.getDouble("confidence").toFloat(), r.getBoolean("included"), r.getString("note"), if (r.isNull("duplicate")) null else r.getString("duplicate")) }
         return Draft(pages, recognized, rows, j.optString("start"), j.optString("end"))

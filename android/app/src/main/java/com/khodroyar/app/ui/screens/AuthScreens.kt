@@ -22,6 +22,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.platform.testTag
 import com.khodroyar.app.data.prefs.SettingsStore
 import com.khodroyar.app.security.BiometricGate
 import com.khodroyar.app.security.PinStore
@@ -95,9 +96,9 @@ private fun ProfileSetupScreen(
             SurfaceCard(modifier = Modifier.widthIn(max = 420.dp)) {
                 Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
                     OutlinedTextField(value = first, onValueChange = { first = it; error = null },
-                        modifier = Modifier.fillMaxWidth(), label = { Text("نام") }, singleLine = true, shape = FieldShape, colors = fieldColors())
+                        modifier = Modifier.fillMaxWidth().testTag("profile-first-name"), label = { Text("نام") }, singleLine = true, shape = FieldShape, colors = fieldColors())
                     OutlinedTextField(value = last, onValueChange = { last = it; error = null },
-                        modifier = Modifier.fillMaxWidth(), label = { Text("نام خانوادگی") }, singleLine = true, shape = FieldShape, colors = fieldColors())
+                        modifier = Modifier.fillMaxWidth().testTag("profile-last-name"), label = { Text("نام خانوادگی") }, singleLine = true, shape = FieldShape, colors = fieldColors())
                     error?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium) }
                     Button(onClick = {
                         val f = first.trim(); val l = last.trim()
@@ -106,7 +107,7 @@ private fun ProfileSetupScreen(
                             l.isEmpty() -> error = "لطفاً نام خانوادگی را وارد کنید"
                             else -> onSave(f, l)
                         }
-                    }, modifier = Modifier.fillMaxWidth().heightIn(min = 54.dp), shape = FieldShape) { Text("شروع مسیر") }
+                    }, modifier = Modifier.fillMaxWidth().heightIn(min = 54.dp).testTag("profile-save"), shape = FieldShape) { Text("شروع مسیر") }
                 }
             }
             Spacer(Modifier.height(20.dp))

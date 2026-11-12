@@ -9,7 +9,13 @@ class WorkReportTest {
     @Test fun allDigitScriptsAndDateSeparatorsNormalizeStrictly() {
         listOf("۱۴۰۳۰۱۰۱", "١٤٠٣٠١٠١", "14030101", "۱۴۰۳/۱/۱", "1403-01-01", "1403.01.01").forEach { assertEquals(it, "1403/01/01", PersianInput.date(it)) }
         assertEquals("1403/12/30", PersianInput.date("۱۴۰۳۱۲۳۰"))
-        listOf("14041230", "14031301", "14030001", "20240320", "140301010", "1/1", "bad", "").forEach { assertNull(it, PersianInput.date(it)) }
+        listOf("14041230", "14031301", "14030001", "20240320", "140301010", "1403/01/031", "1403/001/01", "14 03/01/01", "1/1", "bad", "").forEach { assertNull(it, PersianInput.date(it)) }
+    }
+    @Test fun completeDateNeverConsumesAdjacentCountEvenWithWideCellRegions() {
+        val p = page(date = "1403/01/03", count = "1")
+        val wide = p.copy(words = p.words.map { word -> if (word.top > .15f && PersianInput.date(word.text) != null) word.copy(left = .70f, right = .96f) else word })
+        val row = WorkReportParser.extract(listOf(wide)).single()
+        assertEquals("1403/01/03", row.date); assertNotNull(row.validated()); assertEquals(1, row.validated()!!.count)
     }
     @Test fun unknownIsNeverAZeroAndDecimalsStayExact() {
         listOf("", "?", "O", "-1", "NaN", "Infinity", "1,20", "1e3").forEach { assertNull(it, PersianInput.decimal(it)) }

@@ -32,6 +32,7 @@ class LocalIntentParser(private val today: () -> Jalali.Ymd = { Jalali.today() }
                     'ي', 'ى' -> 'ی'
                     'ك' -> 'ک'
                     '٫' -> '.'
+                    '−', '–', '—', '﹣', '－' -> '-'
                     '٬', '،' -> ','
                     '\u200c', '\u00a0' -> ' '
                     else -> ch

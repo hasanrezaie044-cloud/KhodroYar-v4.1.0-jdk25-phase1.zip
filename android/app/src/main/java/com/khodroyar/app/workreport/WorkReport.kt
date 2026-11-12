@@ -98,9 +98,16 @@ object WorkReportParser {
         for (ordered in listOf(line.sortedBy { it.x }, line.sortedByDescending { it.x })) {
             for (start in ordered.indices) for (size in 1..minOf(7, ordered.size - start)) {
                 val words = ordered.subList(start, start + size)
+                // A complete date is a cell, not a prefix to which a nearby count
+                // may be appended (01 + 1 must never silently become day 11).
+                if (size > 1 && words.any { PersianInput.date(it.text) != null }) continue
                 if (words.zipWithNext().any { (a, b) -> maxOf(a.left, b.left) - minOf(a.right, b.right) > .045f }) continue
                 val text = words.joinToString("") { PersianInput.latin(it.text).trim() }
-                PersianInput.date(text)?.let { candidates += it to words.toList() }
+                val parsed = PersianInput.date(text)
+                if (parsed != null) {
+                    candidates += parsed to words.toList()
+                    break
+                }
             }
         }
         // Two distinct readable dates in one line are not one daily record.

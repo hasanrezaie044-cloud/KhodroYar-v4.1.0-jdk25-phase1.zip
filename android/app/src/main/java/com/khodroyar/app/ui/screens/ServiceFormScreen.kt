@@ -183,7 +183,7 @@ private fun ServiceFormBody(
     }
 
     // Default vehicle follows settings until the user picks another one.
-    val year = Jalali.parse(date)?.year ?: Jalali.currentYear()
+    val year = com.khodroyar.app.core.text.PersianInput.date(date)?.take(4)?.toInt() ?: Jalali.currentYear()
     val rates = remember(ratesByYear, year) { ratesByYear.forYear(year) }
     LaunchedEffect(rates.defaultCarType) {
         if (editing == null) carType = rates.defaultCarType
@@ -214,14 +214,15 @@ private fun ServiceFormBody(
     }
 
     fun save() {
-        if (com.khodroyar.app.core.text.PersianInput.date(date) == null) { toast.show("تاریخ سرویس معتبر نیست"); return }
+        val canonicalDate = com.khodroyar.app.core.text.PersianInput.date(date)
+        if (canonicalDate == null) { toast.show("تاریخ سرویس معتبر نیست"); return }
         if (saving) return
         saving = true
         scope.launch {
             try {
                 if (editing == null) {
                     repository.addService(
-                        date = date, type = type, carType = carType.wire,
+                        date = canonicalDate, type = type, carType = carType.wire,
                         km = km.asDouble(), hours = hours.asDouble(), workHours = hours.asDouble(),
                         startTime = startTime, endTime = endTime,
                         origin = origin.trim(), destination = destination.trim(),
@@ -236,7 +237,7 @@ private fun ServiceFormBody(
                 } else {
                     repository.updateService(
                         editing.copy(
-                            date = date, type = type.wire, carType = carType.wire,
+                            date = canonicalDate, type = type.wire, carType = carType.wire,
                             km = km.asDouble(), hours = hours.asDouble(), workHours = hours.asDouble(),
                             startTime = startTime, endTime = endTime,
                             origin = origin.trim(), destination = destination.trim(),

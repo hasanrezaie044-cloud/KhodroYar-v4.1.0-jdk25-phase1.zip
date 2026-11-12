@@ -200,7 +200,7 @@ fun QuickEntryScreen(
         }
         Surface(color = MaterialTheme.colorScheme.surfaceContainerLowest) {
             Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                OutlinedButton(onClick = { if (reviewing) { review = null; error = null } else onDone() }, enabled = !busy,
+                OutlinedButton(onClick = { focus.clearFocus(force = true); keyboard?.hide(); if (reviewing) { review = null; error = null } else onDone() }, enabled = !busy,
                     modifier = Modifier.weight(1f).heightIn(min = 52.dp), shape = FieldShape) { Text(if (reviewing) tr("اصلاح", "Edit") else tr("انصراف", "Cancel")) }
                 Button(onClick = {
                     if (busy) return@Button

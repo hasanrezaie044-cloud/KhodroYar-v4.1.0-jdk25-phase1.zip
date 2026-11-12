@@ -69,6 +69,21 @@ jobs:
         with:
           ref: ${{ inputs.ref || github.ref }}
 
+      - name: Check private receiver HTTPS before building
+        if: ${{ inputs.delivery_upload_url != '' }}
+        env:
+          DELIVERY: ${{ inputs.delivery_upload_url }}
+        run: |
+          python3 - <<'PY'
+          import os, urllib.parse, urllib.request
+          url = urllib.parse.urlsplit(os.environ['DELIVERY'])
+          assert url.scheme == 'https' and url.hostname and not url.username and not url.password and not url.query and not url.fragment
+          root = urllib.parse.urlunsplit((url.scheme, url.netloc, '/', '', ''))
+          with urllib.request.urlopen(urllib.request.Request(root, method='HEAD'), timeout=30) as response:
+              assert response.status == 200
+          print('::notice title=Private receiver HTTPS::Reachable with a valid HTTPS connection; no APK published and no owner capability sent to CI.')
+          PY
+
       - name: Set up JDK 25
         uses: actions/setup-java@v4
         with:

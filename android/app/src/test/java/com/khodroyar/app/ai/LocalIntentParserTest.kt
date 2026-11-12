@@ -117,7 +117,7 @@ class LocalIntentParserTest {
     }
 
     @Test fun negativesMalformedNumbersAndApproximateAmountsFailClosed() {
-        listOf("-100", "منفی صد", "1/2 میلیون", "نصف میلیون", "دو میلیون و نیم", "100 200", "1,00", "دو میلیون میلیون", "صفر میلیون").forEach {
+        listOf("-100", "−۱۰۰", "–١٠٠", "—100", "منفی صد", "1/2 میلیون", "نصف میلیون", "دو میلیون و نیم", "100 200", "1,00", "دو میلیون میلیون", "صفر میلیون").forEach {
             val result = parser.parse("ثبت هزینه $it تومان")
             if (result is LocalIntent.Tool) {
                 assertTrue(it, AgentActionValidator.validate(result.name, result.args) is ValidationResult.Invalid)

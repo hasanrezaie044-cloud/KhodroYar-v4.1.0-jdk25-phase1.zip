@@ -58,7 +58,7 @@ fun WorkReportScreen(vm: WorkReportViewModel = viewModel()) {
         FlowRow(Modifier.fillMaxWidth().padding(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             FilledTonalButton(onClick = { changePages { picker.launch(arrayOf("image/*", "application/pdf")) } }, enabled = !vm.busy,
                 modifier = Modifier.testTag("report-import")) { Icon(Icons.Outlined.AddPhotoAlternate, null); Spacer(Modifier.width(6.dp)); Text("انتخاب عکس / PDF") }
-            TextButton(onClick = { confirmReset = true }, enabled = !vm.busy && vm.pages.isNotEmpty()) { Text("پاک کردن پیش‌نویس") }
+            TextButton(onClick = { confirmReset = true }, enabled = !vm.busy) { Text("پاک کردن پیش‌نویس") }
         }
         if (vm.busy) {
             LinearProgressIndicator(Modifier.fillMaxWidth().padding(horizontal = 16.dp))
@@ -162,7 +162,7 @@ fun WorkReportScreen(vm: WorkReportViewModel = viewModel()) {
 @Composable
 private fun ReportRowEditor(row: ReportRow, scroll: ScrollState, enabled: Boolean, onChange: (ReportRow) -> Unit, onPreview: () -> Unit) {
     SurfaceCard(contentPadding = 8.dp) {
-        Row(Modifier.horizontalScroll(scroll).width(760.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+        Row(Modifier.testTag("report-row-scroll-${row.id}").horizontalScroll(scroll).width(760.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
             Checkbox(row.included, { onChange(row.copy(included = it)) }, enabled = enabled, modifier = Modifier.width(48.dp))
             ReportCell(row.date, "تاریخ", 160, enabled, row.included && PersianInput.date(row.date) == null, "report-cell-${row.id}-date") { onChange(row.copy(date = it)) }
             ReportCell(row.count, "تعداد", 90, enabled, row.included && PersianInput.count(row.count) == null, "report-cell-${row.id}-count") { onChange(row.copy(count = it)) }
@@ -184,8 +184,14 @@ private fun ReportCell(value: String, label: String, width: Int, enabled: Boolea
 private fun PageImage(documents: ReportDocuments, page: ReportPage, modifier: Modifier, thumbnail: Boolean) {
     var failure by remember(page, thumbnail) { mutableStateOf(false) }
     val bitmap by produceState<Bitmap?>(null, page, thumbnail) {
-        value = withContext(Dispatchers.IO) { try { documents.render(page, if (thumbnail) 120000 else 2400000, if (thumbnail) 420 else 2000) }
-            catch (_: Exception) { failure = true; null } }
+        var rendered: Bitmap? = null
+        try {
+            withContext(Dispatchers.IO) { rendered = documents.render(page, if (thumbnail) 120000 else 2400000, if (thumbnail) 420 else 2000) }
+            value = rendered
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            rendered?.recycle(); throw e
+        } catch (_: OutOfMemoryError) { rendered?.recycle(); failure = true }
+        catch (_: Exception) { rendered?.recycle(); failure = true }
     }
     val image = bitmap
     DisposableEffect(image) { onDispose { image?.recycle() } }

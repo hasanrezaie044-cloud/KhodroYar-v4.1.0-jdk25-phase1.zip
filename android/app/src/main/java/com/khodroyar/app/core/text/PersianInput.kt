@@ -21,7 +21,8 @@ object PersianInput {
     val datePattern = Regex("(?<![0-9])(?:1[3-6][0-9]{2}\\s*[/.-]\\s*[0-9]{1,2}\\s*[/.-]\\s*[0-9]{1,2}|1[3-6][0-9]{6})(?![0-9])")
 
     fun date(input: String): String? {
-        val s = latin(input).trim().replace(Regex("\\s+"), "")
+        val s = latin(input).trim().replace(Regex("\\s*([/.-])\\s*"), "$1")
+        if (!Regex("(?:[0-9]{8}|[0-9]{4}[/.-][0-9]{1,2}[/.-][0-9]{1,2})").matches(s)) return null
         val p = if (Regex("[0-9]{8}").matches(s)) listOf(s.take(4), s.substring(4, 6), s.takeLast(2))
             else s.replace('-', '/').replace('.', '/').split('/')
         if (p.size != 3 || p.any { !Regex("[0-9]+").matches(it) }) return null

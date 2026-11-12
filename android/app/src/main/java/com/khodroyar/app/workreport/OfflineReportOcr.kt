@@ -20,7 +20,7 @@ class OfflineReportOcr(private val context: Context) {
     @Volatile private var active: TessBaseAPI? = null
     fun stop() { active?.stop() }
 
-    suspend fun recognize(pages: List<ReportPage>, sparse: Boolean, progress: (String) -> Unit): List<OcrPage> = withContext(Dispatchers.IO) {
+    suspend fun recognize(pages: List<ReportPage>, sparse: Boolean, diagnostics: ((String) -> Unit)? = null, progress: (String) -> Unit): List<OcrPage> = withContext(Dispatchers.IO) {
         engineLock.withLock {
             require(pages.isNotEmpty()) { "ابتدا تصویر یا PDF انتخاب کنید." }
             val modelDirectory = installModels()
@@ -59,7 +59,8 @@ class OfflineReportOcr(private val context: Context) {
                                 } while (iterator.next(TessBaseAPI.PageIteratorLevel.RIL_WORD))
                             } finally { iterator.delete() }
                         }
-                        val refined = refineTable(api, bitmap, words)
+                        diagnostics?.invoke("Page ${index + 1} initial text: $text; words: $words")
+                        val refined = refineTable(api, bitmap, words, diagnostics)
                         result += OcrPage(page.id, index + 1, refined, text)
                     } finally { api.clear(); bitmap.recycle() }
                     require(result.sumOf { it.words.size } <= 200000) { "متن این مقایسه بیش از حد بزرگ است؛ سند را به چند بخش تقسیم کنید." }
@@ -71,13 +72,25 @@ class OfflineReportOcr(private val context: Context) {
 
     /**
      * Sparse-page recognition suppresses isolated one-digit counts and can confuse
-     * decimal marks. Re-read actual header-defined cells as single lines. This is
-     * recognition of image pixels, NOT substitutions, guessed values or zero defaults.
+     * decimal marks. Read actual header-defined cells with both the local visual
+     * numeric reader and single-line Tesseract. Conflicting strong readings stay
+     * blank. This is image recognition, not substitutions or totals-based guesses.
      */
-    private suspend fun refineTable(api: TessBaseAPI, bitmap: Bitmap, original: List<OcrWord>): List<OcrWord> {
+    private suspend fun refineTable(api: TessBaseAPI, bitmap: Bitmap, original: List<OcrWord>, diagnostics: ((String) -> Unit)?): List<OcrWord> {
         val regions = ReportTableGeometry.regions(original)
         require(regions.size <= 1600) { "جدول این صفحه برای بازخوانی دقیق بزرگ است؛ صفحه را به بخش‌های کوچک‌تر تقسیم کنید." }
         val result = original.toMutableList()
+        val reader = if (regions.isEmpty()) null else NumericGlyphOcr(context)
+        val coroutine = currentCoroutineContext()
+        val pixels = regions.groupBy { it.top to it.bottom }.values.flatMap { row ->
+            requireNotNull(reader).readRow(bitmap, row) { coroutine.ensureActive() }.entries.map { it.key to it.value }
+        }.toMap()
+        fun canonical(field: NumericField, raw: String): String? = when (field) {
+            NumericField.DATE -> PersianInput.date(raw)
+            NumericField.COUNT -> PersianInput.count(raw)?.toString()
+            NumericField.KM -> PersianInput.decimal(raw)?.let(PersianInput::display)
+            NumericField.HOURS -> PersianInput.hours(raw)?.let(PersianInput::display)
+        }
         for (region in regions) {
             currentCoroutineContext().ensureActive()
             val left = (region.left * bitmap.width).toInt().coerceIn(0, bitmap.width - 1)
@@ -97,16 +110,25 @@ class OfflineReportOcr(private val context: Context) {
             val raw = api.getUTF8Text().orEmpty().trim()
             val confidence = api.meanConfidence().toFloat()
             currentCoroutineContext().ensureActive()
-            val valid = when (region.field) {
-                NumericField.DATE -> PersianInput.date(raw) != null || Regex("جمع|مجموع|total|subtotal", RegexOption.IGNORE_CASE).containsMatchIn(PersianInput.latin(raw))
-                NumericField.COUNT -> PersianInput.count(raw) != null
-                NumericField.KM -> PersianInput.decimal(raw) != null
-                NumericField.HOURS -> PersianInput.hours(raw) != null
+            val tesseract = canonical(region.field, raw)
+            val pixel = pixels[region]?.takeIf { canonical(region.field, it.text) != null }
+            val footer = region.field == NumericField.DATE && Regex("^(?:جمع(?:\\s*کل)?|مجموع|total|subtotal)$", RegexOption.IGNORE_CASE).matches(PersianInput.latin(raw))
+            val conflict = pixel != null && tesseract != null && confidence >= 85 && canonical(region.field, pixel.text) != tesseract
+            diagnostics?.invoke("Cell $region: Tesseract='$raw' ($confidence); pixels=$pixel; strongConflict=$conflict")
+            val value = when {
+                conflict -> null
+                pixel != null -> pixel.text to pixel.confidence
+                footer && confidence >= 70 -> raw to confidence
+                tesseract != null && confidence >= 85 -> raw to confidence
+                else -> null
             }
             val inside = original.filter { it.x > region.left && it.x < region.right && it.y > region.top && it.y < region.bottom }
-            if (valid && confidence >= 70) {
+            if (value != null) {
                 result.removeAll(inside.toSet())
-                result += OcrWord(raw, region.left, region.top, region.right, region.bottom, confidence)
+                result += OcrWord(value.first, region.left, region.top, region.right, region.bottom, value.second)
+            } else if (conflict) {
+                // No engine is treated as an oracle when two strong readings differ.
+                result.removeAll(inside.filter { PersianInput.latin(it.text).any { c -> c in '0'..'9' } }.toSet())
             } else {
                 // A weak page-level numeric guess is not rescued by an unreadable cell.
                 // Retain labels, but leave uncertain numeric fields blank for explicit review.

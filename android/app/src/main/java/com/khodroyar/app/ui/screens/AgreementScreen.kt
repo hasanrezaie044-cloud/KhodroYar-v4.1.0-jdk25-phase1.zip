@@ -25,6 +25,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.platform.testTag
 import com.khodroyar.app.ui.components.FieldShape
 import com.khodroyar.app.ui.components.CardShape
 import com.khodroyar.app.ui.components.IconBadge
@@ -151,13 +152,13 @@ fun AgreementScreen(onAccept: () -> Unit, onDecline: () -> Unit) {
             }
             Spacer(Modifier.height(8.dp))
             Column(Modifier.widthIn(max = 520.dp).fillMaxWidth()) {
-                Row(Modifier.fillMaxWidth().toggleable(value = agreed, role = Role.Checkbox, onValueChange = { agreed = it })
+                Row(Modifier.fillMaxWidth().testTag("terms-agree").toggleable(value = agreed, role = Role.Checkbox, onValueChange = { agreed = it })
                     .heightIn(min = 52.dp).padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
                     Checkbox(checked = agreed, onCheckedChange = null)
                     Spacer(Modifier.width(10.dp))
                     Text("متن بالا را خوانده‌ام و می‌پذیرم", color = Color.White, style = MaterialTheme.typography.bodyMedium)
                 }
-                Button(onClick = onAccept, enabled = agreed, modifier = Modifier.fillMaxWidth().heightIn(min = 54.dp), shape = FieldShape) {
+                Button(onClick = onAccept, enabled = agreed, modifier = Modifier.fillMaxWidth().heightIn(min = 54.dp).testTag("terms-continue"), shape = FieldShape) {
                     Text("می‌پذیرم و ادامه")
                 }
                 TextButton(onClick = onDecline, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) {

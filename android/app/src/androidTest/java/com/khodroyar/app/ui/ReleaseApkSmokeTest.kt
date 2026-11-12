@@ -1,7 +1,7 @@
 package com.khodroyar.app.ui
 
-import android.app.Activity
 import android.content.ContentValues
+import android.content.Intent
 import android.content.pm.ApplicationInfo
 import android.graphics.Bitmap
 import android.graphics.Canvas
@@ -14,29 +14,28 @@ import android.text.Layout
 import android.text.StaticLayout
 import android.text.TextDirectionHeuristics
 import android.text.TextPaint
-import androidx.compose.ui.semantics.SemanticsProperties
-import androidx.compose.ui.test.*
-import androidx.compose.ui.test.junit4.createEmptyComposeRule
-import androidx.test.core.app.ActivityScenario
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.uiautomator.By
+import androidx.test.uiautomator.BySelector
+import androidx.test.uiautomator.Direction
 import androidx.test.uiautomator.UiDevice
+import androidx.test.uiautomator.UiObject2
 import androidx.test.uiautomator.Until
+import org.json.JSONArray
+import org.json.JSONObject
 import org.junit.Assert.*
-import org.junit.Rule
 import org.junit.Test
+import java.io.ByteArrayOutputStream
 import java.io.File
 import java.util.regex.Pattern
 
 /**
- * ONLY the signed, non-debuggable, R8 release, on a fresh disposable emulator.
- * Drives the actual launcher, terms/profile, system SAF picker and native OCR UI.
- * No direct references to optimised app implementation classes or debug test host.
+ * External accessibility interaction with the signed, non-debuggable R8 release.
+ * Does not load Compose's test runtime or reflect into the optimised app. Drives
+ * the real launcher, terms/profile, system SAF picker and offline numeric review.
  */
 class ReleaseApkSmokeTest {
-    @get:Rule val compose = createEmptyComposeRule()
-
-    @Test fun signedMinifiedApkLaunchesAndReadsPersianReportWithRadiosDisabled() {
+    @Test(timeout = 600000) fun signedMinifiedApkLaunchesAndReadsPersianReportWithRadiosDisabled() {
         check(Build.HARDWARE.contains("ranchu") || Build.HARDWARE.contains("goldfish"))
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val context = instrumentation.targetContext
@@ -44,6 +43,18 @@ class ReleaseApkSmokeTest {
         assertEquals("Gesture navigation must really be enabled", 2, android.provider.Settings.Secure.getInt(context.contentResolver, "navigation_mode", -1))
         assertEquals("com.khodroyar.app", context.packageName)
         assertEquals(0, context.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE)
+        val stages = mutableListOf<String>()
+        fun stage(value: String) { stages += value; println("Signed-release stage: $value") }
+        fun find(selector: BySelector, timeout: Long = 30000): UiObject2 = device.wait(Until.findObject(selector), timeout)
+            ?: throw AssertionError("UI element not found: $selector; stages=$stages")
+        fun tagged(value: String, timeout: Long = 30000) = find(By.res(value), timeout)
+        fun scrollTo(selector: BySelector, container: String): UiObject2 {
+            repeat(14) {
+                device.findObject(selector)?.takeIf { it.visibleBounds.height() > 0 && it.visibleBounds.width() > 0 }?.let { return it }
+                tagged(container).scroll(Direction.DOWN, .65f)
+            }
+            throw AssertionError("Cannot scroll to $selector; stages=$stages")
+        }
         val name = "khodroyar-release-ocr-fixture.png"
         val values = ContentValues().apply {
             put(MediaStore.Images.Media.DISPLAY_NAME, name)
@@ -65,58 +76,67 @@ class ReleaseApkSmokeTest {
         listOf("۱۴۰۳/۰۱/۰۱", "۲", "۱۲۰٫۵", "۳٫۵").forEachIndexed { n, text -> cell(text, 1600f - n * 400, 300f, if (n == 0) 460 else 300) }
         context.contentResolver.openOutputStream(uri)!!.use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
         bitmap.recycle()
-        device.executeShellCommand("svc wifi disable")
-        device.executeShellCommand("svc data disable")
-        val launch = requireNotNull(context.packageManager.getLaunchIntentForPackage(context.packageName))
+        val extracted = JSONObject()
+        var passed = false
         try {
-            ActivityScenario.launch<Activity>(launch).use {
-                compose.waitUntil(30000) { compose.onAllNodesWithText("متن بالا را خوانده‌ام و می‌پذیرم").fetchSemanticsNodes().isNotEmpty() }
-                compose.onNodeWithText("متن بالا را خوانده‌ام و می‌پذیرم").performClick()
-                compose.onNodeWithText("می‌پذیرم و ادامه").performClick()
-                compose.onNode(hasText("نام") and hasSetTextAction()).performTextInput("آزمایشی")
-                compose.onNode(hasText("نام خانوادگی") and hasSetTextAction()).performTextInput("امولاتور")
-                device.pressBack()
-                compose.onNodeWithText("شروع مسیر").performScrollTo().performClick()
-                compose.waitUntil(30000) { compose.onAllNodesWithTag("nav-REPORTS").fetchSemanticsNodes().isNotEmpty() }
-                compose.onNodeWithTag("nav-REPORTS").performClick()
-                compose.onNodeWithTag("report-list").performScrollToNode(hasTestTag("open-work-report"))
-                compose.onNode(hasText("مقایسهٔ کارکرد شرکت") and hasAnyAncestor(hasTestTag("open-work-report"))).performClick()
-                compose.onNodeWithTag("report-import").performClick()
-                val document = device.wait(Until.findObject(By.textContains("khodroyar-release-ocr-fixture")), 20000)
-                    ?: throw AssertionError("Synthetic image was not shown in the real SAF picker")
-                document.click()
-                device.waitForIdle()
-                device.findObject(By.res(Pattern.compile(".*:id/action_menu_select")))?.click()
-                compose.waitUntil(20000) { compose.onAllNodesWithTag("report-ocr").fetchSemanticsNodes().isNotEmpty() }
-                compose.onNodeWithTag("work-report-list").performScrollToNode(hasTestTag("report-ocr"))
-                compose.onNodeWithTag("report-ocr").performClick()
-                compose.waitUntil(120000) { compose.onAllNodesWithTag("report-compare").fetchSemanticsNodes().isNotEmpty() }
-                compose.onNodeWithTag("report-compare").assertIsNotEnabled()
-                // Capture actual extracted cell contents, normalising scripts only in the assertion.
-                val list = compose.onNodeWithTag("work-report-list")
-                list.performScrollToNode(hasSetTextAction() and hasText("تعداد"))
-                val cells = compose.onAllNodes(hasSetTextAction()).fetchSemanticsNodes().filter {
-                    it.config.contains(SemanticsProperties.TestTag) && it.config[SemanticsProperties.TestTag].startsWith("report-cell-")
-                }
-                fun normalized(text: String) = buildString {
-                    text.forEach { c -> append(when (c) { in '۰'..'۹' -> '0' + (c - '۰'); in '٠'..'٩' -> '0' + (c - '٠'); '٫' -> '.'; else -> c }) }
-                }
-                fun value(suffix: String): String {
-                    val node = cells.single { it.config[SemanticsProperties.TestTag].endsWith(suffix) }
-                    return normalized(node.config[SemanticsProperties.EditableText].text)
-                }
-                assertEquals("1403/01/01", value("-date")); assertEquals("2", value("-count"))
-                assertEquals(120.5, value("-km").toDouble(), .000001); assertEquals(3.5, value("-hours").toDouble(), .000001)
-                list.performScrollToNode(hasTestTag("report-review-confirm"))
-                compose.onNodeWithTag("report-review-confirm").performClick()
-                compose.onNodeWithTag("report-compare").performClick()
-                compose.waitUntil(30000) { compose.onAllNodesWithTag("report-comparison").fetchSemanticsNodes().isNotEmpty() }
-                compose.onAllNodesWithText("شرکت: 2 سرویس · 120.5 کیلومتر · 3.5 ساعت").onFirst().assertIsDisplayed()
-                val directory = File(context.getExternalFilesDir(null), "release-smoke").also { it.mkdirs() }
-                assertTrue(device.takeScreenshot(File(directory, "signed-release-offline-ocr.png")))
-                println("Signed non-debuggable R8 APK: real SAF import, bundled Persian OCR, review gate and comparison passed with radios disabled.")
+            // Emulator permission only, not a new application permission or a bypass on a phone.
+            device.executeShellCommand("pm grant com.khodroyar.app android.permission.POST_NOTIFICATIONS")
+            device.executeShellCommand("svc wifi disable"); device.executeShellCommand("svc data disable")
+            context.startActivity(requireNotNull(context.packageManager.getLaunchIntentForPackage(context.packageName)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            stage("real launcher opened, radios disabled")
+            tagged("terms-agree").click(); tagged("terms-continue").click()
+            stage("terms accepted through UI")
+            tagged("profile-first-name").apply { click(); text = "آزمایشی" }
+            tagged("profile-last-name").apply { click(); text = "امولاتور" }
+            device.pressBack()
+            find(By.text("شروع مسیر")).click()
+            stage("offline profile saved")
+            tagged("nav-REPORTS").click()
+            scrollTo(By.res("open-work-report"), "report-list").click()
+            tagged("report-import").click()
+            stage("real SAF picker opened")
+            find(By.textContains("khodroyar-release-ocr-fixture"), 20000).click()
+            device.waitForIdle(2000)
+            device.findObject(By.res(Pattern.compile(".*:id/action_menu_select")))?.click()
+            scrollTo(By.res("report-ocr"), "work-report-list").click()
+            stage("bundled OCR processing requested")
+            assertFalse("Review is required before any comparison", tagged("report-compare", 120000).isEnabled)
+            val dateSelector = By.res(Pattern.compile("report-cell-.*-date"))
+            scrollTo(dateSelector, "work-report-list")
+            fun normalized(text: String) = buildString {
+                text.forEach { c -> append(when (c) { in '۰'..'۹' -> '0' + (c - '۰'); in '٠'..'٩' -> '0' + (c - '٠'); '٫' -> '.'; else -> c }) }
             }
+            fun value(field: String): String {
+                val selector = By.res(Pattern.compile("report-cell-.*-$field"))
+                repeat(5) {
+                    device.findObject(selector)?.takeIf { it.visibleBounds.width() > 0 }?.let { node ->
+                        val value = normalized(node.text.orEmpty())
+                        extracted.put(field, value)
+                        return value
+                    }
+                    find(By.res(Pattern.compile("report-row-scroll-.*"))).scroll(Direction.LEFT, .65f)
+                }
+                throw AssertionError("Editable $field cell was not reachable; extracted=$extracted")
+            }
+            assertEquals("1403/01/01", value("date")); assertEquals("2", value("count"))
+            assertEquals(120.5, value("km").toDouble(), .000001); assertEquals(3.5, value("hours").toDouble(), .000001)
+            stage("actual extracted date/count/km/hours exactly match the generated image")
+            scrollTo(By.res("report-review-confirm"), "work-report-list").click()
+            tagged("report-compare").click()
+            find(By.text("شرکت: 2 سرویس · 120.5 کیلومتر · 3.5 ساعت"))
+            stage("mandatory review and actual comparison passed")
+            val screenshot = File(context.cacheDir, "signed-release-offline-ocr.png")
+            assertTrue(device.takeScreenshot(screenshot))
+            publishSyntheticEvidence(context, "KhodroYar-Release-Smoke", screenshot.name, "image/png", screenshot.readBytes())
+            screenshot.delete()
+            passed = true
         } finally {
+            val trace = JSONObject().put("environment", "API35 x86_64 emulator; original signed non-debuggable R8 APK; gesture navigation; not physical Samsung proof")
+                .put("passed", passed).put("stages", JSONArray(stages)).put("extracted", extracted)
+            publishSyntheticEvidence(context, "KhodroYar-Release-Smoke", "runtime.json", "application/json", trace.toString(2).toByteArray())
+            val hierarchy = ByteArrayOutputStream()
+            device.dumpWindowHierarchy(hierarchy)
+            publishSyntheticEvidence(context, "KhodroYar-Release-Smoke", "last-window.xml", "text/xml", hierarchy.toByteArray())
             device.executeShellCommand("svc wifi enable"); device.executeShellCommand("svc data enable")
             context.contentResolver.delete(uri, null, null)
         }

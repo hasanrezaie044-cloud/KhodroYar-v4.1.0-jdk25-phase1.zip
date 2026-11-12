@@ -11,8 +11,9 @@ adb shell input keyevent KEYCODE_WAKEUP
 adb shell wm dismiss-keyguard || true
 BEFORE=$(sha256sum app/build/outputs/apk/release/app-release.apk | awk '{print $1}')
 set +e
-./gradlew connectedReleaseAndroidTest -PkhodroyarTestBuildType=release \
+timeout 18m ./gradlew connectedReleaseAndroidTest -PkhodroyarTestBuildType=release \
   -Pandroid.testInstrumentationRunnerArguments.class=com.khodroyar.app.ui.ReleaseApkSmokeTest \
+  -Pandroid.testInstrumentationRunnerArguments.timeout_msec=600000 \
   --stacktrace 2>&1 | tee "${RUNNER_TEMP:-/tmp}/khodroyar-signed-runtime.log"
 RESULT=${PIPESTATUS[0]}
 set -e
@@ -25,8 +26,23 @@ if [ "$BEFORE" != "$AFTER" ]; then
   echo "::error::Tested release APK differs from the already audited candidate"
   RESULT=1
 fi
-adb logcat -d -t 400 > "$EVIDENCE/logcat.txt"
-adb pull /sdcard/Android/data/com.khodroyar.app/files/release-smoke/. "$EVIDENCE/" || RESULT=1
+adb logcat -d -t 500 > "$EVIDENCE/logcat.txt"
+# UTP uninstalls the APK; use shared synthetic Downloads, NOT app-specific files.
+adb pull /sdcard/Download/KhodroYar-Release-Smoke/. "$EVIDENCE/" || RESULT=1
+if ! python3 - "$EVIDENCE/runtime.json" <<'PY'
+import json, sys
+from pathlib import Path
+p = Path(sys.argv[1])
+if not p.is_file() or p.stat().st_size > 65536:
+    raise SystemExit('Missing signed-release runtime trace')
+evidence = json.loads(p.read_text())
+text = json.dumps(evidence, ensure_ascii=False).replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
+print('::notice title=Actual signed-release runtime trace::' + text)
+assert evidence['passed'] is True, 'Signed-release runtime assertions did not pass'
+PY
+then
+  RESULT=1
+fi
 if [ "$RESULT" -eq 0 ]; then
   echo "::notice title=Signed release runtime verification::Non-debuggable originally signed R8 APK launched, real Persian OCR with radios disabled and actual SAF picker passed; gesture navigation; exact audited APK hash preserved."
 fi
