@@ -186,13 +186,15 @@ class OfflineReportOcr(private val context: Context) {
             NumericField.KM -> PersianInput.decimal(text)?.let(PersianInput::display)
             NumericField.HOURS -> PersianInput.hours(text)?.let(PersianInput::display)
         }
-        fun read(rect: GridRect, whitelist: String = ""): Pair<String, Float> {
+        fun read(rect: GridRect, whitelist: String = "", singleToken: Boolean = false): Pair<String, Float> {
             coroutine.ensureActive()
             val l = (rect.left * bitmap.width).toInt().coerceIn(0, bitmap.width - 1)
             val t = (rect.top * bitmap.height).toInt().coerceIn(0, bitmap.height - 1)
             val w = ((rect.right * bitmap.width).toInt() - l).coerceIn(1, bitmap.width - l)
             val h = ((rect.bottom * bitmap.height).toInt() - t).coerceIn(1, bitmap.height - t)
-            api.pageSegMode = TessBaseAPI.PageSegMode.PSM_SINGLE_LINE
+            // A ruled numeric cell is ONE token, not a sparse sentence. Dates
+            // and descriptions retain line segmentation (including footer text).
+            api.pageSegMode = if (singleToken) TessBaseAPI.PageSegMode.PSM_SINGLE_WORD else TessBaseAPI.PageSegMode.PSM_SINGLE_LINE
             api.setVariable("tessedit_char_whitelist", whitelist)
             api.setRectangle(l, t, w, h)
             return api.getUTF8Text().orEmpty().trim() to api.meanConfidence().toFloat()
@@ -223,7 +225,7 @@ class OfflineReportOcr(private val context: Context) {
                     NumericField.DATE -> "" // Dates/total labels must not be manufactured by a digits-only whitelist.
                     NumericField.COUNT, NumericField.ORDINAL, NumericField.KM -> digits + ".٫,٬"
                     NumericField.HOURS -> digits + ".٫:"
-                })
+                }, singleToken = region.field != NumericField.DATE)
                 if (region.field == NumericField.DATE) dateLabel = raw
                 val tess = canonical(region.field, raw.first)
                 val pixel = pixels[region]?.takeIf { canonical(region.field, it.text) != null }

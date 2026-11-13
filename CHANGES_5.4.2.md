@@ -10,8 +10,13 @@ The already-published 5.4.1 APK/Release must not be overwritten.
   unreadable rows. Exact raster scaling avoids unnecessarily halving a slightly oversized
   photo. Unknown cells and conflicting strong readings stay unknown; thresholds are not relaxed.
 - Re-read a header strip when sparse OCR omits a short title, using recognised neighbouring
-  labels and both native engines. Missing anchors come only from newly read label pixels;
-  no column coordinate, prior page or numeric value substitutes for an unreadable title.
+  labels and both native engines, retaining both ruled and rule-removed views for segmentation.
+  Missing anchors come only from newly read label pixels; no column coordinate, prior page or
+  numeric value substitutes for an unreadable title.
+- Keep numeric glyphs on the actual row baseline; normalising a short Arabic five to its own
+  cell height must not turn it into a Western zero. Fixed-form numeric cells use native
+  single-token segmentation; date/description cells keep line segmentation. Strong conflicts
+  remain unknown, with the same confidence/distance/margin gates.
 - Read actual service records with their IDs and stored manual hours. Compare individual
   date/km/hour multiplicities before offering differences or missing records; show route,
   type and start/end as review context, never as invented work hours.

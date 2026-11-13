@@ -41,11 +41,15 @@ internal class PrintedHeaderOcr(private val primary: TessBaseAPI, private val en
                 scaled = image
                 val pixels = IntArray(image.width * image.height)
                 image.getPixels(pixels, 0, image.width, 0, 0, image.width, image.height)
-                val grey = PrintedCellRaster.withoutRules(image.width, image.height, PrintedCellRaster.grey(image.width, image.height, pixels))
+                val originalGrey = PrintedCellRaster.grey(image.width, image.height, pixels)
+                // Rules can hurt label recognition, but also help the native line
+                // segmenter. Neither preparation is an oracle: retain BOTH bounded
+                // rasters and require the same label/location checks for either.
+                val preparations = listOf(originalGrey, PrintedCellRaster.withoutRules(image.width, image.height, originalGrey))
                 for (api in listOf(primary, engine())) {
                     api.pageSegMode = TessBaseAPI.PageSegMode.PSM_SINGLE_LINE
                     api.setVariable("tessedit_char_whitelist", "")
-                    for (view in PrintedCellRaster.View.entries) {
+                    for (grey in preparations) for (view in PrintedCellRaster.View.entries) {
                         checkCancelled()
                         val content = Bitmap.createBitmap(PrintedCellRaster.pixels(grey, view), image.width, image.height, Bitmap.Config.ARGB_8888)
                         try {

@@ -94,6 +94,7 @@ class CompanyReportIntegrationTest {
                 .put("diagnostics", JSONArray(diagnostics))
             publishSyntheticEvidence(context, "KhodroYar-UI-Smoke", "company-template-ocr.json", "application/json", evidence.toString().toByteArray())
             publishSyntheticEvidence(context, "KhodroYar-UI-Smoke", "fixture-company-template.png", "image/png", image.readBytes())
+            assertTrue("Every PDF/PNG page must establish its own recognised header", recognized.all { CompanyReportTemplate.header(it.words) != null })
             val selected = rows.filter { it.included }
             assertEquals("All five real rows, not ordinals or footers: $rows", 5, selected.size)
             assertTrue(selected.all { it.kind == ReportRowKind.SERVICE && it.count == "1" && it.validated() != null })
@@ -169,6 +170,39 @@ class CompanyReportIntegrationTest {
             assertFalse(bitmap.isRecycled)
             assertTrue(runCatching { reader.read(bitmap, region) { error("cancel") } }.isFailure)
         } finally { api.recycle(); bitmap.recycle() }
+    }
+
+    @Test fun ArabicFivesAndSmallZeroesKeepTheirRowBaselineEvenAboveTwelvePixels() {
+        val bitmap = Bitmap.createBitmap(900, 150, Bitmap.Config.ARGB_8888)
+        val font = requireNotNull(ResourcesCompat.getFont(context, R.font.vazirmatn_regular))
+        val regions = listOf(
+            NumericRegion(NumericField.DATE, 0f, 0f, .55f, 1f),
+            NumericRegion(NumericField.KM, .56f, 0f, .72f, 1f),
+            NumericRegion(NumericField.HOURS, .74f, 0f, .84f, 1f),
+            NumericRegion(NumericField.ORDINAL, .86f, 0f, 1f, 1f),
+        )
+        val reader = NumericGlyphOcr(context)
+        val evidence = JSONArray()
+        val actual = mutableListOf<Triple<String?, String?, String?>>()
+        val cases = listOf("٥٥" to "55", "٠" to "0", "۵۵" to "55", "0" to "0")
+        try {
+            for ((text, _) in cases) {
+                bitmap.eraseColor(Color.WHITE)
+                val canvas = Canvas(bitmap)
+                val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.BLACK; typeface = font }
+                fun draw(value: String, x: Float, size: Float) { paint.textSize = size; canvas.drawText(value, x, 90f, paint) }
+                draw("1402/07/18", 25f, 38f); draw(text, 525f, 42f); draw("٠", 675f, 40f); draw("٥", 800f, 42f)
+                val logs = mutableListOf<String>()
+                val readings = reader.readRow(bitmap, regions, diagnostics = { logs += it }, cellBaselines = true)
+                fun value(field: NumericField) = readings.entries.single { it.key.field == field }.value?.text
+                actual += Triple(value(NumericField.KM), value(NumericField.HOURS), value(NumericField.ORDINAL))
+                evidence.put(JSONObject().put("input", text).put("readings", readings.toString()).put("diagnostics", JSONArray(logs)))
+            }
+            publishSyntheticEvidence(context, "KhodroYar-UI-Smoke", "numeric-font-row-baselines.json", "application/json", evidence.toString().toByteArray())
+            cases.forEachIndexed { index, (_, expected) ->
+                assertEquals(evidence.toString(), Triple(expected, "0", "5"), actual[index])
+            }
+        } finally { bitmap.recycle() }
     }
 
     @Test fun slightlyOversizedPhotoRetainsNearFullPrintResolutionWithinTheExistingCaps() {

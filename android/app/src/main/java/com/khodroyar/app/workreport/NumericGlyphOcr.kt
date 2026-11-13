@@ -72,10 +72,12 @@ class NumericGlyphOcr(context: Context) {
         if (rowBottom - rowTop < 12) return emptyMap()
         return cells.associate { cell ->
             checkCancelled()
-            // Fixed forms may print ordinals/dates at different sizes. A cell
-            // with full-height ink can establish its own reference; a tiny zero
-            // or punctuation CANNOT (it retains the complete row's baseline).
-            val own = cell.mask.bounds()?.takeIf { cellBaselines && it.height >= 12 }
+            // A date has full-height digits/slashes and may use a different
+            // font size. Other numeric cells MUST retain the complete row's
+            // baseline: even >12px Arabic fives can be shorter than full digits.
+            // Normalising a cell of only those glyphs to its own height turns
+            // them into Western zeroes. Tiny zeroes/points also keep the row.
+            val own = cell.mask.bounds()?.takeIf { cellBaselines && cell.region.field == NumericField.DATE && it.height >= 12 }
             cell.region to read(cell.mask, own?.top ?: (rowTop - cell.top), own?.bottom ?: (rowBottom - cell.top), cell.region.field,
                 diagnostics?.let { callback -> { message -> callback("${cell.region.field}: $message") } }, checkCancelled)
         }
