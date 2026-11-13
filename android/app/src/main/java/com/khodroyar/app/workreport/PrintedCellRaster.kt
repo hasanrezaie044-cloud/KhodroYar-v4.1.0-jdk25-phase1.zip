@@ -45,6 +45,11 @@ internal object PrintedCellRaster {
         }
         return bottom - top + 1 >= 12 && count < grey.size * .60f
     }
+    fun blank(grey: IntArray): Boolean {
+        val threshold = threshold(grey)
+        return grey.none { it <= threshold }
+    }
+
     /** Remove only rules spanning almost the entire header strip, not letter strokes. */
     fun withoutRules(width: Int, height: Int, grey: IntArray): IntArray {
         require(width > 0 && height > 0 && width.toLong() * height == grey.size.toLong())
@@ -53,6 +58,25 @@ internal object PrintedCellRaster {
         val columns = BooleanArray(width) { x -> (0 until height).count { y -> grey[y * width + x] <= threshold } >= height * .85f }
         return IntArray(grey.size) { i -> if (rows[i / width] || columns[i % width]) 255 else grey[i] }
     }
+    /** Local mean threshold; no opening/erosion and no thin-stroke denoising. */
+    fun adaptive(width: Int, height: Int, grey: IntArray): IntArray {
+        require(width > 0 && height > 0 && width.toLong() * height == grey.size.toLong() && grey.size <= MAX_PIXELS)
+        val stride = width + 1
+        val sums = IntArray(stride * (height + 1))
+        for (y in 0 until height) {
+            var row = 0
+            for (x in 0 until width) { row += grey[y * width + x]; sums[(y + 1) * stride + x + 1] = sums[y * stride + x + 1] + row }
+        }
+        val radius = maxOf(9, minOf(width, height) / 8)
+        return IntArray(grey.size) { i ->
+            val x = i % width; val y = i / width
+            val l = maxOf(0, x - radius); val r = minOf(width, x + radius + 1)
+            val t = maxOf(0, y - radius); val b = minOf(height, y + radius + 1)
+            val mean = (sums[b * stride + r] - sums[t * stride + r] - sums[b * stride + l] + sums[t * stride + l]).toFloat() / ((b - t) * (r - l))
+            if (grey[i] < (mean - 12f).coerceAtLeast(40f)) 0xff000000.toInt() else -1
+        }
+    }
+
     fun pixels(grey: IntArray, view: View): IntArray {
         val h = histogram(grey)
         val threshold = if (view == View.OTSU) threshold(grey) else 0

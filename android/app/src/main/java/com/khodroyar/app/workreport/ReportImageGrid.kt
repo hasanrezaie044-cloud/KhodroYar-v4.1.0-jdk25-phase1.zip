@@ -3,6 +3,7 @@ package com.khodroyar.app.workreport
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.Paint
 import kotlin.math.abs
 import kotlin.math.cos
 import kotlin.math.sin
@@ -38,7 +39,7 @@ internal object ReportImageGrid {
             Canvas(output).apply {
                 drawColor(Color.WHITE)
                 translate(output.width / 2f, output.height / 2f); scale(scale, scale); rotate(-angle)
-                drawBitmap(bitmap, -bitmap.width / 2f, -bitmap.height / 2f, null)
+                drawBitmap(bitmap, -bitmap.width / 2f, -bitmap.height / 2f, Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG))
             }
         } catch (e: Throwable) { output.recycle(); throw e }
         bitmap.recycle()

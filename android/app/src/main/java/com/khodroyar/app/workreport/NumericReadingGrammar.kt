@@ -24,7 +24,7 @@ object NumericReadingGrammar {
     }
 
     internal fun canonical(field: NumericField, text: String): String? = when (field) {
-        NumericField.DATE -> PersianInput.date(text)
+        NumericField.DATE -> ReportDateText.parse(text)
         NumericField.COUNT -> PersianInput.count(text)?.toString()
         NumericField.ORDINAL -> PersianInput.count(text)?.takeIf { it > 0 }?.toString()
         NumericField.KM -> PersianInput.decimal(text)?.let(PersianInput::display)

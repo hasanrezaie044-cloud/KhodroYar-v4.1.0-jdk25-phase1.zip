@@ -27,7 +27,9 @@ data class ReportRow(
     val note: String = "", val duplicateOf: String? = null,
     val kind: ReportRowKind = ReportRowKind.DAILY_TOTAL, val ordinal: String = "",
     val origin: String = "", val destination: String = "",
+    val hoursBlank: Boolean = false,
 ) {
+    /** Strict path for ServiceWorkComparison; absent hours are NEVER zero. */
     fun validated(): DailyWork? {
         val d = PersianInput.date(date) ?: return null
         val c = PersianInput.count(count) ?: return null
@@ -110,10 +112,10 @@ object WorkReportParser {
                 val words = ordered.subList(start, start + size)
                 // A complete date is a cell, not a prefix to which a nearby count
                 // may be appended (01 + 1 must never silently become day 11).
-                if (size > 1 && words.any { PersianInput.date(it.text) != null }) continue
+                if (size > 1 && words.any { ReportDateText.parse(it.text) != null }) continue
                 if (words.zipWithNext().any { (a, b) -> maxOf(a.left, b.left) - minOf(a.right, b.right) > .045f }) continue
                 val text = words.joinToString("") { PersianInput.latin(it.text).trim() }
-                val parsed = PersianInput.date(text)
+                val parsed = ReportDateText.parse(text)
                 if (parsed != null) {
                     candidates += parsed to words.toList()
                     break
@@ -174,7 +176,7 @@ object WorkReportParser {
                 val confidence = line.minOf { it.confidence }
                 val note = skip ?: when {
                     date == null -> "تاریخ ناخوانا یا نامعتبر؛ باید اصلاح یا صریحاً کنار گذاشته شود"
-                    values.size < 3 -> "ستون نامشخص؛ مقدار حدس زده نشده است"
+                    values.size < 3 -> "سرستون‌ها و خانه‌های مشخص‌شده را بازبینی کنید؛ مقداری حدس زده نشده است"
                     confidence < 85 -> "اطمینان OCR پایین است؛ با تصویر تطبیق دهید"
                     else -> "با تصویر اصلی بازبینی کنید"
                 }

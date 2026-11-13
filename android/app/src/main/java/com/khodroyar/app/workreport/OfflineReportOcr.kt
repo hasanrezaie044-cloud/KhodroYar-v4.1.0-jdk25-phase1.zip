@@ -68,7 +68,7 @@ class OfflineReportOcr(private val context: Context) {
                     var bitmap = documents.render(page)
                     try {
                         val coroutine = currentCoroutineContext()
-                        bitmap = ReportImageGrid.deskew(bitmap) { coroutine.ensureActive() }
+                        bitmap = ReportPagePreprocessor.prepare(bitmap, diagnostics) { coroutine.ensureActive() }
                         currentCoroutineContext().ensureActive()
                         configurePrimary("fas+ara+eng") // Generic page/header recognition is unchanged.
                         coroutine.ensureActive()
@@ -110,7 +110,7 @@ class OfflineReportOcr(private val context: Context) {
                             diagnostics?.invoke("Fixed-form primary languages: ${api.initLanguagesAsString}; selected from header before cell recognition")
                             readCompanyTable(api, ::printedEngine, bitmap, headerWords, header, diagnostics) { row, count -> progress("صفحهٔ ${index + 1} از ${pages.size} · خواندن ردیف $row از $count") }
                         }.orEmpty()
-                        val refined = if (company.isEmpty()) refineTable(api, bitmap, headerWords, diagnostics) else headerWords
+                        val refined = if (company.isEmpty()) refineTable(api, ::printedEngine, bitmap, headerWords, diagnostics) else headerWords
                         result += OcrPage(page.id, index + 1, refined, text, company)
                     } finally { api.clear(); bitmap.recycle() }
                     require(result.sumOf { it.words.size } <= 200000) { "متن این مقایسه بیش از حد بزرگ است؛ سند را به چند بخش تقسیم کنید." }
@@ -126,7 +126,9 @@ class OfflineReportOcr(private val context: Context) {
      * numeric reader and single-line Tesseract. Conflicting strong readings stay
      * blank. This is image recognition, not substitutions or totals-based guesses.
      */
-    private suspend fun refineTable(api: TessBaseAPI, bitmap: Bitmap, original: List<OcrWord>, diagnostics: ((String) -> Unit)?): List<OcrWord> {
+    private suspend fun refineTable(api: TessBaseAPI, printedEngine: () -> TessBaseAPI, bitmap: Bitmap, original: List<OcrWord>, diagnostics: ((String) -> Unit)?): List<OcrWord> {
+        val fixed = CompanyReportTemplate.header(original) != null
+        val printed = if (fixed) PrintedCellOcr(printedEngine) else null
         val regions = ReportTableGeometry.regions(original)
         require(regions.size <= 1600) { "جدول این صفحه برای بازخوانی دقیق بزرگ است؛ صفحه را به بخش‌های کوچک‌تر تقسیم کنید." }
         val result = original.toMutableList()
@@ -136,7 +138,7 @@ class OfflineReportOcr(private val context: Context) {
             requireNotNull(reader).readRow(bitmap, row, diagnostics) { coroutine.ensureActive() }.entries.map { it.key to it.value }
         }.toMap()
         fun canonical(field: NumericField, raw: String): String? = when (field) {
-            NumericField.DATE -> PersianInput.date(raw)
+            NumericField.DATE -> ReportDateText.parse(raw)
             NumericField.COUNT -> PersianInput.count(raw)?.toString()
             NumericField.ORDINAL -> PersianInput.count(raw)?.takeIf { it > 0 }?.toString()
             NumericField.KM -> PersianInput.decimal(raw)?.let(PersianInput::display)
@@ -148,38 +150,48 @@ class OfflineReportOcr(private val context: Context) {
             val top = (region.top * bitmap.height).toInt().coerceIn(0, bitmap.height - 1)
             val width = ((region.right * bitmap.width).toInt() - left).coerceIn(1, bitmap.width - left)
             val height = ((region.bottom * bitmap.height).toInt() - top).coerceIn(1, bitmap.height - top)
-            api.pageSegMode = TessBaseAPI.PageSegMode.PSM_SINGLE_LINE
+            api.pageSegMode = if (fixed && region.field != NumericField.DATE) TessBaseAPI.PageSegMode.PSM_SINGLE_WORD else TessBaseAPI.PageSegMode.PSM_SINGLE_LINE
             val digits = "0123456789۰۱۲۳۴۵۶۷۸۹٠١٢٣٤٥٦٧٨٩"
             val whitelist = when (region.field) {
                 NumericField.DATE -> "" // Also preserve readable «جمع»/footer labels in the date cell.
                 NumericField.COUNT, NumericField.ORDINAL -> digits + ".٫,٬"
                 NumericField.KM -> digits + ".٫,٬"
-                NumericField.HOURS -> digits + ".٫:"
+                NumericField.HOURS -> if (fixed) "" else digits + ".٫:"
             }
             api.setVariable("tessedit_char_whitelist", whitelist)
             api.setRectangle(left, top, width, height)
-            val raw = api.getUTF8Text().orEmpty().trim()
-            val confidence = api.meanConfidence().toFloat()
+            val blankHours = fixed && region.field == NumericField.HOURS && blankCell(bitmap, GridRect(region.left, region.top, region.right, region.bottom))
+            val raw = if (blankHours) "" else api.getUTF8Text().orEmpty().trim()
+            val confidence = if (blankHours) 0f else api.meanConfidence().toFloat()
             currentCoroutineContext().ensureActive()
             val tesseract = canonical(region.field, raw)
             val pixel = pixels[region]?.takeIf { canonical(region.field, it.text) != null }
             val printedFooter = if (region.field == NumericField.DATE && pixel == null) reader?.readFooter(bitmap, region) else null
             val footer = region.field == NumericField.DATE && Regex("^(?:جمع(?:\\s*کل)?|مجموع|total|subtotal)$", RegexOption.IGNORE_CASE).matches(PersianInput.latin(raw))
-            val conflict = pixel != null && tesseract != null && confidence >= 85 && canonical(region.field, pixel.text) != tesseract
-            diagnostics?.invoke("Cell $region: Tesseract='$raw' ($confidence); pixels=$pixel; printedFooter=$printedFooter; strongConflict=$conflict")
+            val marker = fixed && region.field == NumericField.HOURS && raw.trim() in listOf(".", "-")
+            val classic = if (fixed && !blankHours && !marker && pixel == null && !(tesseract != null && confidence >= 85f) && !footer)
+                printed?.read(bitmap, region, diagnostics) { coroutine.ensureActive() } else null
+            val decision = if (fixed) CompanyCellPolicy.decide(region.field, buildList {
+                add(CompanyCellPolicy.Evidence(CompanyCellPolicy.Engine.TESSERACT, raw, confidence))
+                pixel?.let { add(CompanyCellPolicy.Evidence(CompanyCellPolicy.Engine.GLYPH, it.text, it.confidence)) }
+                classic?.let { add(CompanyCellPolicy.Evidence(CompanyCellPolicy.Engine.CLASSIC, it.text, it.confidence)) }
+            }, strongViewConflict = classic?.conflict == true) else null
+            val conflict = decision?.conflict ?: (pixel != null && tesseract != null && confidence >= 85 && canonical(region.field, pixel.text) != tesseract)
+            diagnostics?.invoke("Cell $region: fixed=$fixed; Tesseract='$raw' ($confidence); pixels=$pixel; printed=$classic; printedFooter=$printedFooter; strongConflict=$conflict")
             val value = when {
-                conflict -> null
-                pixel != null -> pixel.text to pixel.confidence
+                conflict || blankHours || marker -> null
+                fixed && decision != null && decision.text.isNotEmpty() -> decision.text to decision.confidence
+                !fixed && pixel != null -> pixel.text to pixel.confidence
                 printedFooter != null -> printedFooter.text to printedFooter.confidence
                 footer && confidence >= 70 -> raw to confidence
-                tesseract != null && confidence >= 85 -> raw to confidence
+                !fixed && tesseract != null && confidence >= 85 -> raw to confidence
                 else -> null
             }
             val inside = original.filter { it.x > region.left && it.x < region.right && it.y > region.top && it.y < region.bottom }
             if (value != null) {
                 result.removeAll(inside.toSet())
                 result += OcrWord(value.first, region.left, region.lineTop, region.right, region.lineBottom, value.second)
-            } else if (conflict) {
+            } else if (conflict || blankHours || marker || fixed) {
                 // No engine is treated as an oracle when two strong readings differ.
                 result.removeAll(inside.filter { PersianInput.latin(it.text).any { c -> c in '0'..'9' } }.toSet())
             } else {
@@ -204,7 +216,7 @@ class OfflineReportOcr(private val context: Context) {
         val fields = mapOf(CompanyReportTemplate.Column.DATE to NumericField.DATE, CompanyReportTemplate.Column.ORDINAL to NumericField.ORDINAL,
             CompanyReportTemplate.Column.KM to NumericField.KM, CompanyReportTemplate.Column.HOURS to NumericField.HOURS)
         fun canonical(field: NumericField, text: String): String? = when (field) {
-            NumericField.DATE -> PersianInput.date(text)
+            NumericField.DATE -> ReportDateText.parse(text)
             NumericField.COUNT -> PersianInput.count(text)?.toString()
             NumericField.ORDINAL -> PersianInput.count(text)?.takeIf { it > 0 }?.toString()
             NumericField.KM -> PersianInput.decimal(text)?.let(PersianInput::display)
@@ -244,29 +256,41 @@ class OfflineReportOcr(private val context: Context) {
             val regions = row.cells.mapNotNull { (column, rect) -> fields[column]?.let { NumericRegion(it, rect.left, rect.top, rect.right, rect.bottom) } }
             val pixels = reader.readRow(bitmap, regions, diagnostics, cellBaselines = true) { coroutine.ensureActive() }
             var dateLabel = "" to 0f
+            var hoursBlank = false
             val readings = regions.associate { region ->
-                val raw = read(GridRect(region.left, region.top, region.right, region.bottom), when (region.field) {
-                    NumericField.DATE -> "" // Dates/total labels must not be manufactured by a digits-only whitelist.
+                val rect = GridRect(region.left, region.top, region.right, region.bottom)
+                if (region.field == NumericField.HOURS && blankCell(bitmap, rect)) {
+                    hoursBlank = true
+                    diagnostics?.invoke("Fixed-form HOURS: actual blank pixels; no zero or OCR value substituted")
+                    return@associate region.field to ("" to 0f)
+                }
+                val raw = read(rect, when (region.field) {
+                    NumericField.DATE, NumericField.HOURS -> "" // Preserve labels, dots/dashes and unreadable letters.
                     NumericField.COUNT, NumericField.ORDINAL, NumericField.KM -> digits + ".٫,٬"
-                    NumericField.HOURS -> digits + ".٫:"
                 }, singleToken = region.field != NumericField.DATE)
                 if (region.field == NumericField.DATE) dateLabel = raw
                 val tess = canonical(region.field, raw.first)
                 val pixel = pixels[region]?.takeIf { canonical(region.field, it.text) != null }
-                val conflict = pixel != null && tess != null && raw.second >= 85 && canonical(region.field, pixel.text) != tess
-                // Preserve existing accepted readings and strong conflict rejection.
-                // The print classifier only supplies an otherwise UNKNOWN cell.
-                val classic = if (!conflict && pixel == null && !(tess != null && raw.second >= 85f))
+                // A qualified glyph or >=85 native reading is already strong.
+                // Classic remains bounded/lazy, but a sole 75..84 LSTM candidate
+                // can now be used when no stronger evidence contradicts it.
+                val classic = if (pixel == null && !(tess != null && raw.second >= 85f))
                     printed.read(bitmap, region, diagnostics) { coroutine.ensureActive() } else null
-                val value = when {
-                    conflict -> "" to 0f
-                    pixel != null -> pixel.text to pixel.confidence
-                    tess != null && raw.second >= 85f -> raw
-                    classic != null -> classic.text to classic.confidence
-                    else -> "" to 0f
+                val evidence = buildList {
+                    add(CompanyCellPolicy.Evidence(CompanyCellPolicy.Engine.TESSERACT, raw.first, raw.second))
+                    pixel?.let { add(CompanyCellPolicy.Evidence(CompanyCellPolicy.Engine.GLYPH, it.text, it.confidence)) }
+                    classic?.let { add(CompanyCellPolicy.Evidence(CompanyCellPolicy.Engine.CLASSIC, it.text, it.confidence)) }
                 }
-                diagnostics?.invoke("Fixed-form ${region.field}: tess=$raw; pixels=$pixel; printed=$classic; conflict=$conflict; accepted=$value")
-                region.field to value
+                var decision = CompanyCellPolicy.decide(region.field, evidence, strongViewConflict = classic?.conflict == true)
+                val marker = region.field == NumericField.HOURS && raw.first.trim() in listOf(".", "-")
+                if (marker) {
+                    // A printed dot/dash is not evidence of numeric zero. If
+                    // another reader sees a number, keep the ambiguity explicit.
+                    hoursBlank = decision.text.isEmpty() && !decision.conflict
+                    decision = CompanyCellPolicy.Decision(conflict = decision.text.isNotEmpty() || decision.conflict)
+                }
+                diagnostics?.invoke("Fixed-form ${region.field}: tess=$raw; pixels=$pixel; printed=$classic; conflict=${decision.conflict}; accepted=$decision")
+                region.field to (decision.text to decision.confidence)
             }
             fun value(field: NumericField) = readings[field]?.first.orEmpty()
             fun text(column: CompanyReportTemplate.Column) = row.cells[column]?.let { read(it).first }.orEmpty()
@@ -276,10 +300,22 @@ class OfflineReportOcr(private val context: Context) {
             val total = mergedFooter || (footerEvidence && value(NumericField.DATE).isBlank() && value(NumericField.ORDINAL).isBlank() && dateLabel.second >= 70 && ReportLabels.footerOnly(dateLabel.first))
             val raw = "ردیف ${value(NumericField.ORDINAL)} | تاریخ ${value(NumericField.DATE)} | $origin ← $destination | کیلومتر ${value(NumericField.KM)} | ساعت ${value(NumericField.HOURS)}" + if (total) " | جمع" else ""
             output += CompanyOcrRow(index, raw, value(NumericField.DATE), value(NumericField.ORDINAL), value(NumericField.KM), value(NumericField.HOURS),
-                origin, destination, listOf(NumericField.DATE, NumericField.KM, NumericField.HOURS).minOf { readings[it]?.second ?: 0f }, total)
+                origin, destination, (listOf(NumericField.DATE, NumericField.KM) + if (value(NumericField.HOURS).isNotBlank()) listOf(NumericField.HOURS) else emptyList())
+                    .minOf { readings[it]?.second ?: 0f }, total, hoursBlank)
             if (total) break
         }
         return output
+    }
+
+    private fun blankCell(bitmap: Bitmap, rect: GridRect): Boolean {
+        val l = (rect.left * bitmap.width).toInt().coerceIn(0, bitmap.width - 1)
+        val t = (rect.top * bitmap.height).toInt().coerceIn(0, bitmap.height - 1)
+        val w = ((rect.right * bitmap.width).toInt() - l).coerceIn(1, bitmap.width - l)
+        val h = ((rect.bottom * bitmap.height).toInt() - t).coerceIn(1, bitmap.height - t)
+        if (w.toLong() * h > PrintedCellRaster.MAX_PIXELS) return false
+        val pixels = IntArray(w * h)
+        bitmap.getPixels(pixels, 0, w, l, t, w, h)
+        return PrintedCellRaster.blank(PrintedCellRaster.grey(w, h, pixels))
     }
 
     internal fun installModels(): File {

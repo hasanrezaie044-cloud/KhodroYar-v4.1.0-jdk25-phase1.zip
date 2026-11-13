@@ -29,21 +29,21 @@ internal class ReportInk(val width: Int, val height: Int, val ink: BooleanArray)
         fun score(degrees: Float): Double {
             checkCancelled()
             val slope = tan(Math.toRadians(degrees.toDouble()))
-            val pad = (width * .1).roundToInt() + 4
+            val pad = (width * .18).roundToInt() + 4
             val votes = IntArray(height + 2 * pad)
             for (point in points) {
                 val y = (point / width - slope * (point % width)).roundToInt() + pad
                 if (y in votes.indices) votes[y]++
             }
             val thick = IntArray(votes.size) { i -> (maxOf(0, i - 1)..minOf(votes.lastIndex, i + 1)).sumOf { votes[it] } }
-            val candidates = peaks(thick, width * .55f, 3)
-            if (candidates.size < 5) return 0.0
-            return candidates.sumOf { (thick[it] - width * .45).coerceAtLeast(0.0) }
+            val candidates = peaks(thick, width * .50f, 3)
+            if (candidates.size < 4) return 0.0
+            return candidates.sumOf { (thick[it] - width * .40).coerceAtLeast(0.0) }
         }
         val zero = score(0f)
         var best = 0f; var bestScore = zero
-        for (n in -16..16) {
-            val angle = n * .25f; val candidate = score(angle)
+        for (n in -20..20) {
+            val angle = n * .4f; val candidate = score(angle)
             if (candidate > bestScore) { best = angle; bestScore = candidate }
         }
         val coarse = best
@@ -52,6 +52,34 @@ internal class ReportInk(val width: Int, val height: Int, val ink: BooleanArray)
             if (candidate > bestScore) { best = angle; bestScore = candidate }
         }
         return if (abs(best) >= .15f && bestScore > zero * 1.12) best else 0f
+    }
+
+    /** Only a closed, many-column printed grid can restrict the OCR region. */
+    fun tableBounds(checkCancelled: () -> Unit = {}): GridRect? {
+        val horizontal = peaks(IntArray(height) { y -> (0 until width).count { x -> ink[y * width + x] } }, width * .45f)
+        if (horizontal.size < 4) return null
+        val top = horizontal.first(); val bottom = horizontal.last()
+        if (bottom - top < height * .06f) return null
+        checkCancelled()
+        val vertical = peaks(IntArray(width) { x -> (top..bottom).count { y -> ink[y * width + x] } }, (bottom - top + 1) * .70f)
+        if (vertical.size < 6) return null
+        val left = vertical.first(); val right = vertical.last()
+        if (right - left < width * .45f) return null
+        fun corner(x: Int, y: Int) = (maxOf(0, y - 2)..minOf(height - 1, y + 2)).any { yy ->
+            (maxOf(0, x - 2)..minOf(width - 1, x + 2)).any { xx -> ink[yy * width + xx] }
+        }
+        if (!corner(left, top) || !corner(right, top) || !corner(left, bottom) || !corner(right, bottom)) return null
+        val spanning = horizontal.count { y -> (left..right).count { x -> ink[y * width + x] } >= (right - left + 1) * .75f }
+        if (spanning < 4) return null
+        // A faint/missing last rule must not crop away the still-visible text
+        // or vertical rules of a failed row. If there is substantive ink below
+        // this closed grid, retain the full page (including salary/footnotes).
+        val below = (bottom + maxOf(4, (height * .015f).toInt())).coerceAtMost(height)
+        for (y in below until height) {
+            checkCancelled()
+            if ((left..right).count { x -> ink[y * width + x] } >= maxOf(8, ((right - left) * .012f).toInt())) return null
+        }
+        return GridRect(left.toFloat() / width, top.toFloat() / height, (right + 1f) / width, (bottom + 1f) / height)
     }
 
     fun companyRows(header: CompanyReportTemplate.Header, checkCancelled: () -> Unit = {}): List<CompanyGridRow> {

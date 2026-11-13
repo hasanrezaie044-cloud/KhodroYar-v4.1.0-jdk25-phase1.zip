@@ -11,17 +11,17 @@ import kotlin.math.sqrt
  * cell that neither LSTM nor glyph shapes could read. The official Apache-2.0
  * model is source-pinned; no private glyphs or per-company values train it.
  *
- * Three bounded photometric views, no search through dates/amounts. Confidence
+ * Four bounded photometric views, no search through dates/amounts. Confidence
  * is never boosted by trying several views: at least one original native score
  * must be >=85, and ALL accepted views must agree. Strong disagreements remain
  * unknown. Tiny ink remains unreadable even after enlargement.
  */
 internal class PrintedCellOcr(private val engine: () -> TessBaseAPI) {
-    data class Reading(val text: String, val confidence: Float, val agreeingViews: Int)
+    data class Reading(val text: String, val confidence: Float, val agreeingViews: Int, val conflict: Boolean = false)
 
     fun read(bitmap: Bitmap, region: NumericRegion, diagnostics: ((String) -> Unit)? = null, checkCancelled: () -> Unit = {}): Reading? =
         readViews(bitmap, GridRect(region.left, region.top, region.right, region.bottom), region.field, 85f,
-            { NumericReadingGrammar.canonical(region.field, it) }, diagnostics, checkCancelled)
+            { CompanyCellPolicy.canonical(region.field, it) }, diagnostics, checkCancelled)
 
     fun footer(bitmap: Bitmap, region: GridRect, checkCancelled: () -> Unit = {}): Reading? =
         readViews(bitmap, region, NumericField.DATE, 70f, { if (ReportLabels.footerOnly(it)) "جمع" else null }, null, checkCancelled)
@@ -57,9 +57,11 @@ internal class PrintedCellOcr(private val engine: () -> TessBaseAPI) {
                 NumericField.HOURS -> digits + ".٫:"
             })
             val accepted = mutableListOf<Pair<String, Float>>()
-            for (view in PrintedCellRaster.View.entries) {
+            for (index in 0..PrintedCellRaster.View.entries.size) {
                 checkCancelled()
-                val content = Bitmap.createBitmap(PrintedCellRaster.pixels(grey, view), image.width, image.height, Bitmap.Config.ARGB_8888)
+                val view = PrintedCellRaster.View.entries.getOrNull(index)
+                val raster = if (view == null) PrintedCellRaster.adaptive(image.width, image.height, grey) else PrintedCellRaster.pixels(grey, view)
+                val content = Bitmap.createBitmap(raster, image.width, image.height, Bitmap.Config.ARGB_8888)
                 try {
                     val padded = Bitmap.createBitmap(image.width + 24, image.height + 24, Bitmap.Config.ARGB_8888)
                     try {
@@ -74,9 +76,12 @@ internal class PrintedCellOcr(private val engine: () -> TessBaseAPI) {
                     } finally { api.clear(); padded.recycle() }
                 } finally { content.recycle() }
             }
+            if (accepted.isEmpty()) return null
             if (accepted.map { it.first }.distinct().size != 1) {
-                if (accepted.isNotEmpty()) diagnostics?.invoke("Printed $field: strong views disagree; left unknown.")
-                return null
+                diagnostics?.invoke("Printed $field: strong views disagree; left unknown.")
+                // Do not let an external weak LSTM candidate rescue a genuine
+                // strong-view conflict merely because this reader returned null.
+                return Reading("", 0f, 0, conflict = true)
             }
             return Reading(accepted.first().first, accepted.maxOf { it.second }, accepted.size)
         } finally {

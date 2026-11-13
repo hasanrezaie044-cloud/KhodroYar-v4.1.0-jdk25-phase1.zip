@@ -51,7 +51,7 @@ fun WorkReportScreen(vm: WorkReportViewModel = viewModel()) {
         if (uris.isNotEmpty()) vm.importDocuments(uris)
     }
     fun changePages(action: () -> Unit) { if (vm.rows.isEmpty()) action() else pageAction = action }
-    LaunchedEffect(vm.comparison) { if (vm.comparison != null) showComparison = true }
+    LaunchedEffect(vm.comparison, vm.sparseComparison) { if (vm.comparison != null || vm.sparseComparison != null) showComparison = true }
     LaunchedEffect(vm.recognized) { horizontal.scrollTo(0) }
     BackHandler(vm.busy) { vm.stop() }
 
@@ -107,7 +107,7 @@ fun WorkReportScreen(vm: WorkReportViewModel = viewModel()) {
                 SurfaceCard {
                     Text("جدول بازبینی", style = MaterialTheme.typography.titleMedium)
                     Text("${vm.rows.count { it.included }} ردیف انتخاب‌شده · ${vm.rows.count { !it.included }} ردیف کنارگذاشته‌شده", style = MaterialTheme.typography.bodySmall)
-                    Text("هر ردیف فرم شرکت یک سرویس است؛ «ردیف» تعداد سرویس نیست. خانهٔ خالی یعنی ناخوانا، نه صفر. ساعت اعشاری یا HH:mm؛ مسیر فقط برای شناسایی در بازبینی نمایش داده می‌شود.", style = MaterialTheme.typography.bodySmall)
+                    Text("هر ردیف فرم شرکت یک سرویس است؛ «ردیف» تعداد سرویس نیست. ساعت خالی، نقطه یا خط تیره نامشخص است، نه صفر؛ مقایسهٔ تعداد/کیلومتر ممکن است ولی ساعت و هویت سرویس قطعی نمی‌شود. ساعت عددی اعشاری یا HH:mm؛ مسیر فقط برای شناسایی در بازبینی نمایش داده می‌شود.", style = MaterialTheme.typography.bodySmall)
                     if (vm.rows.any { it.kind == ReportRowKind.GROUPED }) Text("شرح تجمیعی دیده شده است؛ پوشش آن در نتیجه باید دستی تعیین شود تا سرویس پوشش‌داده‌شده، جاافتاده اعلام نشود.", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
                     if (vm.links.isNotEmpty()) TextButton(onClick = vm::clearLinks, enabled = !vm.busy) { Text("بازنشانی ${vm.links.size} تطبیق دستی (بدون تغییر سوابق)") }
                     Row {
@@ -133,7 +133,7 @@ fun WorkReportScreen(vm: WorkReportViewModel = viewModel()) {
             }
             if (vm.rows.isNotEmpty()) item {
                 SurfaceCard {
-                    val invalid = vm.rows.count { it.included && it.validated() == null }
+                    val invalid = vm.rows.count { it.included && it.reviewed() == null }
                     if (invalid > 0) Text("$invalid ردیف مقدار نامعتبر/ناخوانا دارد؛ ابتدا اصلاح کنید یا صریحاً از مقایسه کنار بگذارید.", color = MaterialTheme.colorScheme.error)
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Checkbox(checked = vm.reviewConfirmed, onCheckedChange = { if (!vm.busy) vm.setReview(it) }, modifier = Modifier.testTag("report-review-confirm"))
@@ -145,7 +145,7 @@ fun WorkReportScreen(vm: WorkReportViewModel = viewModel()) {
         if (vm.rows.isNotEmpty()) Surface(shadowElevation = 3.dp) {
             Column(Modifier.fillMaxWidth().padding(12.dp)) {
                 Button(onClick = vm::compare, enabled = !vm.busy && vm.reviewConfirmed, modifier = Modifier.fillMaxWidth().testTag("report-compare")) { Text("مقایسهٔ تک‌تک سرویس‌ها با خودرویار") }
-                vm.comparison?.let { TextButton(onClick = { showComparison = true }, modifier = Modifier.fillMaxWidth()) { Text("نمایش نتیجهٔ مقایسه") } }
+                if (vm.comparison != null || vm.sparseComparison != null) TextButton(onClick = { showComparison = true }, modifier = Modifier.fillMaxWidth()) { Text("نمایش نتیجهٔ مقایسه") }
             }
         }
     }
@@ -160,7 +160,11 @@ fun WorkReportScreen(vm: WorkReportViewModel = viewModel()) {
         confirmLabel = "پاک کردن", destructive = true, onConfirm = { confirmReset = false; vm.reset() }, onDismiss = { confirmReset = false })
     pageAction?.let { action -> ConfirmDialog("بازنشانی جدول OCR", "تغییر صفحه‌ها یا خواندن دوباره، ویرایش‌های جدول فعلی را پاک می‌کند. سوابق اصلی برنامه تغییر نمی‌کنند.",
         confirmLabel = "ادامه", onConfirm = { pageAction = null; action() }, onDismiss = { pageAction = null }) }
-    if (showComparison) vm.comparison?.let { result -> WorkComparisonDialog(result, onLink = { company, app -> vm.link(company, app); showComparison = false }) { showComparison = false } }
+    if (showComparison) {
+        val partial = vm.sparseComparison
+        if (partial != null) SparseHoursComparisonDialog(partial, onLink = { company, app -> vm.link(company, app); showComparison = false }) { showComparison = false }
+        else vm.comparison?.let { result -> WorkComparisonDialog(result, onLink = { company, app -> vm.link(company, app); showComparison = false }) { showComparison = false } }
+    }
 }
 
 @Composable
@@ -168,11 +172,13 @@ private fun ReportRowEditor(row: ReportRow, scroll: ScrollState, enabled: Boolea
     SurfaceCard(contentPadding = 8.dp) {
         Row(Modifier.testTag("report-row-scroll-${row.id}").horizontalScroll(scroll).width(760.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
             Checkbox(row.included, { onChange(row.copy(included = it)) }, enabled = enabled, modifier = Modifier.width(48.dp))
-            ReportCell(row.date, "تاریخ", 160, enabled, row.included && PersianInput.date(row.date) == null, "report-cell-${row.id}-date") { onChange(row.copy(date = it)) }
+            ReportCell(row.date, "تاریخ", 160, enabled, row.included && ReportDateText.parse(row.date) == null, "report-cell-${row.id}-date") { onChange(row.copy(date = it)) }
             ReportCell(row.count, if (row.kind == ReportRowKind.DAILY_TOTAL) "تعداد" else "یک ردیف", 90, enabled && row.kind == ReportRowKind.DAILY_TOTAL,
                 row.included && PersianInput.count(row.count) == null, "report-cell-${row.id}-count") { onChange(row.copy(count = it)) }
             ReportCell(row.km, "کیلومتر", 120, enabled, row.included && PersianInput.decimal(row.km) == null, "report-cell-${row.id}-km") { onChange(row.copy(km = it)) }
-            ReportCell(row.hours, "ساعت", 120, enabled, row.included && PersianInput.hours(row.hours) == null, "report-cell-${row.id}-hours") { onChange(row.copy(hours = it)) }
+            ReportCell(row.hours, "ساعت (می‌تواند خالی باشد)", 120, enabled,
+                row.included && PersianInput.hours(row.hours) == null && !ReportHoursText.isEmpty(row.hours),
+                "report-cell-${row.id}-hours") { onChange(row.copy(hours = it, hoursBlank = ReportHoursText.isEmpty(it))) }
             TextButton(onClick = onPreview, modifier = Modifier.width(120.dp)) { Text("صفحهٔ ${row.page}") }
         }
         if (row.kind != ReportRowKind.DAILY_TOTAL) Row(verticalAlignment = Alignment.CenterVertically) {
@@ -181,7 +187,9 @@ private fun ReportRowEditor(row: ReportRow, scroll: ScrollState, enabled: Boolea
                 Text(if (row.kind == ReportRowKind.GROUPED) "تغییر به یک سرویس" else "این ردیف تجمیعی است")
             }
         }
-        Text(row.note, color = if (row.included && row.validated() == null) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelSmall)
+        Text((listOf(row.note) + if (row.included) row.fieldMessages() else emptyList()).filter { it.isNotBlank() }.joinToString("\n"),
+            color = if (row.included && row.reviewed() == null) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+            style = MaterialTheme.typography.labelSmall)
         SelectionContainer { Text(row.raw, style = MaterialTheme.typography.labelSmall.copy(textDirection = TextDirection.Content)) }
     }
 }
@@ -246,7 +254,7 @@ private fun ColumnMappingDialog(singleServiceDefault: Boolean, onApply: (ReportC
     }
 }
 private fun companyServiceText(row: ReportRow): String =
-    "${row.date} · ${row.km} کیلومتر · ${row.hours} ساعت · صفحهٔ ${row.page} / ردیف ${row.ordinal.ifBlank { (row.line + 1).toString() }}" +
+    "${row.date} · ${row.km} کیلومتر · ${row.hours.ifBlank { "نامشخص" }} ساعت · صفحهٔ ${row.page} / ردیف ${row.ordinal.ifBlank { (row.line + 1).toString() }}" +
         (if (row.origin.isNotBlank() || row.destination.isNotBlank()) "\n${row.origin} ← ${row.destination}" else "") +
         (if (row.kind == ReportRowKind.GROUPED) " · تجمیعی" else "")
 
@@ -256,8 +264,65 @@ private fun appServiceText(service: AppWorkService): String =
         (if (service.startTime.isNotBlank() || service.endTime.isNotBlank()) " · ${service.startTime.ifBlank { "—" }} تا ${service.endTime.ifBlank { "—" }}" else "") +
         " · شناسه ${service.id.take(8)}" + (if (service.requestNumber.isNotBlank()) " · درخواست ${service.requestNumber}" else "")
 
+/** Full-period daily control for truly absent/unknown hours, not a second matcher. */
 @Composable
-private fun WorkComparisonDialog(result: WorkComparison, onLink: (List<String>, List<String>) -> Unit, close: () -> Unit) {
+private fun SparseHoursComparisonDialog(result: SparseHoursResult, onLink: (List<String>, List<String>) -> Unit, close: () -> Unit) {
+    var showCompleteDays by remember(result) { mutableStateOf(false) }
+    var detailDate by remember(result) { mutableStateOf<String?>(null) }
+    fun n(value: java.math.BigDecimal) = PersianInput.display(value)
+    FullReportDialog(close, "مقایسهٔ کل دوره؛ ساعت نامشخص") {
+        LazyColumn(Modifier.weight(1f).fillMaxWidth().testTag("report-sparse-comparison"), contentPadding = PaddingValues(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            item {
+                SurfaceCard {
+                    Text("${result.start} تا ${result.end}", style = MaterialTheme.typography.labelLarge)
+                    val companyCount = if (result.serviceCountKnown) "${result.company.count} سرویس" else "${result.companyRows.size} ردیف؛ تعداد داخل تجمیع نامشخص"
+                    Text("شرکت: $companyCount · ${n(result.company.km)} کیلومتر · ساعت نامشخص", Modifier.testTag("report-sparse-company-total"))
+                    Text("خودرویار: ${result.app.count} سرویس · ${n(result.app.km)} کیلومتر · ${n(result.app.hours)} ساعت", Modifier.testTag("report-sparse-app-total"))
+                    val count = if (result.serviceCountKnown) (result.company.count - result.app.count).toString() else "نامشخص"
+                    Text("اختلاف جمع شرکت − برنامه: تعداد $count · ${n(result.company.km - result.app.km)} کیلومتر · ساعت نامشخص")
+                    Text("این جمع‌ها مربوط به کل بازه‌اند، از سوابق واقعی برنامه؛ ساعت خالی یا ناخوانا صفر نشده است. ساعت برنامه همان ساعت کارکرد ثبت‌شده است، نه فاصلهٔ شروع/پایان.", style = MaterialTheme.typography.bodySmall)
+                    Text("در روز دارای ساعت نامشخص، همهٔ نامزدهای همان روز برای بازبینی حفظ شده‌اند؛ از برابری تعداد/کیلومتر، هویت سرویس یا اختلاف ساعت حدس زده نمی‌شود.", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+                    if (!result.serviceCountKnown) Text("ردیف تجمیعی با پوشش نامشخص وجود دارد؛ تطبیق سرویس‌های کل دوره معلق است. روز بدون ردیف، اثبات جاافتادن یک سرویس مشخص نیست.", color = MaterialTheme.colorScheme.error)
+                    if (result.deferredLinkCount > 0) Text("${result.deferredLinkCount} تطبیق دستی به‌علت ساعت/پوشش نامشخص معلق است؛ برای تأیید ساعت را اصلاح کنید.", style = MaterialTheme.typography.bodySmall)
+                    if (result.completeDays.services.isNotEmpty()) OutlinedButton(onClick = { showCompleteDays = true }, modifier = Modifier.fillMaxWidth().testTag("report-complete-days")) {
+                        Text("تطبیق سخت‌گیرانهٔ سرویس‌ها در روزهای دارای اطلاعات کامل")
+                    }
+                    Text("خلاصهٔ روزانهٔ کل دوره", style = MaterialTheme.typography.titleSmall)
+                }
+            }
+            items(result.days, key = { it.date }) { day ->
+                SurfaceCard(modifier = Modifier.testTag("report-sparse-daily-${day.date}")) {
+                    Text("${day.date} · ${day.status.label}", style = MaterialTheme.typography.titleSmall)
+                    Text(day.company?.let {
+                        val count = if (day.serviceCountKnown) "${it.count} سرویس" else "تعداد سرویس نامشخص"
+                        "شرکت: $count · ${n(it.km)} کیلومتر · ${it.hours?.let(::n) ?: "نامشخص"} ساعت"
+                    } ?: "شرکت: در این روز ردیفی ندارد")
+                    Text(day.app?.let { "خودرویار: ${it.count} سرویس · ${n(it.km)} کیلومتر · ${n(it.hours)} ساعت" } ?: "خودرویار: در این روز رکوردی ندارد")
+                    Text("اختلاف شرکت − برنامه: تعداد ${day.countDifference?.toString() ?: "نامشخص"} · ${n(day.kmDifference)} کیلومتر · ${day.hoursDifference?.let(::n) ?: "نامشخص"} ساعت", style = MaterialTheme.typography.bodySmall)
+                    if (day.date in result.heldDates) Text("تطبیق سرویس‌های این روز به علت ساعت یا پوشش نامشخص معلق است؛ جاافتادهٔ مشخصی حدس زده نشده.", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+                    TextButton(onClick = { detailDate = day.date }) { Text("نمایش ردیف‌های شرکت و سرویس‌های واقعی این روز") }
+                }
+            }
+        }
+        TextButton(onClick = close, modifier = Modifier.fillMaxWidth().padding(8.dp)) { Text("بازگشت به جدول؛ هیچ سابقه‌ای تغییر نکرد") }
+    }
+    if (showCompleteDays) WorkComparisonDialog(result.completeDays, onLink,
+        scopeNote = "فقط روزهای خارج از تعلیق با اطلاعات کامل؛ جمع‌های این پنجره جمع کل دوره نیست. نتیجهٔ کامل روزانه در پنجرهٔ قبلی است.") { showCompleteDays = false }
+    detailDate?.let { date ->
+        FullReportDialog({ detailDate = null }, "سوابق واقعی و ردیف‌های شرکت · $date") {
+            LazyColumn(Modifier.weight(1f).fillMaxWidth(), contentPadding = PaddingValues(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                item { Text("مشاهدهٔ سوابق است، نه جفت‌سازی قطعی؛ ساعت خالی نامشخص می‌ماند.", style = MaterialTheme.typography.bodySmall) }
+                item { Text("شرکت", style = MaterialTheme.typography.titleSmall) }
+                items(result.companyRows.filter { it.date == date }, key = { "company:${it.id}" }) { Text(companyServiceText(it), style = MaterialTheme.typography.bodySmall) }
+                item { Text("خودرویار · ساعت کارکرد ثبت‌شده", style = MaterialTheme.typography.titleSmall) }
+                items(result.appServices.filter { it.date == date }, key = { "app:${it.id}" }) { Text(appServiceText(it), style = MaterialTheme.typography.bodySmall) }
+            }
+        }
+    }
+}
+
+@Composable
+private fun WorkComparisonDialog(result: WorkComparison, onLink: (List<String>, List<String>) -> Unit, scopeNote: String = "", close: () -> Unit) {
     var onlyDifferences by remember { mutableStateOf(false) }
     var showDaily by remember { mutableStateOf(false) }
     var manualOpen by remember { mutableStateOf(false) }
@@ -268,6 +333,7 @@ private fun WorkComparisonDialog(result: WorkComparison, onLink: (List<String>, 
             item {
                 SurfaceCard {
                     Text("${result.start} تا ${result.end}", style = MaterialTheme.typography.labelLarge)
+                    if (scopeNote.isNotBlank()) Text(scopeNote, color = MaterialTheme.colorScheme.error)
                     val missing = result.services.filter { it.status == ServiceMatchStatus.ONLY_IN_APP }.sumOf { it.app.size }
                     val extra = result.services.filter { it.status == ServiceMatchStatus.ONLY_IN_COMPANY }.sumOf { it.company.size }
                     val ambiguous = result.services.count { it.status == ServiceMatchStatus.AMBIGUOUS }
@@ -308,9 +374,9 @@ private fun WorkComparisonDialog(result: WorkComparison, onLink: (List<String>, 
                 items(result.days, key = { "daily:${it.date}" }) { day ->
                     SurfaceCard {
                         Text(day.date)
-                        Text(day.company?.let { "شرکت: ${n(it.km)} کیلومتر · ${n(it.hours)} ساعت" } ?: "شرکت: ردیفی در این روز ندارد")
+                        Text(day.company?.let { "شرکت: ${it.count} سرویس/ردیف · ${n(it.km)} کیلومتر · ${n(it.hours)} ساعت" } ?: "شرکت: ردیفی در این روز ندارد")
                         Text(day.app?.let { "خودرویار: ${it.count} سرویس · ${n(it.km)} کیلومتر · ${n(it.hours)} ساعت" } ?: "خودرویار: رکوردی ندارد")
-                        Text("اختلاف: ${n(day.kmDifference)} کیلومتر · ${n(day.hoursDifference)} ساعت", style = MaterialTheme.typography.bodySmall)
+                        Text("${day.status.label} · اختلاف تعداد ${day.countDifference} · ${n(day.kmDifference)} کیلومتر · ${n(day.hoursDifference)} ساعت", style = MaterialTheme.typography.bodySmall)
                     }
                 }
             }

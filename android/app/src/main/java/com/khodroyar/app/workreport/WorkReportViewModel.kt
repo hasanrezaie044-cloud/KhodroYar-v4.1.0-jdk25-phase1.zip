@@ -41,6 +41,7 @@ class WorkReportViewModel(app: Application) : AndroidViewModel(app) {
     var periodNote by mutableStateOf(""); private set
     var links by mutableStateOf<List<ReportMatchLink>>(emptyList()); private set
     var comparison by mutableStateOf<WorkComparison?>(null); private set
+    var sparseComparison by mutableStateOf<SparseHoursResult?>(null); private set
     var reviewConfirmed by mutableStateOf(false); private set
     var sparse by mutableStateOf(true)
 
@@ -59,7 +60,7 @@ class WorkReportViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             repository.maintenanceInputsChanged().collect {
                 sourceRevision++
-                if (comparison != null) { comparison = null; error = "سوابق برنامه تغییر کرد؛ برای نتیجهٔ تازه دوباره مقایسه کنید." }
+                if (comparison != null || sparseComparison != null) { comparison = null; sparseComparison = null; error = "سوابق برنامه تغییر کرد؛ برای نتیجهٔ تازه دوباره مقایسه کنید." }
             }
         }
     }
@@ -76,8 +77,8 @@ class WorkReportViewModel(app: Application) : AndroidViewModel(app) {
             catch (_: Exception) { error = "ذخیرهٔ پیش‌نویس کامل نشد؛ فضای گوشی را بررسی کنید. نتیجه هنوز در این صفحه موجود است." }
         }
     }
-    private fun invalidate() { comparison = null; reviewConfirmed = false }
-    fun setReview(value: Boolean) { if (!busy) { reviewConfirmed = value; comparison = null } }
+    private fun invalidate() { comparison = null; sparseComparison = null; reviewConfirmed = false }
+    fun setReview(value: Boolean) { if (!busy) { reviewConfirmed = value; comparison = null; sparseComparison = null } }
     fun range(a: String, b: String) { if (!busy) { start = a; end = b; invalidate(); persist() } }
     fun importDocuments(uris: List<Uri>) = work {
         pages = withContext(Dispatchers.IO) { documents.import(uris, pages) }
@@ -117,13 +118,16 @@ class WorkReportViewModel(app: Application) : AndroidViewModel(app) {
         rows = withContext(Dispatchers.Default) { WorkReportParser.extract(recognized, columns) }; links = emptyList(); invalidate(); persist()
     }
     fun edit(row: ReportRow) { if (!busy) {
-        rows = rows.map { if (it.id == row.id) row else it }
+        val previous = rows.firstOrNull { it.id == row.id }
+        val edited = row.copy(date = ReportDateText.normalize(row.date), hours = ReportHoursText.normalize(row.hours),
+            hoursBlank = if (previous?.hours != row.hours) ReportHoursText.isEmpty(row.hours) else row.hoursBlank)
+        rows = rows.map { if (it.id == row.id) edited else it }
         links = links.filterNot { row.id in it.companyIds }; invalidate(); persist()
     } }
     fun clearLinks() { if (!busy) { links = emptyList(); invalidate(); persist() } }
     fun link(companyIds: List<String>, appIds: List<String>) {
         if (busy) return
-        val result = comparison ?: return
+        val result = comparison ?: sparseComparison?.completeDays ?: return
         if (companyIds.isEmpty() || appIds.isEmpty() || companyIds.any { id -> result.companyRows.none { it.id == id } } || appIds.any { id -> result.appServices.none { it.id == id } }) return
         val link = ReportMatchLink(companyIds.distinct(), appIds.distinct(), ServiceWorkComparison.fingerprint(result.appServices.filter { it.id in appIds }))
         links = links.filterNot { old -> old.companyIds.any { it in companyIds } || old.appIds.any { it in appIds } } + link
@@ -132,15 +136,15 @@ class WorkReportViewModel(app: Application) : AndroidViewModel(app) {
     fun addRow() {
         if (busy || pages.isEmpty() || rows.size >= 10000) return
         rows = rows + ReportRow("manual:${java.util.UUID.randomUUID()}", pages.first().id, 1, rows.size, "ردیف واردشده توسط کاربر", count = "1",
-            note = "ورود دستی یک سرویس؛ تاریخ، کیلومتر و ساعت الزامی است", kind = ReportRowKind.SERVICE)
+            note = "ورود دستی یک سرویس؛ تاریخ و کیلومتر الزامی است؛ ساعت خالی نامشخص می‌ماند", kind = ReportRowKind.SERVICE)
         invalidate(); persist()
     }
     fun compare() = work {
         require(reviewConfirmed) { "ابتدا جدول، ردیف‌های کنارگذاشته‌شده و بازه را بازبینی و تأیید کنید." }
         require(recognized.size == pages.size && recognized.all { it.words.isNotEmpty() }) { "همهٔ صفحه‌ها باید پردازش شوند؛ صفحهٔ ناخوانا را اصلاح یا صریحاً حذف کنید." }
-        val selected = rows.filter { it.included }
+        val selected = rows.filter { it.included }.map { it.copy(date = ReportDateText.parse(it.date) ?: it.date, hours = ReportHoursText.normalize(it.hours)) }
         require(selected.isNotEmpty()) { "هیچ ردیفی برای مقایسه انتخاب نشده است." }
-        val values = selected.map { r -> requireNotNull(r.validated()) { "ردیف ${r.ordinal.ifBlank { (r.line + 1).toString() }} صفحهٔ ${r.page} تاریخ/تعداد/کیلومتر/ساعت ناخوانا یا نامعتبر دارد؛ خانهٔ قرمز را اصلاح کنید. صفر جایگزین نمی‌شود." } }
+        val values = selected.map { r -> requireNotNull(r.reviewed()) { "ردیف ${r.ordinal.ifBlank { (r.line + 1).toString() }} صفحهٔ ${r.page}: ${r.fieldMessages().joinToString("؛ ")}؛ خانهٔ مشخص‌شده را اصلاح کنید. صفر جایگزین نمی‌شود." } }
         val a = requireNotNull(PersianInput.date(start)) { "ابتدای بازه معتبر نیست." }
         val b = requireNotNull(PersianInput.date(end)) { "پایان بازه معتبر نیست." }
         require(a <= b && values.all { it.date in a..b }) { "بازه باید تمام روزهای جدول را دربر بگیرد." }
@@ -151,9 +155,12 @@ class WorkReportViewModel(app: Application) : AndroidViewModel(app) {
             AppWorkService(s.id, s.date, BigDecimal.valueOf(s.km), BigDecimal.valueOf(s.hours), s.origin, s.destination,
                 s.startTime, s.endTime, ServiceType.fromWireOrNull(s.type)?.label ?: s.type, s.requestNumber)
         }
-        val result = withContext(Dispatchers.Default) { ServiceWorkComparison.compare(selected, saved, a, b, links) }
+        val result: Pair<WorkComparison?, SparseHoursResult?> = withContext(Dispatchers.Default) {
+            if (values.any { it.hours == null }) null to SparseHoursComparison.compare(selected, saved, a, b, links)
+            else ServiceWorkComparison.compare(selected, saved, a, b, links) to null
+        }
         require(revision == sourceRevision) { "سوابق برنامه حین پردازش تغییر کرد؛ دوباره مقایسه کنید تا نتیجه تازه باشد." }
-        comparison = result
+        comparison = result.first; sparseComparison = result.second
     }
     fun stop() { engine.stop(); job?.cancel() }
     private fun work(block: suspend () -> Unit) {

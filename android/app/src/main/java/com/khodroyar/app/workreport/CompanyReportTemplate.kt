@@ -9,7 +9,7 @@ import kotlin.math.abs
 data class CompanyOcrRow(
     val line: Int, val raw: String, val date: String, val ordinal: String,
     val km: String, val hours: String, val origin: String = "", val destination: String = "",
-    val confidence: Float = 0f, val total: Boolean = false,
+    val confidence: Float = 0f, val total: Boolean = false, val hoursBlank: Boolean = false,
 )
 enum class ReportRowKind { DAILY_TOTAL, SERVICE, GROUPED }
 data class ReportPeriodProposal(val start: String = "", val end: String = "", val note: String = "")
@@ -87,17 +87,16 @@ object CompanyReportTemplate {
         return cells.map { cell ->
             val grouped = isGrouped("${cell.origin} ${cell.destination}")
             ReportRow("${page.id}:company:${cell.line}", page.id, page.number, cell.line, cell.raw,
-                PersianInput.date(cell.date).orEmpty(), "1", cell.km, cell.hours, cell.confidence,
+                ReportDateText.parse(cell.date).orEmpty(), "1", cell.km, ReportHoursText.normalize(cell.hours), cell.confidence,
                 included = !cell.total,
                 note = when {
                     cell.total -> "ردیف جمع؛ دوباره در محاسبه استفاده نمی‌شود"
                     grouped -> "شرح تجمیعی است؛ یک سرویس فرض نمی‌شود. پوشش آن باید در نتیجه به‌صورت دستی مشخص شود."
-                    PersianInput.date(cell.date) == null -> "تاریخ ناخوانا/نامعتبر؛ اصلاح یا صریحاً کنار گذاشته شود"
-                    PersianInput.decimal(cell.km) == null || PersianInput.hours(cell.hours) == null -> "خانهٔ ناخوانا؛ صفر جایگزین نشده است"
                     cell.confidence < 85f -> "اطمینان خواندن پایین است؛ با اصل تصویر تطبیق دهید"
                     else -> "هر ردیف یک سرویس است؛ شمارهٔ ردیف تعداد سرویس نیست. با اصل تصویر بازبینی کنید."
                 }, kind = if (grouped) ReportRowKind.GROUPED else ReportRowKind.SERVICE,
-                ordinal = cell.ordinal, origin = cell.origin, destination = cell.destination)
+                ordinal = cell.ordinal, origin = cell.origin, destination = cell.destination,
+                hoursBlank = cell.hoursBlank || cell.hours.trim() in listOf(".", "-"))
         }
     }
 
@@ -108,16 +107,21 @@ object CompanyReportTemplate {
             if (line.map { it.y }.average() <= header.bottom) continue
             fun words(column: Column) = header.bounds(column)?.let { (l, r) -> line.filter { it.x in l..r } }.orEmpty()
             fun text(column: Column) = words(column).sortedByDescending { it.x }.joinToString(" ") { it.text }
-            val date = WorkReportParser.dateCell(words(Column.DATE))?.first.orEmpty()
+            val date = WorkReportParser.dateCell(words(Column.DATE).filter { it.confidence >= 75f })?.first.orEmpty()
             val raw = line.sortedByDescending { it.x }.joinToString(" ") { it.text }
             val labelWords = line.filter { w -> w.text.any { it.isLetter() } }
             val footerLabelsOnly = labelWords.isNotEmpty() && labelWords.all { w -> ReportLabels.forms(w.text).any { it in listOf("جمع", "کل", "مجموع", "total", "subtotal") } }
             val total = date.isEmpty() && words(Column.ORDINAL).none { PersianInput.count(it.text)?.let { n -> n > 0 } == true } && ReportLabels.total(raw) && footerLabelsOnly
             val numericColumns = listOf(Column.DATE, Column.ORDINAL, Column.KM, Column.HOURS)
             if (!total && numericColumns.none { c -> words(c).any { w -> PersianInput.latin(w.text).any { it in '0'..'9' } } }) continue
-            fun number(c: Column) = words(c).singleOrNull()?.text.orEmpty()
+            fun number(c: Column): String {
+                val word = words(c).singleOrNull()?.takeIf { it.confidence >= 75f } ?: return ""
+                val field = when (c) { Column.ORDINAL -> NumericField.ORDINAL; Column.KM -> NumericField.KM; Column.HOURS -> NumericField.HOURS; else -> return "" }
+                return CompanyCellPolicy.canonical(field, word.text).orEmpty()
+            }
             output += CompanyOcrRow(i, raw, date, number(Column.ORDINAL), number(Column.KM), number(Column.HOURS),
-                text(Column.ORIGIN), text(Column.DESTINATION), line.minOf { it.confidence }, total)
+                text(Column.ORIGIN), text(Column.DESTINATION), line.minOf { it.confidence }, total,
+                hoursBlank = words(Column.HOURS).singleOrNull()?.text?.trim() in listOf(".", "-"))
             if (total) break // Salary/insurance/payments below the grid are NOT service rows.
         }
         return output
@@ -151,10 +155,10 @@ object CompanyReportTemplate {
     fun duplicates(rows: List<ReportRow>): List<ReportRow> {
         val seen = mutableMapOf<String, ReportRow>()
         return rows.map { row ->
-            val v = row.validated()
+            val v = row.reviewed()
             val ordinal = PersianInput.count(row.ordinal)?.takeIf { it > 0 }
-            if (v == null || ordinal == null || !row.included) row else {
-                val key = "$ordinal|${v.date}|${PersianInput.display(v.km)}|${PersianInput.display(v.hours)}"
+            if (v == null || ordinal == null || !row.included || v.hours == null && !row.hoursBlank) row else {
+                val key = "$ordinal|${v.date}|${PersianInput.display(v.km)}|${v.hours?.let(PersianInput::display) ?: "<EMPTY-HOURS>"}"
                 val previous = seen[key]
                 if (previous != null && previous.pageId != row.pageId) row.copy(included = false, duplicateOf = previous.id,
                     note = "همان شمارهٔ ردیف، تاریخ، کیلومتر و ساعت در صفحهٔ ${previous.page}؛ مشکوک به اسکن تکراری و کنار گذاشته شد. اگر شماره‌ها از نو شروع شده‌اند، با اصل سند بازگردانید.")
