@@ -155,7 +155,10 @@ class WorkReportViewModel(app: Application) : AndroidViewModel(app) {
                 val pdf = try { OnlineReportAssist.pdf(bitmap) } finally { bitmap.recycle() }
                 require(pdf.size <= FastOcrClient.MAX_IMAGE_BYTES) { "سند صفحهٔ ${i + 1} برای ارسال بزرگ است؛ تصویر را کوچک‌تر انتخاب کنید." }
                 progress.value = "ارسال صفحهٔ ${i + 1} از ${pages.size} به api.fastocr.org…"
-                val (text, status) = client.ocrPage(key, "page-${i + 1}.pdf", pdf, "application/pdf") { if (job?.isActive != true) throw CancellationException() }
+                // Network ALWAYS on the IO dispatcher; the client's calls block.
+                val (text, status) = withContext(Dispatchers.IO) {
+                    client.ocrPage(key, "page-${i + 1}.pdf", pdf, "application/pdf") { if (job?.isActive != true) throw CancellationException() }
+                }
                 if (status.truncated || status.pagesProcessed in 0 until status.pagesTotal) truncatedPages++
                 val rows = withContext(Dispatchers.Default) { FastOcrReportText.parsePage(page.id, i + 1, text) }
                 merged += rows.map { it.copy(raw = "[${named[page.id]}] ${it.raw}") }

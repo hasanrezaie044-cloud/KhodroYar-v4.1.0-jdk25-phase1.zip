@@ -1,3 +1,8 @@
+# 5.5.2 — اصلاح ترد شبکهٔ FastOCR (NetworkOnMainThreadException)
+
+تماس‌های بلوکینگ FastOCR حالا کاملاً روی دیسپچر IO اجرا می‌شوند؛ خطای
+NetworkOnMainThreadException برطرف شد. نسخهٔ 69.
+
 # 5.5.1 — اصلاح آپلود FastOCR به PDF و خطای مرحله‌ای قابل‌تشخیص
 
 هر صفحه به‌جای JPEG خام، در حافظه به PDF تک‌صفحه‌ای (قرارداد مستند FastOCR) تبدیل و ارسال
