@@ -28,7 +28,7 @@ if ! adb pull /sdcard/Download/KhodroYar-UI-Smoke/. "$SCREENSHOTS/"; then
     RESULT=1
 fi
 # MediaStore Downloads survives UTP's automatic uninstall; app-specific files do not.
-python3 "$ROOT/tools/annotate-ocr-evidence.py" "$SCREENSHOTS/offline-ocr.json" "$SCREENSHOTS/company-template-ocr.json" || RESULT=1
+python3 "$ROOT/tools/annotate-ocr-evidence.py" "$SCREENSHOTS/online-report.json" || RESULT=1
 COUNT=$(find "$SCREENSHOTS" -type f -name '*.png' ! -name 'fixture-*' | wc -l)
 echo "::notice title=Native UI screenshots::$COUNT PNGs captured from API 35 emulator"
 if [ "$COUNT" -lt 33 ]; then

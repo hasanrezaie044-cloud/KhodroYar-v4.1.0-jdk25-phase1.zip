@@ -1,3 +1,8 @@
+> **Historical document (through 5.5.5).** The offline engine and old custom-endpoint
+> assist were removed in 5.5.6. Current behaviour: [FastOCR/report guide](FASTOCR-ASSIST.md)
+> and [Bazaar updates](BAZAAR-UPDATES.md). The historical tests/claims below do not
+> describe the current release.
+
 # پیش‌پر اختیاری آنلاین گزارش کارکرد — قرارداد سرویس
 
 پردازش گزارش کارکرد به‌صورت پیش‌فرض و همیشه **کاملاً آفلاین** است. دکمهٔ «پیش‌پر اختیاری آنلاین»

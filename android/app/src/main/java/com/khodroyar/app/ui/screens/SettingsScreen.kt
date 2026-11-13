@@ -526,9 +526,10 @@ fun SettingsScreen(repository: AppRepository, settings: AppSettings, onToggleThe
         item { CollapsibleSectionTitle("درباره برنامه", icon = Icons.Outlined.Info, expanded = "about" in sectionOpen.value, onToggle = { toggleSection("about") }, englishTitle = "About") }
         if ("about" in sectionOpen.value) {
         item { AboutCard() }
+        item { com.khodroyar.app.update.BazaarUpdateSettings() }
         item { TermsLinkCard() }
         item { FontLicenseLink() }
-        item { OcrLicenseLink() }
+        item { BazaarLicenseLink() }
     }
 
         }
@@ -776,17 +777,17 @@ private fun FontLicenseLink() {
     }
 }
 
-/** Native OCR and model licences are bundled and readable with all radios disabled. */
+/** Licence for the small, source-pinned official Bazaar IPC contract. */
 @Composable
-private fun OcrLicenseLink() {
+private fun BazaarLicenseLink() {
     var show by remember { mutableStateOf(false) }
     val context = LocalContext.current
-    OutlinedButton(onClick = { show = true }, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp), shape = FieldShape) {
-        Text(tr("مجوزهای OCR آفلاین", "Offline OCR licences"))
+    TextButton(onClick = { show = true }, modifier = Modifier.fillMaxWidth()) {
+        Text(tr("مجوز رابط به‌روزرسانی بازار", "Bazaar update interface licence"))
     }
     if (show) {
-        val licence = remember(context) { listOf(R.raw.ocr_licenses, R.raw.parastoo_license).joinToString("\n\nParastoo printed-number references · OFL 1.1\n\n") { id -> context.resources.openRawResource(id).bufferedReader().use { it.readText() } } }
-        AlertDialog(onDismissRequest = { show = false }, title = { Text("Tesseract · Offline OCR") },
+        val licence = remember(context) { context.resources.openRawResource(R.raw.bazaar_updater_license).bufferedReader().use { it.readText() } }
+        AlertDialog(onDismissRequest = { show = false }, title = { Text("BazaarUpdater · Apache-2.0") },
             text = { Text(licence, modifier = Modifier.heightIn(max = 360.dp).verticalScroll(rememberScrollState()),
                 style = MaterialTheme.typography.bodySmall.copy(textDirection = androidx.compose.ui.text.style.TextDirection.Ltr)) },
             confirmButton = { TextButton(onClick = { show = false }) { Text(tr("بستن", "Close")) } })

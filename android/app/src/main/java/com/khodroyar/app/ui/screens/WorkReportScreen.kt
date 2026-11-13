@@ -42,7 +42,7 @@ import kotlinx.coroutines.withContext
 fun WorkReportScreen(vm: WorkReportViewModel = viewModel()) {
     val progress by vm.progress.collectAsState()
     var preview by remember { mutableStateOf<ReportPage?>(null) }
-    var showColumns by remember { mutableStateOf(false) }
+    var showTextImport by remember { mutableStateOf(false) }
     var confirmReset by remember { mutableStateOf(false) }
     var pageAction by remember { mutableStateOf<(() -> Unit)?>(null) }
     var showComparison by remember { mutableStateOf(false) }
@@ -79,7 +79,7 @@ fun WorkReportScreen(vm: WorkReportViewModel = viewModel()) {
         }
         LazyColumn(Modifier.weight(1f).fillMaxWidth().testTag("work-report-list"), contentPadding = PaddingValues(12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             if (vm.pages.isEmpty()) item {
-                EmptyState("گزارش شرکت را انتخاب کنید", "خواندن فارسی، عربی و انگلیسی کاملاً روی گوشی انجام می‌شود. سندی ارسال نمی‌شود.", Icons.Outlined.DocumentScanner)
+                EmptyState("گزارش شرکت را انتخاب کنید", "خواندن تصویر با FastOCR و اینترنت انجام می‌شود؛ هر ارسال فقط با تأیید شماست. موتور آفلاین حذف شده است.", Icons.Outlined.DocumentScanner)
             }
             if (vm.pages.isNotEmpty()) item {
                 Text("${vm.pages.size} صفحه · ترتیب و جهت را قبل از پردازش بررسی کنید", style = MaterialTheme.typography.labelLarge)
@@ -99,13 +99,25 @@ fun WorkReportScreen(vm: WorkReportViewModel = viewModel()) {
                         }
                     }
                 }
-                SwitchRow("چیدمان جدول پراکنده", "برای جدول‌های خط‌کشی‌شده روشن؛ برای متن معمولی خاموش", vm.sparse) { if (!vm.busy) vm.sparse = it }
-                OutlinedButton(onClick = { changePages { vm.recognize() } }, enabled = !vm.busy, modifier = Modifier.fillMaxWidth().testTag("report-ocr")) {
-                    Icon(Icons.Outlined.DocumentScanner, null); Spacer(Modifier.width(8.dp)); Text(if (vm.rows.isEmpty()) "خواندن آفلاین صفحه‌ها" else "خواندن دوباره (بازنشانی ویرایش‌ها)")
-                }
                 OutlinedButton(onClick = { onlineConsent = true }, enabled = !vm.busy && vm.pages.size in 1..10,
                     modifier = Modifier.fillMaxWidth().testTag("report-online-assist")) {
-                    Icon(Icons.Outlined.CloudUpload, null); Spacer(Modifier.width(8.dp)); Text("پیش‌پر اختیاری آنلاین با FastOCR (تصاویر به api.fastocr.org فرستاده می‌شود)")
+                    Icon(Icons.Outlined.CloudUpload, null); Spacer(Modifier.width(8.dp))
+                    Text(if (vm.rows.isEmpty()) "خواندن آنلاین با FastOCR" else "خواندن دوبارهٔ آنلاین (ارسال مجدد)")
+                }
+                Text("ارسال با وضوح بالا؛ برای PDF تک‌صفحه‌ای اصل فایل ارسال می‌شود. قبل از ارسال، حاشیه‌های اضافی عکس را تا حد امکان کم کنید.",
+                    style = MaterialTheme.typography.bodySmall)
+                if (vm.pages.size > 10) Text("برای هر ارسال آنلاین حداکثر ۱۰ صفحه انتخاب کنید.", color = MaterialTheme.colorScheme.error)
+                if (vm.recognized.any { it.source != ReportTextSource.LEGACY && it.text.isNotBlank() })
+                    TextButton(onClick = { changePages { vm.reparseSavedText() } }, enabled = !vm.busy,
+                        modifier = Modifier.fillMaxWidth().testTag("report-reparse")) { Text("بازخوانی متن ذخیره‌شده (بدون ارسال و هزینه)") }
+                TextButton(onClick = { showTextImport = true }, enabled = !vm.busy,
+                    modifier = Modifier.fillMaxWidth().testTag("report-import-text")) { Text("ورود / بازبینی متن یک صفحه") }
+            }
+            if (vm.readWarnings.isNotEmpty()) item {
+                SurfaceCard {
+                    Text("پوشش خواندن نیاز به بررسی دارد", color = MaterialTheme.colorScheme.error,
+                        modifier = Modifier.testTag("report-read-warning"))
+                    vm.readWarnings.forEach { Text(it, style = MaterialTheme.typography.bodySmall) }
                 }
             }
             if (vm.recognized.isNotEmpty()) item {
@@ -116,7 +128,6 @@ fun WorkReportScreen(vm: WorkReportViewModel = viewModel()) {
                     if (vm.rows.any { it.kind == ReportRowKind.GROUPED }) Text("شرح تجمیعی دیده شده است؛ پوشش آن در نتیجه باید دستی تعیین شود تا سرویس پوشش‌داده‌شده، جاافتاده اعلام نشود.", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
                     if (vm.links.isNotEmpty()) TextButton(onClick = vm::clearLinks, enabled = !vm.busy) { Text("بازنشانی ${vm.links.size} تطبیق دستی (بدون تغییر سوابق)") }
                     Row {
-                        TextButton(onClick = { showColumns = true }, enabled = !vm.busy) { Text("تنظیم ستون‌های OCR") }
                         TextButton(onClick = vm::addRow, enabled = !vm.busy) { Text("افزودن ردیف دستی") }
                     }
                     JalaliDateField("ابتدای بازهٔ کامل گزارش", vm.start, { vm.range(it, vm.end) })
@@ -131,7 +142,7 @@ fun WorkReportScreen(vm: WorkReportViewModel = viewModel()) {
                     SurfaceCard {
                         Text("مقایسهٔ روزبه‌روز (تعداد سرویس)", style = MaterialTheme.typography.titleSmall,
                             modifier = Modifier.testTag("report-date-compare-title"))
-                        Text("از ردیف‌های انتخاب‌شده؛ برابری تعداد به‌معنای تطابق هویت سرویس‌ها نیست.",
+                        Text("از ردیف‌های خوانده‌شده و انتخاب‌شده؛ «در متن یافت نشد» به معنی نبود سرویس در اصل سند نیست. برابری تعداد هم تطابق هویت نیست.",
                             style = MaterialTheme.typography.bodySmall)
                         if (vm.rows.any { it.included && it.kind == ReportRowKind.GROUPED })
                             Text("شرح‌های تجمیعی در تعداد سرویس شمرده نشده‌اند؛ پوشش آن‌ها باید دستی تعیین شود.",
@@ -144,7 +155,7 @@ fun WorkReportScreen(vm: WorkReportViewModel = viewModel()) {
                     SurfaceCard(modifier = Modifier.testTag("report-date-compare-${d.date}")) {
                         Text(d.date, style = MaterialTheme.typography.labelLarge)
                         FlowRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                            Text("شرکت ${d.companyCount} سرویس")
+                            Text(if (d.companyCount == 0) "شرکت: در متن یافت نشد" else "شرکت ${d.companyCount} سرویس")
                             Text("برنامه ${d.appCount} سرویس")
                             Text(if (d.difference == 0) "برابر ✓" else "اختلاف ${kotlin.math.abs(d.difference)}",
                                 color = if (d.difference == 0) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error)
@@ -190,7 +201,7 @@ fun WorkReportScreen(vm: WorkReportViewModel = viewModel()) {
             Text("چرخش و ترتیب از فهرست صفحه‌ها قابل تغییر است.", Modifier.padding(12.dp), style = MaterialTheme.typography.bodySmall)
         }
     }
-    if (showColumns) ColumnMappingDialog(singleServiceDefault = vm.rows.any { it.kind != ReportRowKind.DAILY_TOTAL }, onApply = { vm.remap(it); showColumns = false }, onDismiss = { showColumns = false })
+    if (showTextImport) ReportTextImportDialog(vm) { showTextImport = false }
     if (confirmReset) ConfirmDialog("پاک کردن پیش‌نویس مقایسه", "فقط اسناد واردشده و جدول OCR پاک می‌شود؛ سرویس‌ها و داده‌های اصلی برنامه تغییر نمی‌کنند.",
         confirmLabel = "پاک کردن", destructive = true, onConfirm = { confirmReset = false; vm.reset() }, onDismiss = { confirmReset = false })
     pageAction?.let { action -> ConfirmDialog("بازنشانی جدول OCR", "تغییر صفحه‌ها یا خواندن دوباره، ویرایش‌های جدول فعلی را پاک می‌کند. سوابق اصلی برنامه تغییر نمی‌کنند.",
@@ -268,60 +279,46 @@ private fun FullReportDialog(onClose: () -> Unit, title: String, content: @Compo
     }
 }
 @Composable
-private fun ColumnMappingDialog(singleServiceDefault: Boolean, onApply: (ReportColumns) -> Unit, onDismiss: () -> Unit) {
-    var count by remember { mutableStateOf("") }; var km by remember { mutableStateOf("") }; var hours by remember { mutableStateOf("") }
-    var singleService by remember { mutableStateOf(singleServiceDefault) }
-    val mapping = ReportColumns(if (singleService) null else PersianInput.count(count), PersianInput.count(km), PersianInput.count(hours), singleService)
-    FullReportDialog(onDismiss, "ستون‌های جدول") {
-        Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text("اگر سرستون‌ها خوانا نیستند، شمارهٔ خانه‌های عددی را از راست به چپ وارد کنید؛ خانهٔ تاریخ هم شمرده می‌شود. نتیجه را با تصویر تطبیق دهید. اعمال این تنظیم ویرایش‌های جدول را بازنشانی می‌کند.")
-            SwitchRow("هر ردیف یک سرویس است", "برای فرم شرکت روشن؛ ستون «ردیف» هرگز تعداد نیست", singleService) { singleService = it }
-            if (!singleService) OutlinedTextField(count, { count = it }, label = { Text("شمارهٔ ستون تعداد واقعی (نه ردیف)") }, modifier = Modifier.fillMaxWidth(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number))
-            OutlinedTextField(km, { km = it }, label = { Text("شمارهٔ ستون کیلومتر") }, modifier = Modifier.fillMaxWidth(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number))
-            OutlinedTextField(hours, { hours = it }, label = { Text("شمارهٔ ستون ساعت") }, modifier = Modifier.fillMaxWidth(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number))
+private fun ReportTextImportDialog(vm: WorkReportViewModel, close: () -> Unit) {
+    var selected by remember { mutableIntStateOf(0) }
+    val page = vm.pages.getOrNull(selected)
+    var text by remember(page?.id) { mutableStateOf(vm.recognized.firstOrNull { it.id == page?.id }?.text.orEmpty()) }
+    FullReportDialog(close, "متن صفحهٔ گزارش") {
+        Text("متن صادرشده از OCR را وارد یا متن قبلی را بازبینی کنید. فقط جدول همین صفحه بازنشانی می‌شود؛ ارسال اینترنتی انجام نمی‌شود.",
+            Modifier.padding(12.dp), style = MaterialTheme.typography.bodySmall)
+        LazyRow(Modifier.fillMaxWidth().padding(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            items(vm.pages.size) { index -> FilterChip(selected = selected == index, onClick = { selected = index }, label = { Text("صفحهٔ ${index + 1}") }) }
         }
-        Column(Modifier.fillMaxWidth().padding(12.dp)) {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(onClick = { onApply(mapping) }, enabled = mapping.valid(), modifier = Modifier.weight(1f).heightIn(min = 48.dp)) { Text("اعمال ستون‌ها") }
-                OutlinedButton(onClick = onDismiss, modifier = Modifier.weight(1f).heightIn(min = 48.dp)) { Text("انصراف") }
-            }
-            TextButton(onClick = { onApply(ReportColumns()) }, modifier = Modifier.fillMaxWidth()) { Text("تشخیص از سرستون‌ها") }
-        }
+        OutlinedTextField(text, { if (it.length <= FastOcrReportReader.MAX_DRAFT_TEXT) text = it },
+            label = { Text("متن همین صفحه") }, modifier = Modifier.weight(1f).fillMaxWidth().padding(12.dp).testTag("report-text-input"),
+            textStyle = LocalTextStyle.current.copy(textDirection = TextDirection.Content))
+        Button(onClick = { page?.let { vm.importText(it.id, text) }; close() }, enabled = page != null && text.isNotBlank() && !vm.busy,
+            modifier = Modifier.fillMaxWidth().padding(12.dp).testTag("report-text-apply")) { Text("اعمال متن این صفحه و بازبینی") }
     }
 }
-private fun companyServiceText(row: ReportRow): String =
-    "${row.date} · ${row.km} کیلومتر · ${row.hours.ifBlank { "نامشخص" }} ساعت · صفحهٔ ${row.page} / ردیف ${row.ordinal.ifBlank { (row.line + 1).toString() }}" +
-        (if (row.origin.isNotBlank() || row.destination.isNotBlank()) "\n${row.origin} ← ${row.destination}" else "") +
-        (if (row.kind == ReportRowKind.GROUPED) " · تجمیعی" else "")
 
-private fun appServiceText(service: AppWorkService): String =
-    "${service.date} · ${PersianInput.display(service.km)} کیلومتر · ${PersianInput.display(service.hours)} ساعت" +
-        "\n${service.type} · ${service.origin} ← ${service.destination}" +
-        (if (service.startTime.isNotBlank() || service.endTime.isNotBlank()) " · ${service.startTime.ifBlank { "—" }} تا ${service.endTime.ifBlank { "—" }}" else "") +
-        " · شناسه ${service.id.take(8)}" + (if (service.requestNumber.isNotBlank()) " · درخواست ${service.requestNumber}" else "")
-
-/** Explicit-consent optional online assist via FastOCR; offline remains the default everywhere. */
 @Composable
 private fun FastOcrAssistDialog(vm: WorkReportViewModel, close: () -> Unit) {
     var keyDraft by remember { mutableStateOf("") }
     FullReportDialog(close, "پیش‌پر اختیاری آنلاین صفحه‌ها با FastOCR") {
         Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Text("پردازش عادی این صفحه کاملاً آفلاین است و همین‌طور می‌ماند. این دکمه فقط با تأیید صریح شما فعال می‌شود.", style = MaterialTheme.typography.bodySmall)
-            Text("در صورت تأیید، تصویرِ ${vm.pages.size} صفحه (هرکدام حداکثر ${FastOcrClient.MAX_IMAGE_BYTES / 1_000_000} مگابایت PDF) فقط یک‌بار و فقط برای همین دوره به api.fastocr.org ارسال می‌شود و در برنامه نگه داشته نمی‌شود. این سرویس متعلق به برنامه نیست؛ فقط با کلید خودِ شما و به حساب خودِ شماست.", style = MaterialTheme.typography.bodySmall)
+            Text("خواندن تصویر فقط آنلاین است؛ بدون تأیید صریح این پنجره هیچ سندی ارسال نمی‌شود.", style = MaterialTheme.typography.bodySmall)
+            Text("در صورت تأیید، تصویرِ ${vm.pages.size} صفحه (هرکدام حداکثر ${FastOcrClient.MAX_IMAGE_BYTES / 1_000_000} مگابایت PDF) در هر بار تأیید به api.fastocr.org ارسال می‌شود. اصل سند و متن پاسخ فقط در پیش‌نویس خصوصی همین گوشی می‌ماند؛ سیاست نگهداری سرویس مستقل است. این سرویس متعلق به برنامه نیست؛ فقط با کلید خودِ شما و به حساب خودِ شماست.", style = MaterialTheme.typography.bodySmall)
             if (vm.fastOcrKeySaved) {
                 Text("کلید API شما از قبل رمزنگاری‌شده ذخیره است؛ برای امنیت دوباره نمایش داده نمی‌شود. حذف یا عوض کردنش از دکمهٔ زیر ممکن است.", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.bodySmall)
                 TextButton(onClick = { keyDraft = ""; vm.clearFastOcrKey() }) { Text("حذف کلید ذخیره‌شده") }
             } else {
                 Text("کلید API خود را از حساب FastOCR (شروع با fok_live_) بسازید و این‌جا وارد کنید؛ فقط یک‌بار لازم است:", style = MaterialTheme.typography.bodySmall)
                 OutlinedTextField(keyDraft, { keyDraft = it.trim() }, label = { Text("کلید API شما (fok_live_…)") }, singleLine = true,
+                    visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(),
                     modifier = Modifier.fillMaxWidth().testTag("report-fastocr-key"),
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Ascii),
                     textStyle = LocalTextStyle.current.copy(textDirection = TextDirection.Ltr))
                 Text("کلید فقط روی همین گوشی و رمزنگاری‌شده نگه داشته می‌شود و در هیچ گزارش/صادراتی درج نمی‌شود.", style = MaterialTheme.typography.labelSmall)
             }
-            Text("گیرندهٔ تصاویر: api.fastocr.org", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelLarge)
+            Text("گیرندهٔ تصاویر: api.fastocr.org", modifier = Modifier.testTag("report-fastocr-host"), color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelLarge)
             Text("متن دریافتی فقط جدول بازبینی را پیش‌پر می‌کند: هیچ مقداری خودکار صفر، ذخیره یا به سوابق اضافه نمی‌شود، خانه‌های خالی/نقطه/خط‌تیره دست‌نخورده می‌مانند و هر ردیف با همان ویرایشگر دستی قابل اصلاح است.", style = MaterialTheme.typography.bodySmall)
-            Text("سند ممکن است نام و مبالغ محرمانه داشته باشد؛ ارسال به یک سرویس بیرونی و حذف دائمی آن (حداکثر ۳۰ روز نزد آن‌ها) مسئولیت و توافق خودتان است.", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+            Text("سند ممکن است نام و مبالغ محرمانه داشته باشد؛ مدت نگهداری و حذف نزد سرویس تابع سیاست FastOCR است؛ فقط در صورت موافقت با آن ارسال کنید.", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
         }
         Column(Modifier.fillMaxWidth().padding(12.dp)) {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -331,7 +328,7 @@ private fun FastOcrAssistDialog(vm: WorkReportViewModel, close: () -> Unit) {
                     if (ok) { vm.recognizeFastOcr(); close() }
                 }, enabled = keyReady && vm.pages.isNotEmpty() && !vm.busy,
                     modifier = Modifier.weight(1f).heightIn(min = 48.dp).testTag("report-online-send")) { Text("ارسال به api.fastocr.org و پیش‌پر کردن") }
-                OutlinedButton(onClick = close, modifier = Modifier.weight(1f).heightIn(min = 48.dp)) { Text("انصراف؛ هیچ چیز ارسال نشود") }
+                OutlinedButton(onClick = close, modifier = Modifier.weight(1f).heightIn(min = 48.dp).testTag("report-online-cancel")) { Text("انصراف؛ هیچ چیز ارسال نشود") }
             }
         }
     }

@@ -76,6 +76,7 @@ fun CarManagerRoot(
 ) {
     val context = LocalContext.current
     SystemChrome(dark = LocalDarkTheme.current)
+    com.khodroyar.app.update.BazaarUpdatePrompt()
     val scope = rememberCoroutineScope()
     val keyboardVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
     val focus = androidx.compose.ui.platform.LocalFocusManager.current

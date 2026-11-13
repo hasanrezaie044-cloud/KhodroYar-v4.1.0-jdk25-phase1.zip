@@ -207,7 +207,7 @@ jobs:
         run: |
           chmod +x ./gradlew
           set +e
-          ./gradlew clean :app:assembleRelease :release-smoke:assembleRelease --stacktrace 2>&1 | tee "$RUNNER_TEMP/khodroyar-release.log"
+          ./gradlew clean :app:assembleRelease :release-smoke:assembleRelease :bazaar-fixture:assembleRelease --stacktrace 2>&1 | tee "$RUNNER_TEMP/khodroyar-release.log"
           BUILD_EXIT=${PIPESTATUS[0]}
           set -e
           python3 ../tools/annotate-build-errors.py "$RUNNER_TEMP/khodroyar-release.log"
@@ -215,12 +215,12 @@ jobs:
           test -f "app/build/outputs/apk/release/app-release.apk"
           test -s "app/build/outputs/apk/release/app-release.apk"
 
-      - name: Enforce total APK size below 100 MB
+      - name: Enforce online-only APK size below 30 MB
         run: |
           APK="android/app/build/outputs/apk/release/app-release.apk"
           BYTES=$(stat -c %s "$APK")
-          test "$BYTES" -lt 100000000 || { echo "APK exceeds the 100 MB product budget"; exit 1; }
-          echo "::notice title=Signed APK size::$BYTES bytes; limit 100000000 bytes"
+          test "$BYTES" -lt 30000000 || { echo "APK exceeds the 30 MB online-only budget"; exit 1; }
+          echo "::notice title=Signed APK size::$BYTES bytes; limit 30000000 bytes"
 
       - name: Extract version
         id: version
@@ -266,7 +266,7 @@ jobs:
           AAPT="$ANDROID_HOME/build-tools/${ANDROID_BUILD_TOOLS}/aapt2"
           "$AAPT" dump badging "$APK" | grep -E "^package: name='com\.khodroyar\.app'" || exit 1
 
-      - name: Audit bundled offline OCR and native library alignment
+      - name: Audit absence of retired OCR engine/models and native alignment
         run: |
           python3 tools/audit-ocr-apk.py android/app/build/outputs/apk/release/app-release.apk android/app/build/outputs/apk/release/verification.json
           "$ANDROID_HOME/build-tools/${ANDROID_BUILD_TOOLS}/zipalign" -c -P 16 -v 4 android/app/build/outputs/apk/release/app-release.apk
@@ -292,8 +292,10 @@ jobs:
       - name: Check strict instrumentation protocol parser (fixtures only)
         run: python3 tools/test-instrumentation-summary.py
 
-      - name: Check explicit public-delivery guards (fixtures only)
-        run: python3 tools/test-public-apk-release.py
+      - name: Check explicit public-delivery and online-only audit guards (fixtures only)
+        run: |
+          python3 tools/test-public-apk-release.py
+          python3 tools/test-audit-ocr-apk.py
 
       - name: Enable KVM for actual signed release verification
         run: |
@@ -301,7 +303,7 @@ jobs:
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
 
-      - name: Verify real OCR in the signed non-debuggable R8 APK
+      - name: Verify signed R8 consent/review and Bazaar IPC (synthetic store, no live OCR)
         uses: reactivecircus/android-emulator-runner@v2
         env:
           ANDROID_KEYSTORE_PATH: ${{ steps.keystore.outputs.path }}
@@ -428,61 +430,22 @@ jobs:
           run-id: ${{ inputs.evidence_run_id }}
           github-token: ${{ github.token }}
           path: ${{ runner.temp }}/native-test-diagnostics
-      - name: Expose fixed-form synthetic header and cell diagnostics
+      - name: Expose bounded synthetic online report and runtime evidence
         run: |
           python3 - <<'PY'
-          import json, os, re
+          import json, os
           from pathlib import Path
-          root = Path(os.environ['RUNNER_TEMP']) / 'native-test-diagnostics'
-          for path in root.rglob('company-template-ocr.json'):
-              assert path.stat().st_size <= 1_000_000
-              data = json.loads(path.read_text())
-              assert data['environment'] == 'Synthetic fixed recurring form; three PDF pages plus repeated PNG; native offline engine'
-              messages = data.get('diagnostics', [])
-              for index, message in enumerate(m for m in messages if m.startswith('Page ')):
-                  words = re.findall(r'OcrWord\(text=(.*?), left=([^,]+), top=([^,]+), right=([^,]+), bottom=([^,]+), confidence=([^\)]+)\)', message)
-                  text = json.dumps([dict(text=t, x=(float(l)+float(r))/2, top=float(y), bottom=float(b), confidence=float(c)) for t,l,y,r,b,c in words if float(y) < .23], ensure_ascii=False)
-                  piece = text[:3500].replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
-                  print(f'::notice title=Synthetic fixed form header {index+1}::' + piece)
-              text = '\n'.join(m for m in messages if 'Fixed-form ' in m or m.startswith('Printed '))[:17500]
-              for index in range(0, len(text), 3500):
-                  piece = text[index:index+3500].replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
-                  print(f'::notice title=Synthetic fixed form cells {index//3500+1}::' + piece)
-          PY
-      - name: Set up bounded synthetic header encoder
-        run: |
-          python3 -m venv "$RUNNER_TEMP/header-diagnostics-env"
-          "$RUNNER_TEMP/header-diagnostics-env/bin/pip" --disable-pip-version-check -q install Pillow==12.0.0
-      - name: Expose only the lossless synthetic PNG header strip
-        run: |
-          "$RUNNER_TEMP/header-diagnostics-env/bin/python" - <<'PY'
-          import base64, hashlib, io, json, os, re
-          from pathlib import Path
-          from PIL import Image
-          root = Path(os.environ['RUNNER_TEMP']) / 'native-test-diagnostics'
-          for path in root.rglob('company-template-ocr.json'):
-              assert path.stat().st_size <= 1_000_000
-              data = json.loads(path.read_text())
-              assert data['environment'] == 'Synthetic fixed recurring form; three PDF pages plus repeated PNG; native offline engine'
-              message = next(m for m in data['diagnostics'] if m.startswith('Page 4 initial text:'))
-              anchors = re.findall(r'OcrWord\(text=(?:رديف|مبدا|كيلومتر|ساعت), left=([^,]+), top=([^,]+), right=([^,]+), bottom=([^,]+), confidence=([^\)]+)\)', message)
-              assert len(anchors) >= 3
-              top = min(float(y) for l,y,r,b,c in anchors)
-              bottom = max(float(b) for l,y,r,b,c in anchors)
-              height = max(float(b)-float(y) for l,y,r,b,c in anchors)
-              source = next(root.rglob('fixture-company-template.png'))
-              assert source.stat().st_size <= 500_000
-              with Image.open(source) as image:
-                  assert image.width <= 4000 and image.height <= 4000
-                  crop = image.crop((0, int((top-height*.65)*image.height), image.width, int((bottom+height*.65)*image.height))).convert('RGB')
-                  assert crop.height <= 250
-                  output = io.BytesIO(); crop.save(output, 'PNG', optimize=True)
-              content = output.getvalue(); encoded = base64.b64encode(content).decode('ascii')
-              assert len(encoded) <= 45_000
-              print('::notice title=Synthetic header strip SHA256::' + hashlib.sha256(content).hexdigest())
-              pieces = [encoded[i:i+3000] for i in range(0, len(encoded), 3000)]
-              for index, piece in enumerate(pieces, 1):
-                  print(f'::notice title=Synthetic header strip {index}-of-{len(pieces)}::' + piece)
+          roots = [Path(os.environ['RUNNER_TEMP']) / name for name in ('native-test-diagnostics', 'signed-test-diagnostics')]
+          for root in roots:
+              for name in ('online-report.json', 'runtime.json'):
+                  for path in root.rglob(name):
+                      assert path.stat().st_size <= 65536
+                      data = json.loads(path.read_text())
+                      assert 'synthetic' in data.get('environment', '').lower()
+                      text = json.dumps(data, ensure_ascii=False)[:24000]
+                      for index in range(0, len(text), 3500):
+                          piece = text[index:index+3500].replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
+                          print(f'::notice title=Synthetic online-only evidence {name} {index//3500+1}::' + piece)
           PY
       - name: Expose bounded emulator crash diagnostics through checks
         run: |

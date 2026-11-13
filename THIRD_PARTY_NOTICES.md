@@ -15,50 +15,22 @@ names and copyright notices are preserved. The OFL text is retained as an Androi
 resource (`res/raw/vazirmatn_license.txt`) as well as in source.
 
 
-## Bundled offline OCR (5.4.1, from the 5.4.0 baseline)
+## Cafe Bazaar update IPC (5.5.6)
 
-- Tesseract4Android **4.9.0**, Apache-2.0, Copyright 2019 Adaptech s.r.o. / Robert Pösel,
-  pinned source `15c534717b1cb58261b58d4e4c1200c7f81f668c` in
-  https://github.com/adaptech-cz/Tesseract4Android . Standard, single-threaded JNI engine.
-- Included upstream native dependencies: Tesseract **5.5.1** (Apache-2.0), Leptonica **1.85.0**
-  (BSD-style), libpng **1.6.48** (PNG Reference Library licence), libjpeg **9f** (IJG licence).
-  This software is based in part on the work of the Independent JPEG Group.
-- `fas` **tessdata_best** (Apache-2.0), pinned commit `e12c65a915945e4c28e237a9b52bc4a8f39a0cec`
-  from https://github.com/tesseract-ocr/tessdata_best ; `ara` and `eng` **tessdata_fast** (Apache-2.0),
-  pinned commit `87416418657359cb625c412a48b6e1d6d41c29bd` from https://github.com/tesseract-ocr/tessdata_fast .
-  Full model licence and byte/hash provenance are bundled at `assets/ocr/LICENSE` and
-  `assets/ocr/manifest.json`. `tools/verify-ocr-assets.py` checks every source asset;
-  `tools/audit-ocr-apk.py` checks the actual packaged bytes.
+- Official [CafeBazaar/BazaarUpdater](https://github.com/cafebazaar/BazaarUpdater), **Apache-2.0**.
+- Source reference pinned to `670bdfd0cf7bd57c03ec503a78e1bcddd8fe29b6`.
+- The small `com.farsitel.bazaar.IUpdateCheckService` AIDL contract is adapted to retain
+  only its first two methods, in their original Binder transaction order. Version threshold,
+  explicit binding action/package and modal update URI follow the official source. No
+  JitPack/Updater binary, installer, auto-download library or developer-account token is bundled.
+- Complete Apache-2.0 terms are packaged in `res/raw/bazaar_updater_license.txt`, readable
+  from **Settings → About → Bazaar update interface licence**.
+- `android/bazaar-fixture` is a clearly labelled, no-network, CI-only simulated store.
+  It is never a dependency of the application and its APK is never delivered to users.
 
-Complete native upstream notices (including the IJG README/terms) are bundled in
-`res/raw/ocr_licenses.txt` and accessible from **Settings → About → Offline OCR licences**.
-No runtime model/network download is performed. These are OCR language models, not a generative LLM.
+## Retired offline OCR assets
 
-## Parastoo printed-number references (5.4.2)
-
-- Saber Rastikerdar / [Parastoo](https://github.com/rastikerdar/parastoo-font), **SIL OFL 1.1**.
-- Unmodified `dist/Parastoo.ttf` and `dist/Parastoo-Bold.ttf`, pinned revision
-  `ab17e3b12fe84456c93e2d66e3e28231ae40c2de`, **192,120 bytes** combined.
-- Bundled as `res/font/parastoo_regular.ttf` and `res/font/parastoo_bold.ttf`; original internal
-  font names/copyrights are unchanged. Used only as local visual print references, not as a
-  replacement for the app's typography. No document-derived glyphs or private reports are bundled.
-- Complete upstream licence: `res/raw/parastoo_license.txt`, accessible in Settings → About →
-  Offline OCR licences. Exact byte/hash/blob provenance: `assets/ocr/print-references.json`.
-  Source and actual-APK audit tools verify both fonts and the licence. No runtime download.
-
-## Supplemental classic Persian print model (5.4.2)
-
-- Official [Tesseract tessdata](https://github.com/tesseract-ocr/tessdata), **Apache-2.0**;
-  upstream states that all repository data, including the 3.04 tree, use this licence.
-- Unmodified `fas.traineddata` from `3.04.00`, revision
-  `074c37215b01ab8cc47a0e06ff7356383883d775`, renamed on disk to `fas_print.traineddata`
-  to keep it separate from the LSTM model. **4,803,733 bytes**; SHA-256
-  `5d4642e32c66e9450bca9c0ced22cae93188340acfd8c6ca717f02e617b9c154`.
-- Uses the existing native classic classifier only for otherwise unreadable fixed-form
-  cells/printed footer labels. Three bounded grayscale/contrast/threshold views; original
-  native numeric confidence must be at least 85 and accepted views must agree. No online
-  recognition, personal training samples, guessed digits, amount/month-specific correction,
-  new JNI library or automatic-learning cache. The generic LSTM path is preserved.
-- Complete Apache-2.0 terms remain in `assets/ocr/LICENSE` and the offline Settings notice.
-  `assets/ocr/manifest.json` records alias, original filename, source commit/blob and exact
-  bytes; source/APK audits check the asset and its legacy classifier component.
+Tesseract4Android/Tesseract/Leptonica and their bundled native dependencies, all tessdata
+models and the Parastoo print-reference fonts are **removed from 5.5.6**. No native model
+or corresponding print-reference font is shipped or downloaded. Historical version notices
+remain available in Git history; the active application retains the Vazirmatn licence above.

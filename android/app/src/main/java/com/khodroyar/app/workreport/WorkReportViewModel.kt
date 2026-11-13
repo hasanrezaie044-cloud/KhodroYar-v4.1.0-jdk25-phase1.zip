@@ -1,7 +1,6 @@
 package com.khodroyar.app.workreport
 
 import android.app.Application
-import android.content.Context
 import android.net.Uri
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -15,6 +14,8 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -22,10 +23,11 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.math.BigDecimal
 
-class WorkReportViewModel(app: Application) : AndroidViewModel(app) {
+class WorkReportViewModel @JvmOverloads constructor(
+    app: Application, private val reader: FastOcrReportReader = FastOcrReportReader(),
+) : AndroidViewModel(app) {
     val documents = ReportDocuments(app)
     private val draft = WorkReportDraft(documents.directory)
-    private val engine = OfflineReportOcr(app)
     private val repository = AppRepository(app)
     private val persistLock = Mutex()
     private var saveJob: Job? = null
@@ -46,7 +48,7 @@ class WorkReportViewModel(app: Application) : AndroidViewModel(app) {
     var comparison by mutableStateOf<WorkComparison?>(null); private set
     var sparseComparison by mutableStateOf<SparseHoursResult?>(null); private set
     var reviewConfirmed by mutableStateOf(false); private set
-    var sparse by mutableStateOf(true)
+    val readWarnings get() = ReportReadCoverage.warnings(pages, recognized, rows)
     /** Mandatory output: per-date company service count vs app-registered count. */
     var dateComparison by mutableStateOf<List<DateServiceComparison>>(emptyList()); private set
     var dateComparisonError by mutableStateOf<String?>(null); private set
@@ -142,17 +144,6 @@ class WorkReportViewModel(app: Application) : AndroidViewModel(app) {
         withContext(Dispatchers.IO) { persistLock.withLock { draft.save(empty); documents.prune(emptyList()) } }
         pages = emptyList(); recognized = emptyList(); rows = emptyList(); links = emptyList(); periodNote = ""; start = ""; end = ""; invalidate()
     }
-    fun recognize() = work {
-        val result = engine.recognize(pages, sparse, progress = { progress.value = it })
-        val extracted = withContext(Dispatchers.Default) { WorkReportParser.extract(result) }
-        require(extracted.size <= 10000) { "گزارش بیش از ۱۰٬۰۰۰ ردیف دارد؛ آن را تقسیم کنید." }
-        recognized = result; rows = extracted; links = emptyList()
-        val period = CompanyReportTemplate.period(result, extracted)
-        start = period.start; end = period.end; periodNote = period.note; invalidate(); persist()
-        if (result.any { it.words.isEmpty() }) error = "یک یا چند صفحه ناخوانا بود. پیش از مقایسه، تصویر را اصلاح کنید یا آن صفحه را صریحاً حذف و دوباره پردازش کنید."
-        else if (rows.isEmpty()) error = "ردیف قابل استخراج پیدا نشد؛ چرخش، کیفیت تصویر یا حالت چیدمان را بررسی کنید."
-    }
-
     /** One-time key entry; stored encrypted. Returns true when the key was valid and saved. */
     fun saveFastOcrKey(raw: String): Boolean {
         if (busy) return false
@@ -162,72 +153,52 @@ class WorkReportViewModel(app: Application) : AndroidViewModel(app) {
     }
     fun clearFastOcrKey() { if (!busy) { fastOcrKeys.clear(); fastOcrKeySaved = false } }
 
-    /**
-     * Explicit-consent online assist via FastOCR (api.fastocr.org), using the
-     * user's own API key. Pages are rendered at the same bounded plan as the
-     * offline path, uploaded ONCE per explicit tap, and the plain text answer is
-     * parsed conservatively into the SAME editable review table: ambiguous or
-     * unassignable fields stay blank, hours are never zeroed, counts/km/identity
-     * comparisons stay advisory and strict ServiceWorkComparison is untouched.
-     * Nothing is stored server-side by us and the key never leaves the device
-     * except to api.fastocr.org over HTTPS.
-     */
+    /** Online only; no local OCR pass or model installation is required. */
     fun recognizeFastOcr() = work {
         val key = fastOcrKeys.key() ?: error("ابتدا کلید API خود را وارد کنید.")
-        progress.value = "آماده‌سازی تصاویر برای ارسال یک‌باره…"
-        require(pages.isNotEmpty()) { "ابتدا صفحه‌های گزارش را انتخاب کنید." }
-        require(pages.size <= 10) { "در هر ارسال آنلاین حداکثر ۱۰ صفحه." }
-        val client = FastOcrClient()
-        val merged = mutableListOf<ReportRow>()
-        val lineCounts = mutableListOf<Int>()
-        var truncatedPages = 0
-        val named = pages.withIndex().associate { (i, p) -> p.id to "PAGE-${i + 1}" }
-        for ((i, page) in pages.withIndex()) {
-            try {
-                val bitmap = withContext(Dispatchers.IO) { documents.render(page, 2_400_000, 2000) }
-                // FastOCR's documented create call requires a *.pdf filename; wrap the
-                // rendered page in an in-memory one-page PDF (still a photo of the page).
-                val pdf = try { OnlineReportAssist.pdf(bitmap) } finally { bitmap.recycle() }
-                require(pdf.size <= FastOcrClient.MAX_IMAGE_BYTES) { "سند صفحهٔ ${i + 1} برای ارسال بزرگ است؛ تصویر را کوچک‌تر انتخاب کنید." }
-                progress.value = "ارسال صفحهٔ ${i + 1} از ${pages.size} به api.fastocr.org…"
-                // Network ALWAYS on the IO dispatcher; the client's calls block.
-                val (text, status) = withContext(Dispatchers.IO) {
-                    client.ocrPage(key, "page-${i + 1}.pdf", pdf, "application/pdf") { if (job?.isActive != true) throw CancellationException() }
-                }
-                if (status.truncated || status.pagesProcessed in 0 until status.pagesTotal) truncatedPages++
-                lineCounts += text.split('\n').count { it.isNotBlank() }
-                val rows = withContext(Dispatchers.Default) { FastOcrReportText.parsePage(page.id, i + 1, text) }
-                merged += rows.map { it.copy(raw = "[${named[page.id]}] ${it.raw}") }
-            } catch (e: CancellationException) { throw e }
-            catch (e: Exception) {
-                // Stage + exception class, so a screenshot pinpoints the failure without leaking anything.
-                throw IllegalStateException("صفحهٔ ${i + 1} — ${e.javaClass.simpleName}: ${e.message ?: "(بدون پیام)"}")
+        val context = currentCoroutineContext()
+        val result = reader.read(documents, pages, key, progress = { progress.value = it }) { context.ensureActive() }
+        applyReadResult(result.pages, result.rows,
+            "خواندن آنلاین با api.fastocr.org انجام شد؛ تاریخ‌ها، ردیف‌های جاافتاده و کل بازه را با اصل سند بازبینی کنید.")
+    }
+
+    /** Re-run just the parser against privately saved text: no network/charge. */
+    fun reparseSavedText() = work {
+        val saved = recognized
+        val oldRows = rows
+        require(saved.any { it.source != ReportTextSource.LEGACY && it.text.isNotBlank() }) {
+            "متن ذخیره‌شده موجود نیست؛ یک‌بار گزارش را بخوانید یا متن صفحه را وارد کنید."
+        }
+        val extracted = withContext(Dispatchers.Default) {
+            saved.flatMap { page ->
+                if (page.source == ReportTextSource.LEGACY) oldRows.filter { it.pageId == page.id }
+                else FastOcrReportText.parsePage(page.id, page.number, page.text)
             }
         }
-        val extracted = merged
-        require(extracted.isNotEmpty()) {
-            // Line counts are metadata only; document text is never echoed back.
-            "متن دریافتی FastOCR روی ${lineCounts.size} صفحه مجموعاً ${lineCounts.sum()} خط بود ولی هیچ خطی شکل «تاریخ شمسی + مقدار» ردیف گزارش را نداشت. اگر 402/429 دیدید یعنی سهمیهٔ حساب شما تمام شده؛ وگرنه راستا/کیفیت تصویر را اصلاح کنید. هیچ چیزی خودکار ذخیره نشد."
-        }
-        // Rows come from FastOCR text, but the same-comparison gate requires a
-        // proven, complete offline pass over every page — that part always stays
-        // local and never sends anything anywhere.
-        progress.value = "خواندن آفلاین همان صفحه‌ها برای بازبینی و مقایسه…"
-        val offline = engine.recognize(pages, sparse, progress = { progress.value = it })
-        rows = extracted; recognized = offline; links = emptyList()
-        val range = DateServiceCountComparison.suggestedRange(extracted)
-        start = range?.first.orEmpty(); end = range?.second.orEmpty()
-        periodNote = "پیش‌پر اختیاری آنلاین از api.fastocr.org انجام شد (کلید شما، فقط یک‌بار برای این دوره). هر خانه را با اصل تصویر تطبیق دهید؛ مقادیر مبهم عمداً خالی گذاشته شده‌اند و بازه را با سند تأیید کنید."
-        invalidate(); persist()
-        error = when {
-            truncatedPages > 0 -> "سرویس $truncatedPages صفحه را ناقص خواند؛ آن‌ها را دستی با تصویر بازبینی کنید."
-            offline.any { it.words.isEmpty() } -> "یک یا چند صفحه در خواندن آفلاین ناخوانا بود؛ پیش از مقایسه آن را اصلاح یا صریحاً حذف و دوباره پردازش کنید."
-            else -> null
-        }
+        applyReadResult(saved, extracted, "متن ذخیره‌شده دوباره تحلیل شد؛ هیچ صفحه‌ای ارسال و هزینه‌ای مصرف نشد. بازه را با سند تأیید کنید.")
     }
-    fun remap(columns: ReportColumns) = work {
-        require(recognized.isNotEmpty()) { "ابتدا OCR را اجرا کنید." }
-        rows = withContext(Dispatchers.Default) { WorkReportParser.extract(recognized, columns) }; links = emptyList(); invalidate(); persist()
+
+    /** A user's pasted/exported OCR text is review input, not a trusted OCR claim. */
+    fun importText(pageId: String, text: String) = work {
+        val index = pages.indexOfFirst { it.id == pageId }
+        require(index >= 0 && text.isNotBlank() && text.length <= FastOcrReportReader.MAX_DRAFT_TEXT)
+        val extracted = withContext(Dispatchers.Default) { FastOcrReportText.parsePage(pageId, index + 1, text) }
+        val updated = recognized.filterNot { it.id == pageId } +
+            OcrPage(pageId, index + 1, emptyList(), text, source = ReportTextSource.USER_TEXT)
+        applyReadResult(updated.sortedBy { it.number }, rows.filterNot { it.pageId == pageId } + extracted,
+            "متن صفحه را خودتان وارد کرده‌اید؛ با تصویر اصلی تطبیق دهید. چیزی ارسال نشد.")
+    }
+
+    private fun applyReadResult(read: List<OcrPage>, extracted: List<ReportRow>, note: String) {
+        require(extracted.size <= 10000)
+        val order = pages.withIndex().associate { it.value.id to it.index }
+        recognized = read
+        rows = extracted.sortedWith(compareBy<ReportRow> { order[it.pageId] ?: it.page }.thenBy { it.line })
+        links = emptyList()
+        val range = DateServiceCountComparison.suggestedRange(extracted)
+        start = range?.first.orEmpty(); end = range?.second.orEmpty(); periodNote = note
+        invalidate(); persist()
+        error = if (rows.isEmpty()) "متن دریافت شد ولی سرویس خوانایی پیدا نشد؛ اصل صفحه یا متن ذخیره‌شده را بازبینی کنید. نبود ردیف، نبود سرویس نیست." else null
     }
     fun edit(row: ReportRow) { if (!busy) {
         val previous = rows.firstOrNull { it.id == row.id }
@@ -253,7 +224,7 @@ class WorkReportViewModel(app: Application) : AndroidViewModel(app) {
     }
     fun compare() = work {
         require(reviewConfirmed) { "ابتدا جدول، ردیف‌های کنارگذاشته‌شده و بازه را بازبینی و تأیید کنید." }
-        require(recognized.size == pages.size && recognized.all { it.words.isNotEmpty() }) { "همهٔ صفحه‌ها باید پردازش شوند؛ صفحهٔ ناخوانا را اصلاح یا صریحاً حذف کنید." }
+        require(ReportReadCoverage.complete(pages, recognized)) { "همهٔ صفحه‌ها باید کامل خوانده شوند؛ صفحهٔ ناقص/ناخوانا را اصلاح یا صریحاً حذف کنید." }
         val selected = rows.filter { it.included }.map { it.copy(date = ReportDateText.parse(it.date) ?: it.date, hours = ReportHoursText.normalize(it.hours)) }
         require(selected.isNotEmpty()) { "هیچ ردیفی برای مقایسه انتخاب نشده است." }
         val values = selected.map { r -> requireNotNull(r.reviewed()) { "ردیف ${r.ordinal.ifBlank { (r.line + 1).toString() }} صفحهٔ ${r.page}: ${r.fieldMessages().joinToString("؛ ")}؛ خانهٔ مشخص‌شده را اصلاح کنید. صفر جایگزین نمی‌شود." } }
@@ -274,7 +245,7 @@ class WorkReportViewModel(app: Application) : AndroidViewModel(app) {
         require(revision == sourceRevision) { "سوابق برنامه حین پردازش تغییر کرد؛ دوباره مقایسه کنید تا نتیجه تازه باشد." }
         comparison = result.first; sparseComparison = result.second
     }
-    fun stop() { engine.stop(); job?.cancel() }
+    fun stop() { job?.cancel() }
     private fun work(block: suspend () -> Unit) {
         if (busy) return
         busy = true; error = null
@@ -282,7 +253,6 @@ class WorkReportViewModel(app: Application) : AndroidViewModel(app) {
             try { block() }
             catch (e: CancellationException) { error = "پردازش متوقف شد؛ اطلاعات ثبت‌شدهٔ برنامه تغییری نکرد."; throw e }
             catch (e: OutOfMemoryError) { error = "حافظه برای این صفحه کافی نبود؛ تصویر کوچک‌تر یا PDF با صفحه‌های کمتر انتخاب کنید." }
-            catch (e: LinkageError) { error = "موتور آفلاین روی این پردازنده بارگذاری نشد؛ پردازش انجام نشد." }
             catch (e: Exception) {
                 val detail = (listOfNotNull(e.javaClass.simpleName, e.message).joinToString(": ")).take(240)
                 error = if (detail.isNotBlank()) detail else "پردازش انجام نشد؛ فایل یا مقدارهای ورودی را بررسی کنید."
@@ -290,5 +260,4 @@ class WorkReportViewModel(app: Application) : AndroidViewModel(app) {
             finally { busy = false; progress.value = "" }
         }
     }
-    override fun onCleared() { engine.stop(); super.onCleared() }
 }

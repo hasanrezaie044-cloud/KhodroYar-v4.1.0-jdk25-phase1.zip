@@ -2,6 +2,7 @@ package com.khodroyar.app
 
 import android.app.Application
 import androidx.work.Configuration
+import kotlinx.coroutines.launch
 import com.khodroyar.app.notifications.AgentAutomationScheduler
 import com.khodroyar.app.notifications.AutoBackupScheduler
 import com.khodroyar.app.notifications.TrafficCheckScheduler
@@ -31,6 +32,11 @@ class CarManagerApp : Application(), Configuration.Provider {
 
     override fun onCreate() {
         super.onCreate()
+        // Reclaim only the retired OCR-model directory from older installs.
+        // Source reports, drafts, credentials and service records are untouched.
+        kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
+            runCatching { java.io.File(noBackupFilesDir, "offline-ocr").deleteRecursively() }
+        }
         Notifications.ensureChannels(this)
         runCatching { ReminderScheduler.sync(this) }
         runCatching { AutoServiceScheduler.sync(this) }

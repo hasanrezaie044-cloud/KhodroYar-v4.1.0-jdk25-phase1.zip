@@ -42,6 +42,11 @@
 
     <uses-feature android:name="android.hardware.fingerprint" android:required="false" />
 
+    <!-- Visibility of the official store only; never QUERY_ALL_PACKAGES. -->
+    <queries>
+        <package android:name="com.farsitel.bazaar" />
+    </queries>
+
     <application
         android:name=".CarManagerApp"
         android:allowBackup="false"

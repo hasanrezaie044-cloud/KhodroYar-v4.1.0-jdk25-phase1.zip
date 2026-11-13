@@ -23,6 +23,8 @@ set -e
 APK=app/build/outputs/apk/release/app-release.apk
 TEST_APK=release-smoke/build/outputs/apk/release/release-smoke-release.apk
 test -s "$TEST_APK"
+STORE_APK=bazaar-fixture/build/outputs/apk/release/bazaar-fixture-release.apk
+test -s "$STORE_APK"
 AAPT="$ANDROID_HOME/build-tools/${ANDROID_BUILD_TOOLS:-36.0.0}/aapt2"
 HARNESS_PACKAGE=$("$AAPT" dump badging "$TEST_APK" | sed -n "s/^package: name='\([^']*\)'.*/\1/p")
 case "$HARNESS_PACKAGE" in
@@ -46,6 +48,12 @@ TEST_CERT=$("$APKSIGNER" verify --print-certs "$TEST_APK" | sed -n 's/^Signer #1
 test "$TEST_CERT" = "03bfbc3575667403c3259fae345f3eb1ad3045373cb62123be376ef4898caaf0" || {
   echo "::error::Disposable instrumentation APK signing identity unexpectedly changed"; exit 1;
 }
+# Install only on the already-verified disposable emulator. It is a zero-network,
+# clearly labelled IPC fixture, NOT the real marketplace and never delivered.
+if adb shell pm path com.farsitel.bazaar | grep -q '^package:'; then
+  echo "::error::Refusing to replace an existing Bazaar installation"; exit 1
+fi
+adb install --no-incremental -r "$STORE_APK"
 adb install --no-incremental -r "$APK"
 adb install --no-incremental -r -t "$TEST_APK"
 # Fail before running unless Android registers the harness against ITSELF. It
@@ -64,7 +72,7 @@ timeout --signal=TERM --kill-after=10s 60s adb shell am start -W -n com.khodroya
   2>&1 | tee "$EVIDENCE/normal-launch.txt"
 LAUNCH_RESULT=${PIPESTATUS[0]}
 set -e
-echo "::notice title=Original APK normal launcher exit::Exit $LAUNCH_RESULT; this alone is not a passing OCR result."
+echo "::notice title=Original APK normal launcher exit::Exit $LAUNCH_RESULT; this alone is not passing review/Bazaar evidence."
 adb shell am force-stop com.khodroyar.app
 set +e
 timeout --signal=TERM --kill-after=30s 12m adb shell am instrument -w -r \
@@ -79,7 +87,7 @@ if ! python3 "$ROOT/tools/summarize-instrumentation.py" "$EVIDENCE/instrumentati
   "$ROOT/android/app/build/outputs/androidTest-results/connected/manual-release/TEST-com.khodroyar.app.ui.ReleaseApkSmokeTest.xml"; then
   RESULT=1
 fi
-if ! python3 "$ROOT/tools/summarize-tests.py" "$ROOT/android/app/build/outputs/androidTest-results/connected" "Signed release native OCR tests"; then
+if ! python3 "$ROOT/tools/summarize-tests.py" "$ROOT/android/app/build/outputs/androidTest-results/connected" "Signed release online-only review and Bazaar IPC tests"; then
   RESULT=1
 fi
 AFTER=$(sha256sum app/build/outputs/apk/release/app-release.apk | awk '{print $1}')
@@ -148,15 +156,12 @@ if not p.is_file() or p.stat().st_size > 65536:
 evidence = json.loads(p.read_text())
 text = json.dumps(evidence, ensure_ascii=False).replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
 print('::notice title=Actual signed-release runtime trace::' + text)
-assert evidence['passed'] is True, 'Signed-release runtime assertions did not pass'
-assert evidence['target_package'] == 'com.khodroyar.app'
-assert evidence['target_debuggable'] is False
-assert evidence['instrumentation_package'] != evidence['target_package']
-assert evidence['target_uid'] != evidence['instrumentation_uid'], 'Test must run outside the production process'
-assert evidence.get('fixed_company') == dict(passed=True, rows=2, count_per_row='1', period_start='1403/04/01',
-    period_end='1403/04/31', km='135', hours='0', first=dict(date='1403/04/12', count='1', km='40', hours='0')), 'Actual fixed-company-form OCR and service comparison must also pass'
-for phase in ('before', 'after'):
-    assert evidence['offline'][phase] == dict(airplane_mode='1', wifi_on='0', active_network=False), 'Actual offline state is required'
+# Reuse the very same strict runtime schema enforced by the publication guard.
+import importlib.util
+spec = importlib.util.spec_from_file_location('publication', Path('..') / 'tools/public-apk-release.py')
+module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
+module.validate_runtime(evidence)
+
 PY
 then
   RESULT=1
@@ -172,6 +177,6 @@ assert runtime['passed'] is True
 proof['signed_runtime'] = runtime
 proof_path.write_text(json.dumps(proof, indent=2) + '\n')
 PY
-  echo "::notice title=Signed release runtime verification::Non-debuggable originally signed R8 APK launched, real Persian OCR with radios disabled and actual SAF picker passed; gesture navigation; exact audited APK hash preserved."
+  echo "::notice title=Signed release runtime verification::Non-debuggable originally signed R8 APK: actual SAF, FastOCR consent/cancel, synthetic text review/counts and Bazaar IPC/deep link with a simulated store passed. NO live OCR/real Bazaar claim; exact APK hash preserved."
 fi
 exit "$RESULT"

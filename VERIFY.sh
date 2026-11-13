@@ -68,8 +68,8 @@ echo
 
 # 9. Check version info
 echo "9. Version Information"
-grep -q "versionCode 63" android/app/build.gradle && echo "  ✓ versionCode 63" || { echo "  ✗ versionCode wrong"; fail=1; }
-grep -q "versionName '5.4.1'" android/app/build.gradle && echo "  ✓ versionName 5.4.1" || { echo "  ✗ versionName wrong"; fail=1; }
+grep -q "versionCode 73" android/app/build.gradle && echo "  ✓ versionCode 73" || { echo "  ✗ versionCode wrong"; fail=1; }
+grep -q "versionName '5.5.6'" android/app/build.gradle && echo "  ✓ versionName 5.5.6" || { echo "  ✗ versionName wrong"; fail=1; }
 echo
 
 # 10. Check no debug signing for release
@@ -88,7 +88,7 @@ else
 fi
 echo
 
-echo "12. Bundled offline OCR models"
+echo "12. Online-only reports (retired native engine/models must be absent)"
 python3 tools/verify-ocr-assets.py || fail=1
 echo
 

@@ -103,4 +103,16 @@ class DateServiceCountComparisonTest {
     @Test(expected = IllegalArgumentException::class) fun invalidRangeFailsClosed() {
         DateServiceCountComparison.compare(listOf(row("r1")), emptyList(), "bad", end)
     }
+    @Test fun sameDayGroupedCardexDoesNotReplaceTheTwoExplicitServiceRowsOrInventAThird() {
+        val text = "1 1405/05/11 کارتکس نیمه اول 300 .\n" +
+            "6 1405/05/10 شهر الف شهر ب 40 .\n7 1405/05/10 شهر ب شهر الف 80 .\n" +
+            "8 1405/05/11 شهر الف شهر ب 40 .\n9 1405/05/11 شهر ب شهر الف 80 ."
+        val rows = FastOcrReportText.parsePage("p", 1, text)
+        val compared = DateServiceCountComparison.compare(rows, List(3) { "1405/05/10" } + List(3) { "1405/05/11" }, start, end)
+        assertEquals(5, rows.size)
+        assertEquals(1, rows.count { it.kind == ReportRowKind.GROUPED })
+        assertEquals(listOf(2, 2), compared.map { it.companyCount })
+        assertEquals(listOf(3, 3), compared.map { it.appCount })
+        assertEquals(listOf(-1, -1), compared.map { it.difference })
+    }
 }

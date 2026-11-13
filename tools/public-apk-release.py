@@ -21,9 +21,27 @@ import urllib.request
 
 CERTIFICATE = '03bfbc3575667403c3259fae345f3eb1ad3045373cb62123be376ef4898caaf0'
 BASELINE = '797d7061c5f669cf4fa3e7361c0b3c2dca10490c'
-OFFLINE = dict(airplane_mode='1', wifi_on='0', active_network=False)
-FIXED_COMPANY = dict(passed=True, rows=2, count_per_row='1', period_start='1403/04/01',
-    period_end='1403/04/31', km='135', hours='0', first=dict(date='1403/04/12', count='1', km='40', hours='0'))
+OFFLINE_REVIEW = dict(airplane_mode='1', wifi_on='0', active_network=False)
+REVIEW = dict(passed=True, text_source='user-entered synthetic fixture; NOT image OCR', rows=3, count_per_row='1',
+    period_start='1405/05/01', period_end='1405/05/31', km='215', hours='unknown',
+    first=dict(date='1405/05/10', count='1', km='40', hours='0'), day10_count=2, day11_count=1,
+    mandatory_review=True, consent_cancelled=True)
+BAZAAR = dict(passed=True, source='synthetic IPC fixture; NOT real Bazaar', automatic_entry_prompt=True,
+    method='getRemoteVersionCode', queried_package='com.khodroyar.app', update_uri='bazaar://details/modal?id=com.khodroyar.app')
+
+
+def validate_runtime(runtime):
+    """Exact signed-app UI/IPC evidence. Deliberately NOT live OCR/Bazaar proof."""
+    if (runtime.get('passed') is not True or runtime.get('target_debuggable') is not False
+            or runtime.get('target_package') != 'com.khodroyar.app'
+            or runtime.get('instrumentation_package') not in ('com.khodroyar.app.releasesmoke', 'com.khodroyar.app.releasesmoke.test')
+            or type(runtime.get('target_uid')) is not int or type(runtime.get('instrumentation_uid')) is not int
+            or runtime['target_uid'] == runtime['instrumentation_uid']
+            or runtime.get('ocr_mode') != 'online-only' or runtime.get('live_ocr_exercised') is not False
+            or runtime.get('review') != REVIEW or runtime.get('bazaar') != BAZAAR
+            or any(runtime.get('offline_review', {}).get(phase) != OFFLINE_REVIEW for phase in ('before', 'after'))):
+        raise ValueError('Required actual signed-app consent/text-review/simulated-Bazaar IPC evidence did not pass')
+    return runtime
 
 
 def digest(path):
@@ -41,26 +59,18 @@ def verified_proof(apk, verification, expected_head):
         raise ValueError('Invalid expected commit or oversized proof')
     proof = json.loads(verification.read_text())
     size = apk.stat().st_size
-    runtime = proof.get('signed_runtime', {})
-    if (apk.is_symlink() or not 0 < size < 100_000_000 or proof.get('bytes') != size
+    if (apk.is_symlink() or not 0 < size < 30_000_000 or proof.get('bytes') != size
             or proof.get('sha256') != digest(apk) or proof.get('head_sha') != expected_head
             or proof.get('package') != 'com.khodroyar.app' or proof.get('certificate_sha256') != CERTIFICATE
             or proof.get('debuggable') is not False or proof.get('baseline') != BASELINE
             or proof.get('room_version') != 6 or proof.get('zipalign_16kb') != 'passed'
-            or proof.get('zip_crc') != 'passed' or proof.get('offline_model_assets') != 'all hashes verified'
-            or proof.get('native_64_bit_16kb_alignment') != 'passed'
+            or proof.get('zip_crc') != 'passed' or proof.get('ocr_mode') != 'online-only'
+            or proof.get('offline_model_assets') != 'absent (online-only)' or proof.get('offline_native_engine') != 'absent'
+            or proof.get('native_64_bit_16kb_alignment') != 'passed' or proof.get('bundled_notices_fonts') != 'all hashes verified'
             or not re.fullmatch(r'\d+(?:\.\d+){1,3}', proof.get('version_name', ''))
-            or type(proof.get('version_code')) is not int or proof['version_code'] <= 0
-            or runtime.get('passed') is not True or runtime.get('target_debuggable') is not False
-            or runtime.get('target_package') != 'com.khodroyar.app'
-            or runtime.get('instrumentation_package') not in ('com.khodroyar.app.releasesmoke', 'com.khodroyar.app.releasesmoke.test')
-            or type(runtime.get('target_uid')) is not int or type(runtime.get('instrumentation_uid')) is not int
-            or runtime['target_uid'] == runtime['instrumentation_uid']
-            or runtime.get('extracted') != dict(date='1403/01/01', count='2', km='120.5', hours='3.5')
-            or any(runtime.get('offline', {}).get(phase) != OFFLINE for phase in ('before', 'after'))):
-        raise ValueError('Public APK does not match the original audited signed-runtime candidate')
-    if proof['version_code'] >= 64 and runtime.get('fixed_company') != FIXED_COMPANY:
-        raise ValueError('This version also requires actual fixed-company-form OCR/service comparison in the signed R8 APK')
+            or type(proof.get('version_code')) is not int or proof['version_code'] < 73):
+        raise ValueError('Public APK does not match the original audited online-only candidate')
+    validate_runtime(proof.get('signed_runtime', {}))
     return proof
 
 
@@ -68,7 +78,7 @@ def audit_actual_apk(apk):
     spec = importlib.util.spec_from_file_location('actual_apk_audit', Path(__file__).with_name('audit-ocr-apk.py'))
     auditor = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(auditor)
-    auditor.audit(apk)  # Actual CRC, source-pinned model bytes, ABIs and ELF alignment.
+    auditor.audit(apk)  # Actual CRC, retired-engine/model absence, size and ELF alignment.
 
 
 def filename(proof):
@@ -90,17 +100,19 @@ def prepare(apk, verification, directory, expected_head):
 بر پایهٔ ۵.۴.۰ بازیابی‌شده؛ بستهٔ `com.khodroyar.app`، کد {proof['version_code']}، Room 6.
 
 - APK اصلی Release با امضای اصلی، R8 و resource shrinking فعال، غیرقابل‌دیباگ.
-- گزارش کارکرد آفلاین: عکس/PDF، OCR همراه فارسی/عربی/انگلیسی، بازبینی اجباری و مقایسهٔ روزانه.
-- دستیار داخلی: تاریخ/بازهٔ شمسی، عملیات واقعی و تأیید صریح پیش از تغییرهای گروهی.
-- اصلاح فرم‌ها و حاشیه‌های صفحه‌کلید/سیستم، با حفظ داده‌ها و محاسبات موجود.
-- انتشار عمومی فقط با اجازهٔ صریح مالک و پس از موفقیت آزمون‌های JVM، بومی و خود APK امضاشده.
-- آزمون روی امولاتور API 35 است؛ نه آزمایش فیزیکی Samsung S23 FE و نه تضمین همهٔ اسکن‌ها/دست‌خط‌ها.
-- OCR واقعی با حالت پرواز روشن، Wi-Fi خاموش و نبود شبکهٔ فعال پیش/پس پردازش تأیید شد.
-- استخراج تصویر آزمون: ۱۴۰۳/۰۱/۰۱، ۲ سرویس، ۱۲۰٫۵ کیلومتر، ۳٫۵ ساعت؛ بازبینی و مقایسه از رابط واقعی.
-- «پیش‌پر اختیاری آنلاین» غیرفعالِ پیش‌فرض است؛ فقط با تأیید صریح، تصاویر به نشانی HTTPS انتخابی کاربر می‌روند و پاسخ فقط جدول بازبینی را پیش‌پر می‌کند. آزمون امضاشده آن را هرگز فرا نمی‌خواند.
-- ابزار CI و APK آزمون جزو فایل نصب تحویلی نیستند. مجوز جدیدی به برنامه اضافه نشده است.
+- حذف موتور/مدل‌های OCR آفلاین؛ خواندن تصویر فقط با FastOCR، کلید شخصی رمزنگاری‌شده و تأیید صریح هر ارسال است. ثبت سوابق و محاسبات عادی آفلاین باقی می‌مانند.
+- حفظ بایت‌به‌بایت PDF تک‌صفحه‌ای بدون چرخش؛ آماده‌سازی تصاویر/صفحه‌های دیگر تا ۶ مگاپیکسل، بدون مدل دانلودی.
+- بازیابی قالب تاریخ و شماره‌ردیف چسبیده، هشدار ردیف‌های نخوانده و «در متن یافت نشد» به‌جای ادعای قطعی نبود سرویس؛ هیچ تاریخ/سرویس از تعدادهای برنامه ساخته نمی‌شود.
+- بازخوانی متن خصوصی ذخیره‌شده بدون ارسال/هزینه، و ورود صریح متن یک صفحه برای بازبینی. پیش‌نویس قدیمی حفظ می‌شود.
+- جدول روزانهٔ شرکت/برنامه فقط خواندنی است؛ ساعت نامشخص صفر نیست و تطبیق سخت‌گیرانهٔ سرویس‌ها همچنان نیازمند تأیید بازبینی است.
+- اعلان نسخهٔ جدید هنگام ورود، فقط پس از پاسخ نسخهٔ بازار؛ دکمهٔ به‌روزرسانی صفحهٔ همان بسته را در خود بازار باز می‌کند. نبود بازار/شبکه ورود را مسدود نمی‌کند.
+- آزمون امضاشده روی امولاتور API 35: SAF واقعی، رضایت/انصراف FastOCR، ورود متن مصنوعی، بازبینی اجباری، شمارش روزهای ۱۰/۱۱ و ساعت نامشخص، IPC و لینک به‌روزرسانی با **بازار شبیه‌سازی‌شده**.
+- آزمون ادغام آنلاین از پاسخ HTTP ساختگی استفاده می‌کند؛ **آزمون زندهٔ FastOCR، انتشار واقعی در بازار یا آزمایش فیزیکی Samsung ادعا نمی‌شود**. سند خصوصی کاربر در مخزن/CI نیست؛ کامل‌خوانی هر اسکن تضمین نمی‌شود.
+- ابزار CI، APK تست و بازار مصنوعی جزو فایل تحویلی نیستند. بسته، گواهی اصلی، Room 6 و محاسبات مالی حفظ شده‌اند؛ مجوز نصب/دسترسی عمومی فایل اضافه نشده است.
 
-اندازه: {proof['bytes']:,} بایت، کمتر از ۱۰۰٬۰۰۰٬۰۰۰ بایت.
+برای انتشار بازار همین APK را با همین بسته/امضا بارگذاری کنید. نمایش اعلان برای کاربران نسخه‌های حاوی این قابلیت، پس از انتشار کد بالاتر در بازار ممکن است؛ ۵.۵.۵ قبلی هنوز اعلان جدید را ندارد.
+
+اندازه: {proof['bytes']:,} بایت؛ سقف جدید ۳۰٬۰۰۰٬۰۰۰ بایت.
 
 SHA-256 فایل: `{proof['sha256']}`
 
@@ -168,7 +180,7 @@ def publish(directory, repository, expected_head, run_id):
         stream.write(f'\nصفحهٔ بیلد و آزمون‌ها: {build_url}\n')
     assets = [apk, proof_path, root / 'SHA256SUMS', notes]
     subprocess.run(['gh', 'release', 'create', tag, '--repo', repository, '--target', expected_head,
-                    '--title', f"KhodroYar {proof['version_name']} — Native offline enhancements",
+                    '--title', f"KhodroYar {proof['version_name']} — Online reports and Bazaar updates",
                     '--notes-file', str(notes), '--draft', '--latest=false', *map(str, assets)], check=True, timeout=240)
     release = gh_json(f'{api}/releases/tags/{tag}', missing_ok=True)
     if release is None:

@@ -6,7 +6,7 @@ import java.util.UUID
 import org.json.JSONObject
 
 /**
- * Optional FastOCR (api.fastocr.org) document upload, explicitly user-consented.
+ * Online-only FastOCR (api.fastocr.org) document upload, explicitly user-consented.
  * Official flow: create document job -> PUT bytes to the presigned upload URL
  * -> start -> poll status (awaiting_upload/processing/completed/partial/failed)
  * -> presigned text download URL -> UTF-8 text.

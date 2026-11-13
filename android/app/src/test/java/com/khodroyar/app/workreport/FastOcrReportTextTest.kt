@@ -250,6 +250,72 @@ class FastOcrReportTextTest {
         assertTrue(rows.all { it.count == "1" })
     }
 
+    @Test fun missingDayTenAndElevenSurviveGluedOrdinalBeforeTheYear() {
+        val text = """
+            71405/05/10 شهر الف شهر ب 40 0
+            81405/05/10 شهر ب شهر الف 95 .
+            91405/05/11 شهر الف شهر ب 80 8
+            101405/05/11 شهر ب شهر الف 120 .
+            111405/05/12 شهر ب شهر الف 60 3
+        """.trimIndent()
+        val rows = FastOcrReportText.parsePage("p", 1, text)
+        assertEquals(listOf("7", "8", "9", "10", "11"), rows.map { it.ordinal })
+        assertEquals(listOf("1405/05/10", "1405/05/10", "1405/05/11", "1405/05/11", "1405/05/12"), rows.map { it.date })
+        assertEquals(listOf("40", "95", "80", "120", "60"), rows.map { it.km })
+        assertTrue(rows.all { it.count == "1" })
+        assertEquals("", rows[1].hours) // Never fabricate a zero or an app-derived row.
+    }
+
+    @Test fun visualOrderSuffixOrdinalDoesNotMakeTheDayInvalid() {
+        val rows = FastOcrReportText.parsePage("p", 1,
+            "700 . . 140 شهر ب شهر الف 1405/05/107\n800 . . 8 80 شهر الف شهر ب 1405/05/118")
+        assertEquals(listOf("1405/05/10", "1405/05/11"), rows.map { it.date })
+        assertEquals(listOf("7", "8"), rows.map { it.ordinal })
+        assertEquals(listOf("140", "80"), rows.map { it.km })
+    }
+
+    @Test fun markdownPipesUnicodeSlashAndSplitYearKeepTheDateAnchor() {
+        val rows = FastOcrReportText.parsePage("p", 1,
+            "| 7 | 1 4 0 5 / 05 / 10 | شهر الف شهر ب | 140 | . |\n" +
+                "| 8 | ۱۴۰۵∕۰۵∕۱۱ | شهر ب شهر الف | 80 | 8 |")
+        assertEquals(listOf("1405/05/10", "1405/05/11"), rows.map { it.date })
+        assertEquals(listOf("7", "8"), rows.map { it.ordinal })
+        assertEquals(listOf("140", "80"), rows.map { it.km })
+    }
+
+    @Test fun bidiMarksAndWideCellSpacingDoNotHideDatesOrOrdinals() {
+        val rows = FastOcrReportText.parsePage("p", 1,
+            "7        14\u200b05/\u200f05/10 شهر الف شهر ب 140 .\n8        1405/05/11 شهر ب شهر الف 80 8")
+        assertEquals(listOf("1405/05/10", "1405/05/11"), rows.map { it.date })
+        assertEquals(listOf("7", "8"), rows.map { it.ordinal })
+    }
+
+    @Test fun ordinalOnItsOwnCellLineWorksInBothReadingDirectionsWithoutIncomeTailBleed() {
+        val rtl = "7\n1405/05/10\nشهر الف شهر ب 140 . 684\n8\n1405/05/11\nشهر ب شهر الف 80 8 682"
+        val ltr = "684 . . 140 شهر ب شهر الف\n1405/05/10\n7\n682 . 8 80 شهر الف شهر ب\n1405/05/11\n8"
+        for (text in listOf(rtl, ltr)) {
+            val rows = FastOcrReportText.parsePage("p", 1, text)
+            assertEquals(listOf("1405/05/10", "1405/05/11"), rows.map { it.date })
+            assertEquals(listOf("7", "8"), rows.map { it.ordinal })
+            assertEquals(listOf("140", "80"), rows.map { it.km })
+        }
+    }
+
+    @Test fun layoutRecoveryDoesNotJoinADayAndAnOrdinalIntoAnotherDate() {
+        val normalized = FastOcrReportText.normalizeLayout("1405 / 05 / 1 1")
+        assertEquals("1405/05/1 1", normalized)
+        assertEquals("14050510", FastOcrReportText.normalizeLayout("14050510"))
+        assertEquals("1405/15/10", FastOcrReportText.normalizeLayout("1405/15/10"))
+    }
+
+    @Test fun skippedOrdinalsAreWarningsNeverGeneratedServiceRows() {
+        val rows = FastOcrReportText.parsePage("p", 1,
+            "7 1405/05/10 شهر الف شهر ب 140 .\n10 1405/05/12 شهر ب شهر الف 80 8")
+        assertEquals(listOf(8, 9), FastOcrReportText.missingOrdinals(rows))
+        assertEquals(2, rows.size)
+        assertFalse(rows.any { it.date == "1405/05/11" })
+    }
+
     @Test(expected = IllegalArgumentException::class)
     fun absurdlyLongInputRejected() {
         FastOcrReportText.parsePage("p1", 1, "x".repeat(FastOcrClient.MAX_TEXT_BYTES + 1))

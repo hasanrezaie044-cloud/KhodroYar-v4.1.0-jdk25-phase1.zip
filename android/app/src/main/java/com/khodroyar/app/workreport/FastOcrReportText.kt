@@ -25,8 +25,12 @@ object FastOcrReportText {
     private val word = Regex("[آ-یA-Za-z]{3,}")
     // \z, NOT $: Java's $ also matches before a final newline, which let the
     // tail of the previous row's income (4,154,530\n) masquerade as an ordinal.
-    private val ordinalBefore = Regex("(?<![0-9,٬./:٫])([0-9]{1,2})[ \\t]{0,3}\\z")
-    private val ordinalAfter = Regex("\\A[ \\t]{0,3}([0-9]{1,2})(?![0-9,٬./:٫])")
+    private val ordinalBefore = Regex("(?<![0-9,٬./:٫])([0-9]{1,2})[ \\t]{0,8}\\z")
+    private val ordinalAfter = Regex("\\A[ \\t]{0,8}([0-9]{1,2})(?![0-9,٬./:٫])")
+    // A wrapped ordinal must occupy its ENTIRE cell line. In particular, never
+    // match the last digits of an income line such as 4,154,530 before a newline.
+    private val wrappedOrdinalBefore = Regex("(?:\\A|\\n)[ \\t]{0,8}([0-9]{1,2})[ \\t]{0,8}\\r?\\n[ \\t]{0,8}\\z")
+    private val wrappedOrdinalAfter = Regex("\\A[ \\t]{0,8}\\r?\\n[ \\t]{0,8}([0-9]{1,2})[ \\t]{0,8}(?=\\r?\\n|\\z)")
     private val vehicleType = Regex("\\A\\s*(?:ثابت|شب|درخواستی|تعطیل)(?=\\s|[0-9-]|\\z)")
     private val titleSeparator = Regex("\\s*(?:تا|الی|[-–—]|to)\\s*", RegexOption.IGNORE_CASE)
     private val headerDateLabel = Regex("(?:تاریخ\\s*(?:گزارش|چاپ|تهیه)|(?:از|تا)\\s*تاریخ)\\s*[:：]?\\s*\\z")
@@ -72,7 +76,7 @@ object FastOcrReportText {
 
     private fun headerDate(full: String, anchor: Anchor): Boolean {
         val lineStart = full.lastIndexOf('\n', anchor.start - 1) + 1
-        val prefix = full.substring(maxOf(lineStart, anchor.start - 160), anchor.start)
+        val prefix = full.substring(maxOf(lineStart, anchor.start - 320), anchor.start)
         if (headerDateLabel.containsMatchIn(prefix)) return true
         if (prefix.trim().trimEnd(':', '：') == "تاریخ") return true
         val gluedBefore = word.findAll(prefix).lastOrNull()?.takeIf { it.range.last == prefix.lastIndex }?.value.orEmpty()
@@ -120,9 +124,44 @@ object FastOcrReportText {
         return Shape(ordinal?.value, km?.value, hours, false)
     }
 
+    /** Formatting recovery only: never infer a missing date from app records. */
+    internal fun normalizeLayout(text: String): String {
+        var result = PersianInput.latin(Normalizer.normalize(text, Normalizer.Form.NFKC))
+            .replace(Regex("[\\u061c\\u200b\\u200e\\u200f\\u202a-\\u202e\\u2060\\u2066-\\u2069\\ufeff]"), "")
+            .replace('|', ' ').replace('⁄', '/').replace('∕', '/').replace('／', '/').replace('\\', '/')
+        // Join a split four-digit year and spaces around date separators only.
+        // Never join '1 1' after the last slash: day 1 + ordinal 1 is ambiguous.
+        val spacedDate = Regex("(?<![0-9])(1[ \\t]*[3-6][ \\t]*[0-9][ \\t]*[0-9])[ \\t]*/[ \\t]*([0-9]{1,2})[ \\t]*/[ \\t]*([0-9]{1,2})(?![0-9])")
+        result = spacedDate.replace(result) { m ->
+            val date = (1..3).joinToString("/") { m.groupValues[it].filter(Char::isDigit) }
+            if (PersianInput.date(date) != null) date else m.value
+        }
+        // A five/six-digit 'year' can be an ordinal glued BEFORE the full,
+        // independently valid four-digit year. A 3/4-digit 'day' can be a
+        // two-digit day followed by an ordinal. Compact dates are NOT split.
+        val before = Regex("(?<![0-9])([0-9]{1,2})(1[3-6][0-9]{2}/[0-9]{1,2}/[0-9]{2})(?![0-9])")
+        result = before.replace(result) { m ->
+            if (PersianInput.count(m.groupValues[1]) in 1..99 && PersianInput.date(m.groupValues[2]) != null)
+                "${m.groupValues[1]} ${m.groupValues[2]}" else m.value
+        }
+        val after = Regex("(?<![0-9])(1[3-6][0-9]{2}/[0-9]{1,2}/[0-9]{2})([0-9]{1,2})(?![0-9])")
+        result = after.replace(result) { m ->
+            if (PersianInput.date(m.groupValues[1]) != null && PersianInput.count(m.groupValues[2]) in 1..99)
+                "${m.groupValues[1]} ${m.groupValues[2]}" else m.value
+        }
+        return result
+    }
+
+    /** A gap means OCR coverage is uncertain, NOT that the driver took no trip. */
+    fun missingOrdinals(rows: List<ReportRow>): List<Int> {
+        val ordinals = rows.mapNotNull { PersianInput.count(it.ordinal)?.takeIf { n -> n in 1..MAX_ROWS_PER_PAGE } }.toSet()
+        if (ordinals.size < 2) return emptyList()
+        return (ordinals.minOrNull()!!..ordinals.maxOrNull()!!).filterNot { it in ordinals }
+    }
+
     fun parsePage(pageId: String, pageNumber: Int, text: String): List<ReportRow> {
         require(text.length <= FastOcrClient.MAX_TEXT_BYTES)
-        val full = PersianInput.latin(Normalizer.normalize(text, Normalizer.Form.NFKC))
+        val full = normalizeLayout(text)
         require(full.length <= FastOcrClient.MAX_TEXT_BYTES)
         val dates = PersianInput.datePattern.findAll(full).mapNotNull { m ->
             PersianInput.date(m.value)?.let { Anchor(m.range.first, m.range.last + 1, it) }
@@ -147,13 +186,15 @@ object FastOcrReportText {
         for (i in dates.indices) {
             if (ignored[i]) continue
             val anchor = dates[i]
-            val prefixStart = maxOf(0, anchor.start - 16)
-            ordinalBefore.find(full.substring(prefixStart, anchor.start))
+            val prefixStart = maxOf(0, anchor.start - 32)
+            val prefix = full.substring(prefixStart, anchor.start)
+            (ordinalBefore.find(prefix) ?: wrappedOrdinalBefore.find(prefix))
                 ?.takeIf { PersianInput.count(it.groupValues[1]) in 1..99 }?.let { m ->
                     val group = m.groups[1]!!
                     before[i] = Token(group.value, prefixStart + group.range.first, prefixStart + group.range.last + 1)
                 }
-            ordinalAfter.find(full.substring(anchor.end, minOf(full.length, anchor.end + 16)))
+            val suffix = full.substring(anchor.end, minOf(full.length, anchor.end + 32))
+            (ordinalAfter.find(suffix) ?: wrappedOrdinalAfter.find(suffix))
                 ?.takeIf { PersianInput.count(it.groupValues[1]) in 1..99 }?.let { m ->
                     val group = m.groups[1]!!
                     after[i] = Token(group.value, anchor.end + group.range.first, anchor.end + group.range.last + 1)
@@ -227,7 +268,7 @@ object FastOcrReportText {
                 raw = win.trim().take(160), date = anchor.date, count = "1",
                 km = km?.let(PersianInput::display).orEmpty(), hours = hours,
                 confidence = 0f, included = true,
-                note = "متن آنلاین FastOCR؛ " + when {
+                note = "متن گزارش؛ نیازمند بازبینی؛ " + when {
                     grouped -> "شرح تجمیعی است؛ تعداد سرویس آن قطعی نیست و پوشش آن باید دستی مشخص شود"
                     km != null && hours.isNotBlank() -> "مقادیر را با اصل سند تطبیق دهید"
                     km == null && hours.isBlank() -> "کیلومتر/ساعت خوانده نشد؛ تاریخ و تعداد این سرویس برای بازبینی نگه داشته شد"

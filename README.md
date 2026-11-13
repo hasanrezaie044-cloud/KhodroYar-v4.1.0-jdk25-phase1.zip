@@ -1,29 +1,37 @@
 # مدیریت خودرو — Native Android
 
-## Current source: 5.4.4 (versionCode 66), based on restored 5.4.0
+## Current source: 5.5.6 (versionCode 73), based on restored 5.4.0
 
-Fully integrated into the existing `com.khodroyar.app`, with Room 6 and the existing signing identity:
-- **Offline Persian work-report OCR** in Reports/toolkit: bundled Tesseract + Persian/Arabic/English
-  models, multiple images and PDF pages, preview/rotation/order/removal, strict editable review,
-  cross-page duplicate flags, the recurring ordinal/date/km/available-hours company form and
-  individual-service comparison against actual records. Deterministic deskew/illumination/table-crop
-  preprocessing precedes OCR; a lone canonically valid native reading at the form-specific 75
-  threshold is usable on the ruled company form, while two strong conflicting readings stay blank.
-  Empty/dot/dash hours are valid empty values, never zero. Ambiguous/split/grouped services need
-  explicit read-only links; unknown values are never zero. Full reporting months include app-only days.
-- **Local service-range dialogue**: compact/separated Jalali dates, explicit daily counts, saved
-  values, exact before/after previews, button-only bulk approval, atomic mutations, stale-record
-  rejection, retry deduplication, and recoverable mileage updates. Search/report/edit/delete and
-  follow-up context stay inside the existing assistant. Existing expense/fuel/maintenance edits
-  also accept explicit IDs locally and require fresh app-owned snapshots.
-- **Android form safety**: consumed Scaffold insets plus IME/navigation union, pinned Save/Cancel,
-  large-text minimum button heights, bounded confirmation text and native page/column review.
+Same `com.khodroyar.app`, Room 6, financial formulas and original signing identity:
 
-Read the [5.4.4 optional-online-prefill changes](CHANGES_5.4.4.md), the [5.4.3 ruled-form/blank-hours changes](CHANGES_5.4.3.md), the [5.4.2 service-comparison changes](CHANGES_5.4.2.md) and the [Persian usage, safety and verification contract](docs/OFFLINE-WORK-REPORTS.md).
-No cloud OCR/backend/Firebase, separate installation, new permission or financial
-formula/export rewrite is introduced. Public APK delivery is explicitly opt-in after all release gates. Existing optional online/traffic features are retained,
-not required by OCR or the internal assistant. An optional explicit-consent online prefill (user-typed HTTPS endpoint, documented in docs/ONLINE-OCR-ASSIST.md) can prefill the review table; it is off by default and never skips review. Compilation and runtime verification are separate:
-only the final commit-specific CI results establish a passing release, not this feature list.
+- **Online-only report image OCR**: the unused native/offline engine, JNI libraries,
+  four traineddata files and print-reference fonts are removed. FastOCR uses the user's
+  encrypted personal key and explicit consent for **each** send. Ordinary records and
+  calculations still work offline. There is no runtime model download.
+- **Better date coverage/review**: preserve unrotated one-page PDFs byte-for-byte instead
+  of shrinking the photographed table; other pages/images use bounded high-resolution
+  preparation. Recover formatting such as glued ordinals, split years and table pipes.
+  Warn about ordinal gaps/partial replies; “not found in text” is not proof of no service.
+  Never create dates or services from app counts. Unknown hours remain unknown.
+- **Local review**: keep the online text privately with the draft, reparse without another
+  upload/charge, or explicitly enter/edit one page's OCR text. Old drafts remain readable.
+  Daily counts are read-only; individual-service comparison still requires reviewed data.
+- **Cafe Bazaar updates**: an asynchronous, timeout-bounded entry check asks Bazaar for
+  its published version code. A newer code offers **Update through Bazaar** / Later;
+  only user action opens the store's update sheet. Missing Bazaar/network never blocks entry.
+  Settings → About provides a manual check and listing link. No APK self-installer.
+- Existing guarded service/expense commands, approval/staleness checks, charts, exports,
+  IME/navigation safety and automation scheduling are preserved.
+
+Guides: [FastOCR/report review (Persian)](docs/FASTOCR-ASSIST.md),
+[Bazaar publishing/update contract](docs/BAZAAR-UPDATES.md), [changes](CHANGELOG.md),
+[third-party notices](THIRD_PARTY_NOTICES.md).
+
+Verification is commit-specific: JVM contracts, native integration with a **mock FastOCR
+transport**, and the exact signed/R8 APK driven through SAF, consent/cancel and **synthetic
+text** review. A CI-only simulated store tests actual Binder/deep-link routing; it is not
+live Bazaar publishing or a live OCR quality test. No private report/API key enters CI.
+The delivered APK alone must stay **below 30,000,000 bytes**; test/store APKs are never delivered.
 
 ## Preserved 5.4.0 baseline (versionCode 60)
 
@@ -63,7 +71,7 @@ and [font licence notices](THIRD_PARTY_NOTICES.md). The 5.2.0 agent functionalit
 Short Persian slot-filling conversations, recurring expenses/trips, explicit traffic tools and
 allow-listed tab navigation share the real app repositories and approval gate. A task manager
 shows pause/resume, amount edits, deletion of rules (not records), schedule and last result.
-The signed **whole APK must stay below 100,000,000 bytes** in CI.
+The signed **whole APK must stay below 30,000,000 bytes** in CI.
 
 Read the [local agent guide](docs/LOCAL-AGENT.md) and [5.2.0 changes](CHANGES_5.2.0.md).
 Daily work uses inexact WorkManager windows, not an always-running model. No fabricated missed-day

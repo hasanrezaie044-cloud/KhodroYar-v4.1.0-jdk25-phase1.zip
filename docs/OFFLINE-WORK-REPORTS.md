@@ -1,3 +1,8 @@
+> **Historical document (through 5.5.5).** The offline engine and old custom-endpoint
+> assist were removed in 5.5.6. Current behaviour: [FastOCR/report guide](FASTOCR-ASSIST.md)
+> and [Bazaar updates](BAZAAR-UPDATES.md). The historical tests/claims below do not
+> describe the current release.
+
 # گزارش کارکرد آفلاین و دستیار بازه‌ای — بر پایهٔ ۵.۴.۰
 
 این تغییر داخل همان برنامهٔ `com.khodroyar.app` است. اپ، افزونه، بک‌اند یا نصب جدا ندارد.

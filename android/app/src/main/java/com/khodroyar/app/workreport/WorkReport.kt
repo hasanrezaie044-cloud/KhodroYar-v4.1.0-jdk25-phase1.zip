@@ -9,8 +9,10 @@ data class OcrWord(val text: String, val left: Float, val top: Float, val right:
     val x get() = (left + right) / 2
     val y get() = (top + bottom) / 2
 }
+enum class ReportTextSource { LEGACY, FASTOCR, USER_TEXT }
 data class OcrPage(val id: String, val number: Int, val words: List<OcrWord>, val text: String,
-    val companyRows: List<CompanyOcrRow> = emptyList())
+    val companyRows: List<CompanyOcrRow> = emptyList(),
+    val source: ReportTextSource = ReportTextSource.LEGACY, val incomplete: Boolean = false)
 
 data class ReportColumns(val count: Int? = null, val km: Int? = null, val hours: Int? = null, val singleService: Boolean = false) {
     // Manual positions count numeric cells from RIGHT to LEFT, including date/ordinal cells.
