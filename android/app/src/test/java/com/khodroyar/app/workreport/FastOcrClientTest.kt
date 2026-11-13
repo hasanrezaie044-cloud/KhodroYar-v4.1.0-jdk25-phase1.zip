@@ -24,6 +24,7 @@ class FastOcrClientTest {
         val script = Script(
             200 to """{"id":"doc_1","upload_url":"https://fastocr-prod.s3.amazonaws.com/x?signature=abc"}""",
             200 to "",
+            200 to "",
             200 to """{"id":"doc_1","status":"completed","pages_processed":1,"pages_total":1,"is_truncated":false}""",
             200 to """{"format":"text","url":"https://fastocr-prod.s3.amazonaws.com/out?signature=def"}""",
             200 to "ردیف\n۱۴۰۴/۰۹/۱۰ ۱۲۳ ۱۲:۱۵",
@@ -57,6 +58,7 @@ class FastOcrClientTest {
         val script = Script(
             200 to """{"id":"d","upload_url":"https://up.example/put"}""",
             200 to "",
+            200 to "",
             200 to """{"status":"processing","pages_processed":0,"pages_total":1}""",
             200 to """{"status":"partial","pages_processed":1,"pages_total":2,"is_truncated":true}""",
             200 to """{"url":"https://down.example/get"}""",
@@ -67,13 +69,14 @@ class FastOcrClientTest {
         assertTrue(status.truncated)
         // upload and output download must not carry the key
         assertFalse(script.requests[1].headers.containsKey("Authorization"))
-        assertFalse(script.requests[5].headers.containsKey("Authorization"))
+        assertFalse(script.requests[6].headers.containsKey("Authorization"))
     }
 
     @Test(expected = IllegalStateException::class)
     fun failedJobThrowsWithCode() = runBlocking {
         val script = Script(
             200 to """{"id":"d","upload_url":"https://up.example/put"}""",
+            200 to "",
             200 to "",
             200 to """{"status":"failed","error":{"code":"content_too_large","message":"too big"}}""",
         )

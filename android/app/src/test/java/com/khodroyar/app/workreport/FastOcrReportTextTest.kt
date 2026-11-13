@@ -37,7 +37,7 @@ class FastOcrReportTextTest {
         assertEquals("1404/09/12", row.date)
         assertEquals("", row.km)   // three numbers after ordinal: NOT guessable
         assertEquals("", row.hours)
-        assertEquals("3", row.ordinal)
+        assertEquals("", row.ordinal) // ambiguous line: even the ordinal is not trusted
         assertTrue(row.note.contains("آشکار نیست"))
     }
 
