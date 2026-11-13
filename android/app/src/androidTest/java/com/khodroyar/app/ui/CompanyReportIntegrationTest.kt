@@ -115,7 +115,36 @@ class CompanyReportIntegrationTest {
                 CarManagerTheme { Surface(Modifier.fillMaxSize()) { WorkReportScreen(vm) } }
             } }
             compose.waitUntil(30000) { !vm.busy && vm.rows.size == rows.size }
+            compose.waitUntil(30000) {
+                vm.dateComparison.any { it.date == "1403/04/12" && it.companyCount == 2 && it.appCount == 3 && it.difference == -1 }
+            }
+            compose.onNodeWithTag("work-report-list").performScrollToNode(hasTestTag("report-date-compare-1403/04/12"))
+            compose.onNodeWithTag("report-date-compare-1403/04/12").assertIsDisplayed()
+                .assert(hasAnyDescendant(hasText("شرکت 2 سرویس")))
+                .assert(hasAnyDescendant(hasText("برنامه 3 سرویس")))
             compose.onNodeWithTag("report-compare").assertIsNotEnabled()
+            val reviewRow = vm.rows.first { it.included && it.date == "1403/04/12" }
+            compose.runOnIdle { vm.edit(reviewRow.copy(included = false)) }
+            compose.waitUntil(30000) {
+                vm.dateComparison.any { it.date == "1403/04/12" && it.companyCount == 1 && it.appCount == 3 }
+            }
+            compose.runOnIdle { vm.edit(reviewRow) }
+            compose.waitUntil(30000) {
+                vm.dateComparison.any { it.date == "1403/04/12" && it.companyCount == 2 && it.appCount == 3 }
+            }
+            assertFalse(vm.reviewConfirmed)
+            assertEquals(before, runBlocking { db.services().allOnce() }) // Count reads/row edits never write services.
+            runBlocking { db.services().insert(service("synthetic-first-day", listOf("", period.start, "40", "1"))) }
+            compose.waitUntil(30000) {
+                vm.dateComparison.any { it.date == period.start && it.companyCount == 0 && it.appCount == 1 }
+            }
+            compose.runOnIdle { vm.range("1403/04/02", period.end) }
+            compose.waitUntil(30000) { vm.dateComparison.isNotEmpty() && vm.dateComparison.none { it.date == period.start } }
+            compose.runOnIdle { vm.range(period.start, period.end) }
+            compose.waitUntil(30000) { vm.dateComparison.any { it.date == period.start && it.appCount == 1 } }
+            runBlocking { db.services().deleteById("synthetic-first-day") }
+            compose.waitUntil(30000) { vm.dateComparison.isNotEmpty() && vm.dateComparison.none { it.date == period.start } }
+            assertEquals(before, runBlocking { db.services().allOnce() })
             compose.runOnIdle { vm.setReview(true) }
             compose.onNodeWithTag("report-compare").performClick()
             compose.waitUntil(30000) { !vm.busy }

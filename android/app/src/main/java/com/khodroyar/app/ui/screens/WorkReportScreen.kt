@@ -126,6 +126,36 @@ fun WorkReportScreen(vm: WorkReportViewModel = viewModel()) {
                     Text("همهٔ ۲ یا ۳ برگهٔ یک دوره را با هم انتخاب کنید. روزهای اول/آخر ماه که فقط در برنامه هستند هم باید در بازه باشند.", style = MaterialTheme.typography.labelSmall)
                 }
             }
+            if (vm.dateComparison.isNotEmpty()) {
+                item(key = "report-date-compare-header") {
+                    SurfaceCard {
+                        Text("مقایسهٔ روزبه‌روز (تعداد سرویس)", style = MaterialTheme.typography.titleSmall,
+                            modifier = Modifier.testTag("report-date-compare-title"))
+                        Text("از ردیف‌های انتخاب‌شده؛ برابری تعداد به‌معنای تطابق هویت سرویس‌ها نیست.",
+                            style = MaterialTheme.typography.bodySmall)
+                        if (vm.rows.any { it.included && it.kind == ReportRowKind.GROUPED })
+                            Text("شرح‌های تجمیعی در تعداد سرویس شمرده نشده‌اند؛ پوشش آن‌ها باید دستی تعیین شود.",
+                                color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+                        Text("این مقایسه فقط خواندنی است؛ هیچ سرویسی خودکار ثبت یا حذف نمی‌شود.",
+                            color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+                items(vm.dateComparison, key = { "date-compare:${it.date}" }) { d ->
+                    SurfaceCard(modifier = Modifier.testTag("report-date-compare-${d.date}")) {
+                        Text(d.date, style = MaterialTheme.typography.labelLarge)
+                        FlowRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                            Text("شرکت ${d.companyCount} سرویس")
+                            Text("برنامه ${d.appCount} سرویس")
+                            Text(if (d.difference == 0) "برابر ✓" else "اختلاف ${kotlin.math.abs(d.difference)}",
+                                color = if (d.difference == 0) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error)
+                        }
+                    }
+                }
+            }
+            vm.dateComparisonError?.let { message -> item {
+                Text(message, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.testTag("report-date-compare-error"))
+            } }
             if (vm.rows.isNotEmpty()) item {
                 Row(Modifier.horizontalScroll(horizontal).width(760.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text("شامل", Modifier.width(48.dp)); Text("تاریخ", Modifier.width(160.dp)); Text("تعداد", Modifier.width(90.dp))

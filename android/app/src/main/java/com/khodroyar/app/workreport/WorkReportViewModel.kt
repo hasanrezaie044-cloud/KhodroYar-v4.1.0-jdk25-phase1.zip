@@ -29,6 +29,8 @@ class WorkReportViewModel(app: Application) : AndroidViewModel(app) {
     private val repository = AppRepository(app)
     private val persistLock = Mutex()
     private var saveJob: Job? = null
+    private var dateComparisonJob: Job? = null
+    private var dateComparisonRevision = 0
     private var job: Job? = null
     private var sourceRevision = 0
     val progress = MutableStateFlow("")
@@ -45,6 +47,9 @@ class WorkReportViewModel(app: Application) : AndroidViewModel(app) {
     var sparseComparison by mutableStateOf<SparseHoursResult?>(null); private set
     var reviewConfirmed by mutableStateOf(false); private set
     var sparse by mutableStateOf(true)
+    /** Mandatory output: per-date company service count vs app-registered count. */
+    var dateComparison by mutableStateOf<List<DateServiceComparison>>(emptyList()); private set
+    var dateComparisonError by mutableStateOf<String?>(null); private set
     private val fastOcrKeys = com.khodroyar.app.ai.FastOcrApiKeyStore(app)
     /** Whether the user once stored their own FastOCR key (encrypted at rest). */
     var fastOcrKeySaved by mutableStateOf(false); private set
@@ -56,6 +61,7 @@ class WorkReportViewModel(app: Application) : AndroidViewModel(app) {
                 withContext(Dispatchers.IO) { draft.load() }?.let { saved ->
                     pages = saved.pages; recognized = saved.recognized; rows = saved.rows; start = saved.start; end = saved.end
                     links = saved.links; periodNote = saved.periodNote
+                    refreshDateComparison()
                 }
             } catch (e: CancellationException) { throw e }
             catch (_: OutOfMemoryError) { error = "برای باز کردن پیش‌نویس حافظه کافی نبود؛ فایل‌های اصلی حفظ شده‌اند. می‌توانید پیش‌نویس را پاک و سند کوچک‌تری انتخاب کنید." }
@@ -65,6 +71,7 @@ class WorkReportViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             repository.maintenanceInputsChanged().collect {
                 sourceRevision++
+                refreshDateComparison()
                 if (comparison != null || sparseComparison != null) { comparison = null; sparseComparison = null; error = "سوابق برنامه تغییر کرد؛ برای نتیجهٔ تازه دوباره مقایسه کنید." }
             }
         }
@@ -82,7 +89,34 @@ class WorkReportViewModel(app: Application) : AndroidViewModel(app) {
             catch (_: Exception) { error = "ذخیرهٔ پیش‌نویس کامل نشد؛ فضای گوشی را بررسی کنید. نتیجه هنوز در این صفحه موجود است." }
         }
     }
-    private fun invalidate() { comparison = null; sparseComparison = null; reviewConfirmed = false }
+    private fun invalidate() {
+        comparison = null; sparseComparison = null; reviewConfirmed = false
+        refreshDateComparison()
+    }
+
+    /** Cancel stale reads after edits, range changes, draft restore or DB changes. */
+    private fun refreshDateComparison() {
+        dateComparisonJob?.cancel()
+        val revision = ++dateComparisonRevision
+        dateComparison = emptyList(); dateComparisonError = null
+        val snapshot = rows
+        if (snapshot.none { it.included && it.kind == ReportRowKind.SERVICE && PersianInput.date(it.date) != null }) return
+        val a = PersianInput.date(start) ?: return
+        val b = PersianInput.date(end) ?: return
+        if (a > b) return
+        dateComparisonJob = viewModelScope.launch {
+            try {
+                delay(100) // Coalesce keystrokes without holding up OCR or draft saving.
+                val appDates = repository.servicesInRangeOnce(a, b).map { it.date }
+                val result = DateServiceCountComparison.compare(snapshot, appDates, a, b)
+                if (revision == dateComparisonRevision) dateComparison = result
+            } catch (e: CancellationException) { throw e }
+            catch (_: Exception) {
+                if (revision == dateComparisonRevision)
+                    dateComparisonError = "مقایسهٔ تعداد فعلاً در دسترس نیست؛ جدول بازبینی محفوظ است."
+            }
+        }
+    }
     fun setReview(value: Boolean) { if (!busy) { reviewConfirmed = value; comparison = null; sparseComparison = null } }
     fun range(a: String, b: String) { if (!busy) { start = a; end = b; invalidate(); persist() } }
     fun importDocuments(uris: List<Uri>) = work {
@@ -112,9 +146,9 @@ class WorkReportViewModel(app: Application) : AndroidViewModel(app) {
         val result = engine.recognize(pages, sparse, progress = { progress.value = it })
         val extracted = withContext(Dispatchers.Default) { WorkReportParser.extract(result) }
         require(extracted.size <= 10000) { "گزارش بیش از ۱۰٬۰۰۰ ردیف دارد؛ آن را تقسیم کنید." }
-        recognized = result; rows = extracted; links = emptyList(); invalidate()
+        recognized = result; rows = extracted; links = emptyList()
         val period = CompanyReportTemplate.period(result, extracted)
-        start = period.start; end = period.end; periodNote = period.note; persist()
+        start = period.start; end = period.end; periodNote = period.note; invalidate(); persist()
         if (result.any { it.words.isEmpty() }) error = "یک یا چند صفحه ناخوانا بود. پیش از مقایسه، تصویر را اصلاح کنید یا آن صفحه را صریحاً حذف و دوباره پردازش کنید."
         else if (rows.isEmpty()) error = "ردیف قابل استخراج پیدا نشد؛ چرخش، کیفیت تصویر یا حالت چیدمان را بررسی کنید."
     }
@@ -180,16 +214,11 @@ class WorkReportViewModel(app: Application) : AndroidViewModel(app) {
         // local and never sends anything anywhere.
         progress.value = "خواندن آفلاین همان صفحه‌ها برای بازبینی و مقایسه…"
         val offline = engine.recognize(pages, sparse, progress = { progress.value = it })
-        rows = extracted; recognized = offline; links = emptyList(); invalidate()
-        val dates = extracted.filter { it.included }.mapNotNull { PersianInput.date(it.date) }
-        val months = dates.map { it.take(7) }.distinct()
-        if (months.size == 1) {
-            val range = com.khodroyar.app.core.jalali.Jalali.monthRange(dates.first().take(4).toInt(), dates.first().takeLast(2).toInt())
-            if (dates.all { it in range.first..range.second }) { start = range.first; end = range.second }
-            else { start = dates.minOrNull().orEmpty(); end = dates.maxOrNull().orEmpty() }
-        } else { start = dates.minOrNull().orEmpty(); end = dates.maxOrNull().orEmpty() }
+        rows = extracted; recognized = offline; links = emptyList()
+        val range = DateServiceCountComparison.suggestedRange(extracted)
+        start = range?.first.orEmpty(); end = range?.second.orEmpty()
         periodNote = "پیش‌پر اختیاری آنلاین از api.fastocr.org انجام شد (کلید شما، فقط یک‌بار برای این دوره). هر خانه را با اصل تصویر تطبیق دهید؛ مقادیر مبهم عمداً خالی گذاشته شده‌اند و بازه را با سند تأیید کنید."
-        persist()
+        invalidate(); persist()
         error = when {
             truncatedPages > 0 -> "سرویس $truncatedPages صفحه را ناقص خواند؛ آن‌ها را دستی با تصویر بازبینی کنید."
             offline.any { it.words.isEmpty() } -> "یک یا چند صفحه در خواندن آفلاین ناخوانا بود؛ پیش از مقایسه آن را اصلاح یا صریحاً حذف و دوباره پردازش کنید."

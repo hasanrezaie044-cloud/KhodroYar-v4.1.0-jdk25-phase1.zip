@@ -1,0 +1,106 @@
+package com.khodroyar.app.workreport
+
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
+import org.junit.Test
+
+/** Synthetic dates/counts only. No private company statement or DB writer. */
+class DateServiceCountComparisonTest {
+    private val start = "1405/05/01"
+    private val end = "1405/05/31"
+    private fun row(id: String, date: String = "1405/05/03", included: Boolean = true,
+        kind: ReportRowKind = ReportRowKind.SERVICE) = ReportRow(
+        id, "p1", 1, 0, "synthetic", date = date, count = "1", included = included,
+        kind = kind, ordinal = "99", hoursBlank = true,
+    )
+
+    @Test fun twoCompanyRowsAndFiveActualServicesHaveDifferenceMinusThree() {
+        val rows = listOf(row("r1"), row("r2")) // km/hours intentionally unreadable
+        val result = DateServiceCountComparison.compare(rows, List(5) { "1405/05/03" }, start, end).single()
+        assertEquals("1405/05/03", result.date)
+        assertEquals(2, result.companyCount)
+        assertEquals(5, result.appCount)
+        assertEquals(-3, result.difference)
+        assertTrue(rows.all { it.km.isBlank() && it.hours.isBlank() })
+    }
+
+    @Test fun equalCountsDoNotClaimIndividualIdentityOrRequireMetrics() {
+        val result = DateServiceCountComparison.compare(listOf(row("r1"), row("r2")),
+            listOf("1405/05/03", "1405/05/03"), start, end).single()
+        assertEquals(0, result.difference)
+        assertEquals(2, result.companyCount) // NOT ordinal 99, nor a km/hour total
+    }
+
+    @Test fun fullPeriodIncludesAppOnlyDatesAtBothEndsAndSortsTheUnion() {
+        val result = DateServiceCountComparison.compare(listOf(row("r1")),
+            listOf(end, start, "1405/05/02"), start, end)
+        assertEquals(listOf(start, "1405/05/02", "1405/05/03", end), result.map { it.date })
+        assertEquals(listOf(0, 0, 1, 0), result.map { it.companyCount })
+        assertEquals(listOf(1, 1, 0, 1), result.map { it.appCount })
+    }
+
+    @Test fun exclusionsInvalidDatesAndGroupedOrDailyRowsAreNotIndividualServices() {
+        val rows = listOf(row("r1"), row("excluded", included = false), row("invalid", "1405/13/03"),
+            row("group", kind = ReportRowKind.GROUPED), row("daily", kind = ReportRowKind.DAILY_TOTAL))
+        val result = DateServiceCountComparison.compare(rows, emptyList(), start, end).single()
+        assertEquals(1, result.companyCount)
+        assertEquals(1, result.difference)
+    }
+
+    @Test fun persianArabicUnpaddedAndCompactDatesShareCanonicalDay() {
+        val rows = listOf(row("r1", "۱۴۰۵/۵/۳"), row("r2", "14050503"))
+        val result = DateServiceCountComparison.compare(rows, listOf("١٤٠٥/٠٥/٠٣"), "۱۴۰۵/۰۵/۰۱", "۱۴۰۵/۰۵/۳۱").single()
+        assertEquals("1405/05/03", result.date)
+        assertEquals(2, result.companyCount)
+        assertEquals(1, result.appCount)
+    }
+
+    @Test fun neitherSideLeaksValuesOutsideTheSelectedRange() {
+        val result = DateServiceCountComparison.compare(listOf(row("r1"), row("other-month", "1405/06/03")),
+            listOf("1405/04/31", "1405/06/01", "bad", "1405/05/03"), start, end).single()
+        assertEquals(0, result.difference)
+        assertEquals(1, result.companyCount)
+        assertEquals(1, result.appCount)
+    }
+
+    @Test fun editingOrExcludingADateRecomputesWithoutMutatingInputRows() {
+        val original = listOf(row("r1"), row("r2"))
+        val copy = original.toList()
+        val edited = listOf(original[0].copy(date = "1405/05/04"), original[1].copy(included = false))
+        val result = DateServiceCountComparison.compare(edited, listOf("1405/05/03"), start, end)
+        assertEquals(listOf("1405/05/03", "1405/05/04"), result.map { it.date })
+        assertEquals(listOf(-1, 1), result.map { it.difference })
+        assertEquals(copy, original)
+    }
+
+    @Test fun monthlyRangeUsesMonthNotFirstServiceDayEvenWhenDayExceedsTwelve() {
+        assertEquals(start to end, DateServiceCountComparison.suggestedRange(listOf(row("r1", "1405/05/28"))))
+        assertEquals(start to end, DateServiceCountComparison.suggestedRange(listOf(row("r1", "1405/05/02"))))
+    }
+
+    @Test fun monthLengthAndLeapYearAreRespected() {
+        assertEquals("1403/12/01" to "1403/12/30",
+            DateServiceCountComparison.suggestedRange(listOf(row("r1", "1403/12/28"))))
+        assertEquals("1404/12/01" to "1404/12/29",
+            DateServiceCountComparison.suggestedRange(listOf(row("r1", "1404/12/28"))))
+    }
+
+    @Test fun mixedMonthRangeDoesNotInventOneMonth() {
+        assertEquals("1405/04/31" to "1405/05/03", DateServiceCountComparison.suggestedRange(
+            listOf(row("r1", "1405/05/03"), row("r2", "1405/04/31"))))
+    }
+
+    @Test fun noIncludedValidDateMeansNoSuggestedRange() {
+        assertNull(DateServiceCountComparison.suggestedRange(emptyList()))
+        assertNull(DateServiceCountComparison.suggestedRange(listOf(row("r1", included = false), row("r2", "bad"))))
+    }
+
+    @Test(expected = IllegalArgumentException::class) fun reversedRangeFailsClosed() {
+        DateServiceCountComparison.compare(listOf(row("r1")), emptyList(), end, start)
+    }
+
+    @Test(expected = IllegalArgumentException::class) fun invalidRangeFailsClosed() {
+        DateServiceCountComparison.compare(listOf(row("r1")), emptyList(), "bad", end)
+    }
+}
