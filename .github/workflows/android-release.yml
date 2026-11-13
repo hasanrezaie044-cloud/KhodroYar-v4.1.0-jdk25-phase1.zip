@@ -446,6 +446,41 @@ jobs:
                   piece = text[index:index+3500].replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
                   print(f'::notice title=Synthetic fixed form cells {index//3500+1}::' + piece)
           PY
+      - name: Set up bounded synthetic header encoder
+        run: |
+          python3 -m venv "$RUNNER_TEMP/header-diagnostics-env"
+          "$RUNNER_TEMP/header-diagnostics-env/bin/pip" --disable-pip-version-check -q install Pillow==12.0.0
+      - name: Expose only the lossless synthetic PNG header strip
+        run: |
+          "$RUNNER_TEMP/header-diagnostics-env/bin/python" - <<'PY'
+          import base64, hashlib, io, json, os, re
+          from pathlib import Path
+          from PIL import Image
+          root = Path(os.environ['RUNNER_TEMP']) / 'native-test-diagnostics'
+          for path in root.rglob('company-template-ocr.json'):
+              assert path.stat().st_size <= 1_000_000
+              data = json.loads(path.read_text())
+              assert data['environment'] == 'Synthetic fixed recurring form; three PDF pages plus repeated PNG; native offline engine'
+              message = next(m for m in data['diagnostics'] if m.startswith('Page 4 initial text:'))
+              anchors = re.findall(r'OcrWord\(text=(?:رديف|مبدا|كيلومتر|ساعت), left=([^,]+), top=([^,]+), right=([^,]+), bottom=([^,]+), confidence=([^\)]+)\)', message)
+              assert len(anchors) >= 3
+              top = min(float(y) for l,y,r,b,c in anchors)
+              bottom = max(float(b) for l,y,r,b,c in anchors)
+              height = max(float(b)-float(y) for l,y,r,b,c in anchors)
+              source = next(root.rglob('fixture-company-template.png'))
+              assert source.stat().st_size <= 500_000
+              with Image.open(source) as image:
+                  assert image.width <= 4000 and image.height <= 4000
+                  crop = image.crop((0, int((top-height*.65)*image.height), image.width, int((bottom+height*.65)*image.height))).convert('RGB')
+                  assert crop.height <= 250
+                  output = io.BytesIO(); crop.save(output, 'PNG', optimize=True)
+              content = output.getvalue(); encoded = base64.b64encode(content).decode('ascii')
+              assert len(encoded) <= 45_000
+              print('::notice title=Synthetic header strip SHA256::' + hashlib.sha256(content).hexdigest())
+              pieces = [encoded[i:i+3000] for i in range(0, len(encoded), 3000)]
+              for index, piece in enumerate(pieces, 1):
+                  print(f'::notice title=Synthetic header strip {index}-of-{len(pieces)}::' + piece)
+          PY
       - name: Expose bounded emulator crash diagnostics through checks
         run: |
           python3 - <<'PY'
