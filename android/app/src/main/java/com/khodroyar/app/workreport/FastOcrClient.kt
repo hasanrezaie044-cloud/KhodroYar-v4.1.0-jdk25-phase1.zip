@@ -2,7 +2,6 @@ package com.khodroyar.app.workreport
 
 import java.net.HttpURLConnection
 import java.net.URI
-import java.security.MessageDigest
 import java.util.UUID
 import org.json.JSONObject
 
@@ -77,9 +76,6 @@ class FastOcrClient(
     data class Created(val id: String, val uploadUrl: String)
     data class Status(val status: String, val pagesProcessed: Int, val pagesTotal: Int, val truncated: Boolean, val error: String?)
 
-    private fun sha256(bytes: ByteArray): String =
-        MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
-
     private fun call(request: Request): JSONObject {
         val response = transport.execute(request)
         val text = String(response.body, Charsets.UTF_8)
@@ -95,10 +91,11 @@ class FastOcrClient(
     }
 
     fun create(apiKey: String, filename: String, bytes: ByteArray): Created {
+        // sha256 is documented optional; the service rejects our hex digest
+        // (400 invalid_sha256), so we send only the mandatory fields.
         val body = JSONObject()
             .put("filename", filename)
             .put("size_bytes", bytes.size)
-            .put("sha256", sha256(bytes))
         val json = call(Request("POST", "$BASE/v1/documents", mapOf(
             "Authorization" to "Bearer $apiKey",
             "Idempotency-Key" to UUID.randomUUID().toString(),

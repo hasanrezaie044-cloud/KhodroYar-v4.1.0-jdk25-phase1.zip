@@ -39,7 +39,8 @@ class FastOcrClientTest {
         assertEquals("Bearer fok_live_test", create.headers["Authorization"])
         assertFalse(create.headers["Idempotency-Key"].isNullOrBlank())
         val createBody = String(create.body!!)
-        assertTrue(createBody.contains("\"size_bytes\"") && createBody.contains("\"sha256\"") && createBody.contains("p1.pdf"))
+        assertTrue(createBody.contains("\"size_bytes\"") && createBody.contains("p1.pdf"))
+        assertFalse("sha256 must not be sent (server rejects it)", createBody.contains("sha256"))
         val upload = requests[1]
         assertEquals("PUT", upload.method)
         assertTrue(upload.url.contains("s3.amazonaws.com"))
