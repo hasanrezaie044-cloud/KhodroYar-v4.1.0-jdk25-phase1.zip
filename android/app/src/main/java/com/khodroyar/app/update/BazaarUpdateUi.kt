@@ -19,6 +19,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.testTagsAsResourceId
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
@@ -38,9 +40,10 @@ fun BazaarUpdatePrompt(vm: BazaarUpdateViewModel = viewModel()) {
     }
 }
 
+@OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
 @Composable
 fun BazaarUpdateDialog(onLater: () -> Unit, onUpdate: () -> Unit, failed: Boolean = false) {
-    AlertDialog(onDismissRequest = onLater, modifier = Modifier.testTag("bazaar-update-dialog"),
+    AlertDialog(onDismissRequest = onLater, modifier = Modifier.semantics { testTagsAsResourceId = true }.testTag("bazaar-update-dialog"),
         title = { Text("به‌روزرسانی خودرویار") },
         text = { Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text("نسخهٔ جدید خودرویار در بازار منتشر شده است. دانلود و نصب از طریق خودِ بازار انجام می‌شود؛ اطلاعات شما حفظ می‌شود.")

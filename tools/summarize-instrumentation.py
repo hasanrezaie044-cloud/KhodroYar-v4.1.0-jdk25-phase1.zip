@@ -11,7 +11,7 @@ import sys
 import xml.etree.ElementTree as ET
 
 CLASS = 'com.khodroyar.app.ui.ReleaseApkSmokeTest'
-TEST = 'signedMinifiedApkLaunchesAndReadsPersianReportWithRadiosDisabled'
+TEST = 'signedOnlineOnlyReviewAndBazaarIpcDoNotNeedAnOfflineOcrEngine'
 
 
 def analyze(text):

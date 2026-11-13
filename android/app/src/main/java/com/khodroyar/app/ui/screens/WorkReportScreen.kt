@@ -24,6 +24,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.testTagsAsResourceId
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextDirection
 import androidx.compose.ui.unit.dp
@@ -264,10 +266,13 @@ private fun PageImage(documents: ReportDocuments, page: ReportPage, modifier: Mo
     if (image != null) Image(image.asImageBitmap(), "اصل صفحهٔ گزارش", modifier, contentScale = ContentScale.Fit)
     else Box(modifier, contentAlignment = Alignment.Center) { if (failure) Text("پیش‌نمایش قابل خواندن نیست") else CircularProgressIndicator(Modifier.size(24.dp)) }
 }
+@OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
 @Composable
 private fun FullReportDialog(onClose: () -> Unit, title: String, content: @Composable ColumnScope.() -> Unit) {
     Dialog(onDismissRequest = onClose, properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
-        Surface(Modifier.fillMaxSize()) {
+        // A dialog is a separate accessibility root, not a descendant of the
+        // activity's ID-exporting semantics node.
+        Surface(Modifier.fillMaxSize().semantics { testTagsAsResourceId = true }) {
             Column(Modifier.fillMaxSize().safeDrawingPadding().imePadding()) {
                 Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
                     Text(title, Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
@@ -313,7 +318,7 @@ private fun appServiceText(service: AppWorkService): String =
 private fun FastOcrAssistDialog(vm: WorkReportViewModel, close: () -> Unit) {
     var keyDraft by remember { mutableStateOf("") }
     FullReportDialog(close, "خواندن آنلاین صفحه‌ها با FastOCR") {
-        Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()).padding(16.dp).testTag("report-online-consent-list"), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Text("خواندن تصویر فقط آنلاین است؛ بدون تأیید صریح این پنجره هیچ سندی ارسال نمی‌شود.", style = MaterialTheme.typography.bodySmall)
             Text("در صورت تأیید، تصویرِ ${vm.pages.size} صفحه (هرکدام حداکثر ${FastOcrClient.MAX_IMAGE_BYTES / 1_000_000} مگابایت PDF) در هر بار تأیید به api.fastocr.org ارسال می‌شود. اصل سند و متن پاسخ فقط در پیش‌نویس خصوصی همین گوشی می‌ماند؛ سیاست نگهداری سرویس مستقل است. این سرویس متعلق به برنامه نیست؛ فقط با کلید خودِ شما و به حساب خودِ شماست.", style = MaterialTheme.typography.bodySmall)
             if (vm.fastOcrKeySaved) {

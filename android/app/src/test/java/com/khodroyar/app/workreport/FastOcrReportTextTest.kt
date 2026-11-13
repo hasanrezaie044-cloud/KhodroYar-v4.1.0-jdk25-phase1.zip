@@ -171,6 +171,24 @@ class FastOcrReportTextTest {
         assertFalse(rows[1].hoursBlank)
     }
 
+    @Test fun explicitlyPrintedZeroHoursAreKnownInBothDirectionsNotBlank() {
+        for (text in listOf("7 1405/05/10 شهر الف شهر ب 40 0", "700 . . 0 40 شهر ب شهر الف 1405/05/10 7")) {
+            val row = FastOcrReportText.parsePage("p", 1, text).single()
+            assertEquals("40", row.km)
+            assertEquals("0", row.hours)
+            assertFalse(row.hoursBlank)
+            assertTrue(row.validated() != null)
+        }
+    }
+
+    @Test fun aFarZeroBeyondABlankHoursCellIsNotAZeroHourService() {
+        for (text in listOf("7 1405/05/10 شهر الف شهر ب 40 . . 0", "0 . . 40 شهر ب شهر الف 1405/05/10 7")) {
+            val row = FastOcrReportText.parsePage("p", 1, text).single()
+            assertEquals("", row.hours)
+            assertTrue(row.hoursBlank)
+        }
+    }
+
     @Test fun dotHourDoesNotBecomeASmallSerialNumber() {
         val row = FastOcrReportText.parsePage("p1", 1, "1 1405/05/02 شهر الف شهر ب 140 . . . . 7").single()
         assertEquals("140", row.km)

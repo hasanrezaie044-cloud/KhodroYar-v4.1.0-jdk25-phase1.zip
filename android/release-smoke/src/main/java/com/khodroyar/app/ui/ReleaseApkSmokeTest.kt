@@ -133,7 +133,7 @@ class ReleaseApkSmokeTest {
             device.pressBack()
             find(By.text("شروع مسیر")).click()
             stage("offline profile saved")
-            tagged("bazaar-update-dialog")
+            find(By.text("به‌روزرسانی خودرویار"))
             // An actual explicit-package Binder call must have supplied a newer
             // code before the production app can show this entry prompt.
             tagged("bazaar-update-now").click()
@@ -154,7 +154,7 @@ class ReleaseApkSmokeTest {
             device.waitForIdle(2000)
             device.findObject(By.res(Pattern.compile(".*:id/action_menu_select")))?.click()
             scrollTo(By.res("report-online-assist"), "work-report-list").click()
-            tagged("report-fastocr-host")
+            scrollTo(By.res("report-fastocr-host"), "report-online-consent-list")
             assertFalse("No API key, no consent to upload", tagged("report-online-send").isEnabled)
             tagged("report-online-cancel").click()
             stage("FastOCR destination/explicit consent shown, upload cancelled; no live provider invoked")

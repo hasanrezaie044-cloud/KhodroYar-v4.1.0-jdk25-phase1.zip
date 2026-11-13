@@ -111,7 +111,15 @@ object FastOcrReportText {
         val km = tokens.filter { PersianInput.decimal(it.value)?.let { n -> n >= BigDecimal(40) && n <= BigDecimal(3000) } == true }
             .minByOrNull(::distance)
         val hours = tokens.filter { it !== km }
-            .filter { PersianInput.hours(it.value)?.let { h -> h > BigDecimal.ZERO && h <= BigDecimal(24) } == true }
+            .filter { token ->
+                PersianInput.hours(token.value)?.let { h ->
+                    h <= BigDecimal(24) && (h > BigDecimal.ZERO || (h == BigDecimal.ZERO && km != null &&
+                        // An explicitly printed zero directly next to the km cell
+                        // is a known value. A blank/dot or a far serial zero is NOT.
+                        (if (token.end <= km.start) win.substring(token.end, km.start)
+                         else if (km.end <= token.start) win.substring(km.end, token.start) else "not adjacent").isBlank()))
+                } == true
+            }
             .filter { t ->
                 // A dot/dash between km and a later number means the HOURS cell
                 // is blank; a small serial beyond those cells is not an hour.
