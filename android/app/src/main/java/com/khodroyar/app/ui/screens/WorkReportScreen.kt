@@ -47,7 +47,6 @@ fun WorkReportScreen(vm: WorkReportViewModel = viewModel()) {
     var pageAction by remember { mutableStateOf<(() -> Unit)?>(null) }
     var showComparison by remember { mutableStateOf(false) }
     var onlineConsent by remember { mutableStateOf(false) }
-    var endpointDraft by remember(vm.onlineEndpoint) { mutableStateOf(vm.onlineEndpoint) }
     val horizontal = rememberScrollState()
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
         if (uris.isNotEmpty()) vm.importDocuments(uris)
@@ -104,9 +103,9 @@ fun WorkReportScreen(vm: WorkReportViewModel = viewModel()) {
                 OutlinedButton(onClick = { changePages { vm.recognize() } }, enabled = !vm.busy, modifier = Modifier.fillMaxWidth().testTag("report-ocr")) {
                     Icon(Icons.Outlined.DocumentScanner, null); Spacer(Modifier.width(8.dp)); Text(if (vm.rows.isEmpty()) "خواندن آفلاین صفحه‌ها" else "خواندن دوباره (بازنشانی ویرایش‌ها)")
                 }
-                OutlinedButton(onClick = { onlineConsent = true }, enabled = !vm.busy && vm.pages.size in 1..OnlineReportAssist.MAX_PAGES_PER_SEND,
+                OutlinedButton(onClick = { onlineConsent = true }, enabled = !vm.busy && vm.pages.size in 1..10,
                     modifier = Modifier.fillMaxWidth().testTag("report-online-assist")) {
-                    Icon(Icons.Outlined.CloudUpload, null); Spacer(Modifier.width(8.dp)); Text("پیش‌پر اختیاری آنلاین (تصاویر به سرویس شما فرستاده می‌شود)")
+                    Icon(Icons.Outlined.CloudUpload, null); Spacer(Modifier.width(8.dp)); Text("پیش‌پر اختیاری آنلاین با FastOCR (تصاویر به api.fastocr.org فرستاده می‌شود)")
                 }
             }
             if (vm.recognized.isNotEmpty()) item {
@@ -166,7 +165,7 @@ fun WorkReportScreen(vm: WorkReportViewModel = viewModel()) {
         confirmLabel = "پاک کردن", destructive = true, onConfirm = { confirmReset = false; vm.reset() }, onDismiss = { confirmReset = false })
     pageAction?.let { action -> ConfirmDialog("بازنشانی جدول OCR", "تغییر صفحه‌ها یا خواندن دوباره، ویرایش‌های جدول فعلی را پاک می‌کند. سوابق اصلی برنامه تغییر نمی‌کنند.",
         confirmLabel = "ادامه", onConfirm = { pageAction = null; action() }, onDismiss = { pageAction = null }) }
-    if (onlineConsent) OnlineAssistDialog(vm, endpointDraft, onDraft = { endpointDraft = it }) { onlineConsent = false }
+    if (onlineConsent) FastOcrAssistDialog(vm) { onlineConsent = false }
     if (showComparison) {
         val partial = vm.sparseComparison
         if (partial != null) SparseHoursComparisonDialog(partial, onLink = { company, app -> vm.link(company, app); showComparison = false }) { showComparison = false }
@@ -271,26 +270,37 @@ private fun appServiceText(service: AppWorkService): String =
         (if (service.startTime.isNotBlank() || service.endTime.isNotBlank()) " · ${service.startTime.ifBlank { "—" }} تا ${service.endTime.ifBlank { "—" }}" else "") +
         " · شناسه ${service.id.take(8)}" + (if (service.requestNumber.isNotBlank()) " · درخواست ${service.requestNumber}" else "")
 
-/** Explicit-consent optional online assist; offline remains the default everywhere. */
+/** Explicit-consent optional online assist via FastOCR; offline remains the default everywhere. */
 @Composable
-private fun OnlineAssistDialog(vm: WorkReportViewModel, endpointDraft: String, onDraft: (String) -> Unit, close: () -> Unit) {
-    val host = OnlineReportAssist.hostOf(endpointDraft)
-    FullReportDialog(close, "پیش‌پر اختیاری آنلاین صفحه‌ها") {
+private fun FastOcrAssistDialog(vm: WorkReportViewModel, close: () -> Unit) {
+    var keyDraft by remember { mutableStateOf("") }
+    FullReportDialog(close, "پیش‌پر اختیاری آنلاین صفحه‌ها با FastOCR") {
         Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Text("پردازش عادی این صفحه کاملاً آفلاین است و همین‌طور می‌ماند. این دکمه فقط با تأیید صریح شما فعال می‌شود.", style = MaterialTheme.typography.bodySmall)
-            Text("در صورت تأیید، تصویرِ ${vm.pages.size} صفحه (هرکدام حداکثر ${OnlineReportAssist.MAX_BYTES_PER_PAGE / 1000} کیلوبایت JPEG) فقط یک‌بار و فقط برای همین دوره به نشانی زیر ارسال می‌شود و در برنامه نگه داشته نمی‌شود:", style = MaterialTheme.typography.bodySmall)
-            OutlinedTextField(endpointDraft, onDraft, label = { Text("نشانی HTTPS سرویس OCR شما") }, singleLine = true,
-                modifier = Modifier.fillMaxWidth().testTag("report-online-url"), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri))
-            if (endpointDraft.isNotBlank()) Text(if (host != null) "گیرندهٔ تصاویر: $host" else "نشانی باید با https شروع شود و نام‌کاربری نداشته باشد.",
-                color = if (host == null) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelLarge)
-            Text("پاسخ سرویس فقط جدول بازبینی را پیش‌پر می‌کند: هیچ مقداری خودکار صفر، ذخیره یا مقایسه نمی‌شود، خانه‌های خالی/نقطه/خط‌تیره دست‌نخورده می‌مانند و هر ردیف با همان ویرایشگر دستی قابل اصلاح است.", style = MaterialTheme.typography.bodySmall)
-            Text("اسناد ممکن است نام و مبالغ محرمانه داشته باشند؛ حفاظت و حذف آن‌ها در سرویس گیرنده بر عهدهٔ شماست. قالب پاسخ موردانتظار در docs/ONLINE-OCR-ASSIST.md آمده است.", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+            Text("در صورت تأیید، تصویرِ ${vm.pages.size} صفحه (هرکدام حداکثر ${FastOcrClient.MAX_IMAGE_BYTES / 1_000_000} مگابایت JPEG) فقط یک‌بار و فقط برای همین دوره به api.fastocr.org ارسال می‌شود و در برنامه نگه داشته نمی‌شود. این سرویس متعلق به برنامه نیست؛ فقط با کلید خودِ شما و به حساب خودِ شماست.", style = MaterialTheme.typography.bodySmall)
+            if (vm.fastOcrKeySaved) {
+                Text("کلید API شما از قبل رمزنگاری‌شده ذخیره است؛ برای امنیت دوباره نمایش داده نمی‌شود. حذف یا عوض کردنش از دکمهٔ زیر ممکن است.", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.bodySmall)
+                TextButton(onClick = { keyDraft = ""; vm.clearFastOcrKey() }) { Text("حذف کلید ذخیره‌شده") }
+            } else {
+                Text("کلید API خود را از حساب FastOCR (شروع با fok_live_) بسازید و این‌جا وارد کنید؛ فقط یک‌بار لازم است:", style = MaterialTheme.typography.bodySmall)
+                OutlinedTextField(keyDraft, { keyDraft = it.trim() }, label = { Text("کلید API شما (fok_live_…)") }, singleLine = true,
+                    modifier = Modifier.fillMaxWidth().testTag("report-fastocr-key"),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Ascii),
+                    textStyle = LocalTextStyle.current.copy(textDirection = TextDirection.Ltr))
+                Text("کلید فقط روی همین گوشی و رمزنگاری‌شده نگه داشته می‌شود و در هیچ گزارش/صادراتی درج نمی‌شود.", style = MaterialTheme.typography.labelSmall)
+            }
+            Text("گیرندهٔ تصاویر: api.fastocr.org", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelLarge)
+            Text("متن دریافتی فقط جدول بازبینی را پیش‌پر می‌کند: هیچ مقداری خودکار صفر، ذخیره یا به سوابق اضافه نمی‌شود، خانه‌های خالی/نقطه/خط‌تیره دست‌نخورده می‌مانند و هر ردیف با همان ویرایشگر دستی قابل اصلاح است.", style = MaterialTheme.typography.bodySmall)
+            Text("سند ممکن است نام و مبالغ محرمانه داشته باشد؛ ارسال به یک سرویس بیرونی و حذف دائمی آن (حداکثر ۳۰ روز نزد آن‌ها) مسئولیت و توافق خودتان است.", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
         }
         Column(Modifier.fillMaxWidth().padding(12.dp)) {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(onClick = { if (vm.saveOnlineEndpoint(endpointDraft)) { vm.recognizeOnline(endpointDraft); close() } },
-                    enabled = host != null && vm.pages.isNotEmpty() && !vm.busy,
-                    modifier = Modifier.weight(1f).heightIn(min = 48.dp).testTag("report-online-send")) { Text("ارسال به ${host ?: "…"} و پیش‌پر کردن") }
+                val keyReady = vm.fastOcrKeySaved || keyDraft.startsWith("fok_")
+                Button(onClick = {
+                    val ok = if (vm.fastOcrKeySaved) true else vm.saveFastOcrKey(keyDraft)
+                    if (ok) { vm.recognizeFastOcr(); close() }
+                }, enabled = keyReady && vm.pages.isNotEmpty() && !vm.busy,
+                    modifier = Modifier.weight(1f).heightIn(min = 48.dp).testTag("report-online-send")) { Text("ارسال به api.fastocr.org و پیش‌پر کردن") }
                 OutlinedButton(onClick = close, modifier = Modifier.weight(1f).heightIn(min = 48.dp)) { Text("انصراف؛ هیچ چیز ارسال نشود") }
             }
         }

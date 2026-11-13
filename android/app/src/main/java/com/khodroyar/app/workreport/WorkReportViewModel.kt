@@ -45,11 +45,12 @@ class WorkReportViewModel(app: Application) : AndroidViewModel(app) {
     var sparseComparison by mutableStateOf<SparseHoursResult?>(null); private set
     var reviewConfirmed by mutableStateOf(false); private set
     var sparse by mutableStateOf(true)
-    /** Optional, user-consented online assist endpoint (host-only provenance). */
-    var onlineEndpoint by mutableStateOf(""); private set
+    private val fastOcrKeys = com.khodroyar.app.ai.FastOcrApiKeyStore(app)
+    /** Whether the user once stored their own FastOCR key (encrypted at rest). */
+    var fastOcrKeySaved by mutableStateOf(false); private set
 
     init {
-        onlineEndpoint = app.getSharedPreferences(OnlineReportAssist.PREFS, Context.MODE_PRIVATE).getString("endpoint", "").orEmpty()
+        fastOcrKeySaved = fastOcrKeys.key() != null
         viewModelScope.launch {
             try {
                 withContext(Dispatchers.IO) { draft.load() }?.let { saved ->
@@ -118,42 +119,65 @@ class WorkReportViewModel(app: Application) : AndroidViewModel(app) {
         else if (rows.isEmpty()) error = "ردیف قابل استخراج پیدا نشد؛ چرخش، کیفیت تصویر یا حالت چیدمان را بررسی کنید."
     }
 
-    fun saveOnlineEndpoint(value: String): Boolean {
-        val trimmed = value.trim()
-        val host = OnlineReportAssist.hostOf(trimmed) ?: return false
-        if (!busy) {
-            onlineEndpoint = trimmed
-            getApplication<Application>().getSharedPreferences(OnlineReportAssist.PREFS, Context.MODE_PRIVATE).edit().putString("endpoint", trimmed).apply()
-        }
-        return host.isNotBlank() && !busy
+    /** One-time key entry; stored encrypted. Returns true when the key was valid and saved. */
+    fun saveFastOcrKey(raw: String): Boolean {
+        if (busy) return false
+        val saved = fastOcrKeys.save(raw) ?: return false
+        fastOcrKeySaved = true
+        return saved.isNotBlank()
     }
+    fun clearFastOcrKey() { if (!busy) { fastOcrKeys.clear(); fastOcrKeySaved = false } }
 
     /**
-     * Explicit-consent online assist. Pages are rendered at the same bounded
-     * plan, preprocessed exactly like the offline path, encoded once and posted
-     * to the user-typed HTTPS endpoint; every resulting cell still passes the
-     * unchanged review/strict-comparison gates and no online value is forced.
+     * Explicit-consent online assist via FastOCR (api.fastocr.org), using the
+     * user's own API key. Pages are rendered at the same bounded plan as the
+     * offline path, uploaded ONCE per explicit tap, and the plain text answer is
+     * parsed conservatively into the SAME editable review table: ambiguous or
+     * unassignable fields stay blank, hours are never zeroed, counts/km/identity
+     * comparisons stay advisory and strict ServiceWorkComparison is untouched.
+     * Nothing is stored server-side by us and the key never leaves the device
+     * except to api.fastocr.org over HTTPS.
      */
-    fun recognizeOnline(url: String) = work {
-        val host = OnlineReportAssist.hostOf(url) ?: error("نشانی باید یک میزبان HTTPS معتبر و بدون نام‌کاربری باشد.")
-        require(pages.isNotEmpty()) { "ابتدا عکس/PDF انتخاب کنید." }
-        require(pages.size <= OnlineReportAssist.MAX_PAGES_PER_SEND) { "برای ارسال آنلاین حداکثر ${OnlineReportAssist.MAX_PAGES_PER_SEND} صفحه در هر بار." }
-        val sender = OnlineReportAssist.Sender()
-        val result = engine.recognize(pages, sparse, null, { msg -> progress.value = msg }) { pageId, bitmap ->
-            // The engine keeps the page for offline reading; do NOT recycle it here.
-            val bytes = OnlineReportAssist.jpeg(bitmap)
-            val body = OnlineReportAssist.requestBody(listOf(OnlineReportAssist.preparePage(pageId, bytes, bitmap.width * bitmap.height)))
-            sender.post(url, body)
+    fun recognizeFastOcr() = work {
+        val key = fastOcrKeys.key() ?: error("ابتدا کلید API خود را وارد کنید.")
+        progress.value = "آماده‌سازی تصاویر برای ارسال یک‌باره…"
+        require(pages.isNotEmpty()) { "ابتدا صفحه‌های گزارش را انتخاب کنید." }
+        require(pages.size <= 10) { "در هر ارسال آنلاین حداکثر ۱۰ صفحه." }
+        val client = FastOcrClient()
+        val merged = mutableListOf<ReportRow>()
+        var truncatedPages = 0
+        val named = pages.withIndex().associate { (i, p) -> p.id to "PAGE-${i + 1}" }
+        for ((i, page) in pages.withIndex()) {
+            val bitmap = withContext(Dispatchers.IO) { documents.render(page, 2_400_000, 2000) }
+            val jpeg = try { OnlineReportAssist.jpeg(bitmap) } finally { bitmap.recycle() }
+            progress.value = "ارسال صفحهٔ ${i + 1} از ${pages.size} به api.fastocr.org…"
+            val (text, status) = client.ocrPageJpeg(key, "page-${i + 1}.jpg", jpeg) { if (job?.isActive != true) throw CancellationException() }
+            if (status.truncated || status.pagesProcessed in 0 until status.pagesTotal) truncatedPages++
+            val rows = withContext(Dispatchers.Default) { FastOcrReportText.parsePage(page.id, i + 1, text) }
+            merged += rows.map { it.copy(raw = "[${named[page.id]}] ${it.raw}") }
         }
-        val extracted = withContext(Dispatchers.Default) { WorkReportParser.extract(result) }
-        require(extracted.size <= 10000) { "گزارش بیش از ۱۰٬۰۰۰ ردیف دارد؛ آن را تقسیم کنید." }
-        recognized = result; rows = extracted; links = emptyList(); invalidate()
-        val period = CompanyReportTemplate.period(result, extracted)
-        start = period.start; end = period.end
-        periodNote = (period.note + " · پیش‌پر اختیاری آنلاین از $host انجام شد؛ هر خانه را با اصل تصویر تطبیق دهید.").trim()
+        val extracted = merged
+        require(extracted.isNotEmpty()) { "متن دریافتی FastOCR ردیفی به‌دست نداد؛ کیفیت تصویر یا جدول را بررسی کنید. هیچ چیزی خودکار ذخیره نشد." }
+        // Rows come from FastOCR text, but the same-comparison gate requires a
+        // proven, complete offline pass over every page — that part always stays
+        // local and never sends anything anywhere.
+        progress.value = "خواندن آفلاین همان صفحه‌ها برای بازبینی و مقایسه…"
+        val offline = engine.recognize(pages, sparse, progress = { progress.value = it })
+        rows = extracted; recognized = offline; links = emptyList(); invalidate()
+        val dates = extracted.filter { it.included }.mapNotNull { PersianInput.date(it.date) }
+        val months = dates.map { it.take(7) }.distinct()
+        if (months.size == 1) {
+            val range = com.khodroyar.app.core.jalali.Jalali.monthRange(dates.first().take(4).toInt(), dates.first().takeLast(2).toInt())
+            if (dates.all { it in range.first..range.second }) { start = range.first; end = range.second }
+            else { start = dates.minOrNull().orEmpty(); end = dates.maxOrNull().orEmpty() }
+        } else { start = dates.minOrNull().orEmpty(); end = dates.maxOrNull().orEmpty() }
+        periodNote = "پیش‌پر اختیاری آنلاین از api.fastocr.org انجام شد (کلید شما، فقط یک‌بار برای این دوره). هر خانه را با اصل تصویر تطبیق دهید؛ مقادیر مبهم عمداً خالی گذاشته شده‌اند و بازه را با سند تأیید کنید."
         persist()
-        error = null
-        if (extracted.isEmpty()) error = "پاسخ آنلاین ردیفی به‌دست نداد؛ تنظیمات سرویس یا تصویر را بررسی کنید. هیچ چیزی خودکار ذخیره نشد."
+        error = when {
+            truncatedPages > 0 -> "سرویس $truncatedPages صفحه را ناقص خواند؛ آن‌ها را دستی با تصویر بازبینی کنید."
+            offline.any { it.words.isEmpty() } -> "یک یا چند صفحه در خواندن آفلاین ناخوانا بود؛ پیش از مقایسه آن را اصلاح یا صریحاً حذف و دوباره پردازش کنید."
+            else -> null
+        }
     }
     fun remap(columns: ReportColumns) = work {
         require(recognized.isNotEmpty()) { "ابتدا OCR را اجرا کنید." }
