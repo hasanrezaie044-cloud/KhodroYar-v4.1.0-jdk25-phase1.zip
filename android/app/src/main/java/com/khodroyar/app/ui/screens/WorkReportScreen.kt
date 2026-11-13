@@ -46,6 +46,8 @@ fun WorkReportScreen(vm: WorkReportViewModel = viewModel()) {
     var confirmReset by remember { mutableStateOf(false) }
     var pageAction by remember { mutableStateOf<(() -> Unit)?>(null) }
     var showComparison by remember { mutableStateOf(false) }
+    var onlineConsent by remember { mutableStateOf(false) }
+    var endpointDraft by remember(vm.onlineEndpoint) { mutableStateOf(vm.onlineEndpoint) }
     val horizontal = rememberScrollState()
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
         if (uris.isNotEmpty()) vm.importDocuments(uris)
@@ -101,6 +103,10 @@ fun WorkReportScreen(vm: WorkReportViewModel = viewModel()) {
                 SwitchRow("چیدمان جدول پراکنده", "برای جدول‌های خط‌کشی‌شده روشن؛ برای متن معمولی خاموش", vm.sparse) { if (!vm.busy) vm.sparse = it }
                 OutlinedButton(onClick = { changePages { vm.recognize() } }, enabled = !vm.busy, modifier = Modifier.fillMaxWidth().testTag("report-ocr")) {
                     Icon(Icons.Outlined.DocumentScanner, null); Spacer(Modifier.width(8.dp)); Text(if (vm.rows.isEmpty()) "خواندن آفلاین صفحه‌ها" else "خواندن دوباره (بازنشانی ویرایش‌ها)")
+                }
+                OutlinedButton(onClick = { onlineConsent = true }, enabled = !vm.busy && vm.pages.size in 1..OnlineReportAssist.MAX_PAGES_PER_SEND,
+                    modifier = Modifier.fillMaxWidth().testTag("report-online-assist")) {
+                    Icon(Icons.Outlined.CloudUpload, null); Spacer(Modifier.width(8.dp)); Text("پیش‌پر اختیاری آنلاین (تصاویر به سرویس شما فرستاده می‌شود)")
                 }
             }
             if (vm.recognized.isNotEmpty()) item {
@@ -160,6 +166,7 @@ fun WorkReportScreen(vm: WorkReportViewModel = viewModel()) {
         confirmLabel = "پاک کردن", destructive = true, onConfirm = { confirmReset = false; vm.reset() }, onDismiss = { confirmReset = false })
     pageAction?.let { action -> ConfirmDialog("بازنشانی جدول OCR", "تغییر صفحه‌ها یا خواندن دوباره، ویرایش‌های جدول فعلی را پاک می‌کند. سوابق اصلی برنامه تغییر نمی‌کنند.",
         confirmLabel = "ادامه", onConfirm = { pageAction = null; action() }, onDismiss = { pageAction = null }) }
+    if (onlineConsent) OnlineAssistDialog(vm, endpointDraft, onDraft = { endpointDraft = it }) { onlineConsent = false }
     if (showComparison) {
         val partial = vm.sparseComparison
         if (partial != null) SparseHoursComparisonDialog(partial, onLink = { company, app -> vm.link(company, app); showComparison = false }) { showComparison = false }
@@ -263,6 +270,32 @@ private fun appServiceText(service: AppWorkService): String =
         "\n${service.type} · ${service.origin} ← ${service.destination}" +
         (if (service.startTime.isNotBlank() || service.endTime.isNotBlank()) " · ${service.startTime.ifBlank { "—" }} تا ${service.endTime.ifBlank { "—" }}" else "") +
         " · شناسه ${service.id.take(8)}" + (if (service.requestNumber.isNotBlank()) " · درخواست ${service.requestNumber}" else "")
+
+/** Explicit-consent optional online assist; offline remains the default everywhere. */
+@Composable
+private fun OnlineAssistDialog(vm: WorkReportViewModel, endpointDraft: String, onDraft: (String) -> Unit, close: () -> Unit) {
+    val host = OnlineReportAssist.hostOf(endpointDraft)
+    FullReportDialog(close, "پیش‌پر اختیاری آنلاین صفحه‌ها") {
+        Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text("پردازش عادی این صفحه کاملاً آفلاین است و همین‌طور می‌ماند. این دکمه فقط با تأیید صریح شما فعال می‌شود.", style = MaterialTheme.typography.bodySmall)
+            Text("در صورت تأیید، تصویرِ ${vm.pages.size} صفحه (هرکدام حداکثر ${OnlineReportAssist.MAX_BYTES_PER_PAGE / 1000} کیلوبایت JPEG) فقط یک‌بار و فقط برای همین دوره به نشانی زیر ارسال می‌شود و در برنامه نگه داشته نمی‌شود:", style = MaterialTheme.typography.bodySmall)
+            OutlinedTextField(endpointDraft, onDraft, label = { Text("نشانی HTTPS سرویس OCR شما") }, singleLine = true,
+                modifier = Modifier.fillMaxWidth().testTag("report-online-url"), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri))
+            if (endpointDraft.isNotBlank()) Text(if (host != null) "گیرندهٔ تصاویر: $host" else "نشانی باید با https شروع شود و نام‌کاربری نداشته باشد.",
+                color = if (host == null) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelLarge)
+            Text("پاسخ سرویس فقط جدول بازبینی را پیش‌پر می‌کند: هیچ مقداری خودکار صفر، ذخیره یا مقایسه نمی‌شود، خانه‌های خالی/نقطه/خط‌تیره دست‌نخورده می‌مانند و هر ردیف با همان ویرایشگر دستی قابل اصلاح است.", style = MaterialTheme.typography.bodySmall)
+            Text("اسناد ممکن است نام و مبالغ محرمانه داشته باشند؛ حفاظت و حذف آن‌ها در سرویس گیرنده بر عهدهٔ شماست. قالب پاسخ موردانتظار در docs/ONLINE-OCR-ASSIST.md آمده است.", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+        }
+        Column(Modifier.fillMaxWidth().padding(12.dp)) {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(onClick = { if (vm.saveOnlineEndpoint(endpointDraft)) { vm.recognizeOnline(endpointDraft); close() } },
+                    enabled = host != null && vm.pages.isNotEmpty() && !vm.busy,
+                    modifier = Modifier.weight(1f).heightIn(min = 48.dp).testTag("report-online-send")) { Text("ارسال به ${host ?: "…"} و پیش‌پر کردن") }
+                OutlinedButton(onClick = close, modifier = Modifier.weight(1f).heightIn(min = 48.dp)) { Text("انصراف؛ هیچ چیز ارسال نشود") }
+            }
+        }
+    }
+}
 
 /** Full-period daily control for truly absent/unknown hours, not a second matcher. */
 @Composable

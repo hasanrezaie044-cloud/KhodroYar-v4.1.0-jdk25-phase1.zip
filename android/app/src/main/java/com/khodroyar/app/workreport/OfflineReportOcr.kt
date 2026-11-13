@@ -23,7 +23,9 @@ class OfflineReportOcr(private val context: Context) {
     // only lifecycle/stop, never recognition, so a recycled JNI pointer is not used.
     fun stop() { synchronized(activeLock) { active.forEach { it.stop() } } }
 
-    suspend fun recognize(pages: List<ReportPage>, sparse: Boolean, diagnostics: ((String) -> Unit)? = null, progress: (String) -> Unit): List<OcrPage> = withContext(Dispatchers.IO) {
+    suspend fun recognize(pages: List<ReportPage>, sparse: Boolean, diagnostics: ((String) -> Unit)? = null, progress: (String) -> Unit,
+        /** Explicit-consent online assist: VM-owned HTTPS sender; returns response JSON per page. */
+        onlineSender: (suspend (String, Bitmap) -> String)? = null): List<OcrPage> = withContext(Dispatchers.IO) {
         engineLock.withLock {
             require(pages.isNotEmpty()) { "ابتدا تصویر یا PDF انتخاب کنید." }
             val modelDirectory = installModels()
@@ -71,6 +73,14 @@ class OfflineReportOcr(private val context: Context) {
                         bitmap = ReportPagePreprocessor.prepare(bitmap, diagnostics) { coroutine.ensureActive() }
                         currentCoroutineContext().ensureActive()
                         configurePrimary("fas+ara+eng") // Generic page/header recognition is unchanged.
+                        val onlineFallback = onlineSender?.let { sender ->
+                            progress("صفحهٔ ${index + 1} · ارسال اختیاری آنلاینِ تأییدشده")
+                            val body = sender(page.id, bitmap)
+                            val words = OnlineReportAssist.parseResponse(body).firstOrNull { it.pageId == page.id }?.words.orEmpty()
+                            diagnostics?.invoke("Optional online assist page ${index + 1}: accepted ${words.size} word boxes; nothing auto-applied")
+                            if (words.isEmpty()) null else OnlineCellFallback(api, bitmap, words)
+                        }
+                        currentCoroutineContext().ensureActive()
                         coroutine.ensureActive()
                         api.pageSegMode = if (sparse) TessBaseAPI.PageSegMode.PSM_SPARSE_TEXT else TessBaseAPI.PageSegMode.PSM_AUTO
                         api.setVariable("tessedit_char_whitelist", "")
@@ -108,9 +118,9 @@ class OfflineReportOcr(private val context: Context) {
                             coroutine.ensureActive()
                             api.setImage(bitmap) // Init discards the previous page image.
                             diagnostics?.invoke("Fixed-form primary languages: ${api.initLanguagesAsString}; selected from header before cell recognition")
-                            readCompanyTable(api, ::printedEngine, bitmap, headerWords, header, diagnostics) { row, count -> progress("صفحهٔ ${index + 1} از ${pages.size} · خواندن ردیف $row از $count") }
+                            readCompanyTable(api, ::printedEngine, onlineFallback, bitmap, headerWords, header, diagnostics) { row, count -> progress("صفحهٔ ${index + 1} از ${pages.size} · خواندن ردیف $row از $count") }
                         }.orEmpty()
-                        val refined = if (company.isEmpty()) refineTable(api, ::printedEngine, bitmap, headerWords, diagnostics) else headerWords
+                        val refined = if (company.isEmpty()) refineTable(api, ::printedEngine, onlineFallback, bitmap, headerWords, diagnostics) else headerWords
                         result += OcrPage(page.id, index + 1, refined, text, company)
                     } finally { api.clear(); bitmap.recycle() }
                     require(result.sumOf { it.words.size } <= 200000) { "متن این مقایسه بیش از حد بزرگ است؛ سند را به چند بخش تقسیم کنید." }
@@ -126,7 +136,7 @@ class OfflineReportOcr(private val context: Context) {
      * numeric reader and single-line Tesseract. Conflicting strong readings stay
      * blank. This is image recognition, not substitutions or totals-based guesses.
      */
-    private suspend fun refineTable(api: TessBaseAPI, printedEngine: () -> TessBaseAPI, bitmap: Bitmap, original: List<OcrWord>, diagnostics: ((String) -> Unit)?): List<OcrWord> {
+    private suspend fun refineTable(api: TessBaseAPI, printedEngine: () -> TessBaseAPI, onlineFallback: OnlineCellFallback?, bitmap: Bitmap, original: List<OcrWord>, diagnostics: ((String) -> Unit)?): List<OcrWord> {
         val fixed = CompanyReportTemplate.header(original) != null
         val printed = if (fixed) PrintedCellOcr(printedEngine) else null
         val regions = ReportTableGeometry.regions(original)
@@ -176,15 +186,31 @@ class OfflineReportOcr(private val context: Context) {
                 pixel?.let { add(CompanyCellPolicy.Evidence(CompanyCellPolicy.Engine.GLYPH, it.text, it.confidence)) }
                 classic?.let { add(CompanyCellPolicy.Evidence(CompanyCellPolicy.Engine.CLASSIC, it.text, it.confidence)) }
             }, strongViewConflict = classic?.conflict == true) else null
-            val conflict = decision?.conflict ?: (pixel != null && tesseract != null && confidence >= 85 && canonical(region.field, pixel.text) != tesseract)
-            diagnostics?.invoke("Cell $region: fixed=$fixed; Tesseract='$raw' ($confidence); pixels=$pixel; printed=$classic; printedFooter=$printedFooter; strongConflict=$conflict")
+            val online = if ((decision == null || decision.text.isEmpty() || decision.conflict) && !blankHours && !marker)
+                onlineFallback?.read(GridRect(region.left, region.top, region.right, region.bottom), region.field != NumericField.DATE,
+                    if (region.field == NumericField.DATE) "" else digits + ".٫,٬")?.takeIf { canonical(region.field, it.first) != null } else null
+            // On the fixed form the optional online reading joins the SAME evidence
+            // policy: it can complete a still-unknown cell but never rescues or
+            // overrides a genuine strong conflict.
+            val decisionFinal = if (fixed && online != null) CompanyCellPolicy.decide(region.field, buildList {
+                add(CompanyCellPolicy.Evidence(CompanyCellPolicy.Engine.TESSERACT, raw, confidence))
+                pixel?.let { add(CompanyCellPolicy.Evidence(CompanyCellPolicy.Engine.GLYPH, it.text, it.confidence)) }
+                classic?.let { add(CompanyCellPolicy.Evidence(CompanyCellPolicy.Engine.CLASSIC, it.text, it.confidence)) }
+                if (online != null) add(CompanyCellPolicy.Evidence(CompanyCellPolicy.Engine.ONLINE, online.first, online.second))
+            }, strongViewConflict = classic?.conflict == true) else decision
+            val conflict = decisionFinal?.conflict ?: (pixel != null && tesseract != null && confidence >= 85 && canonical(region.field, pixel.text) != tesseract)
+            diagnostics?.invoke("Cell $region: fixed=$fixed; Tesseract='$raw' ($confidence); pixels=$pixel; printed=$classic; printedFooter=$printedFooter; online=$online; strongConflict=$conflict")
+            val onlineValue = online?.let { canonical(region.field, it.first) }
             val value = when {
                 conflict || blankHours || marker -> null
-                fixed && decision != null && decision.text.isNotEmpty() -> decision.text to decision.confidence
+                fixed && decisionFinal != null && decisionFinal.text.isNotEmpty() -> decisionFinal.text to decisionFinal.confidence
                 !fixed && pixel != null -> pixel.text to pixel.confidence
                 printedFooter != null -> printedFooter.text to printedFooter.confidence
                 footer && confidence >= 70 -> raw to confidence
                 !fixed && tesseract != null && confidence >= 85 -> raw to confidence
+                // Optional online words are strictly last: they never displace a
+                // local reading, blank cell, dash marker or strong conflict.
+                onlineValue != null && online!!.second >= 85f -> onlineValue to online.second
                 else -> null
             }
             val inside = original.filter { it.x > region.left && it.x < region.right && it.y > region.top && it.y < region.bottom }
@@ -204,7 +230,7 @@ class OfflineReportOcr(private val context: Context) {
     }
 
     /** Read every ruled row, including one whose date/numbers were entirely missed by sparse OCR. */
-    private suspend fun readCompanyTable(api: TessBaseAPI, printedEngine: () -> TessBaseAPI, bitmap: Bitmap, original: List<OcrWord>, header: CompanyReportTemplate.Header,
+    private suspend fun readCompanyTable(api: TessBaseAPI, printedEngine: () -> TessBaseAPI, onlineFallback: OnlineCellFallback?, bitmap: Bitmap, original: List<OcrWord>, header: CompanyReportTemplate.Header,
         diagnostics: ((String) -> Unit)?, progress: (Int, Int) -> Unit): List<CompanyOcrRow> {
         val coroutine = currentCoroutineContext()
         val grid = ReportImageGrid.ink(bitmap) { coroutine.ensureActive() }.companyRows(header) { coroutine.ensureActive() }
@@ -276,12 +302,21 @@ class OfflineReportOcr(private val context: Context) {
                 // can now be used when no stronger evidence contradicts it.
                 val classic = if (pixel == null && !(tess != null && raw.second >= 85f))
                     printed.read(bitmap, region, diagnostics) { coroutine.ensureActive() } else null
-                val evidence = buildList {
+                val evidence = mutableListOf<CompanyCellPolicy.Evidence>().apply {
                     add(CompanyCellPolicy.Evidence(CompanyCellPolicy.Engine.TESSERACT, raw.first, raw.second))
                     pixel?.let { add(CompanyCellPolicy.Evidence(CompanyCellPolicy.Engine.GLYPH, it.text, it.confidence)) }
                     classic?.let { add(CompanyCellPolicy.Evidence(CompanyCellPolicy.Engine.CLASSIC, it.text, it.confidence)) }
                 }
                 var decision = CompanyCellPolicy.decide(region.field, evidence, strongViewConflict = classic?.conflict == true)
+                if (decision.text.isEmpty() || decision.conflict) {
+                    val online = onlineFallback?.read(GridRect(region.left, region.top, region.right, region.bottom), region.field != NumericField.DATE,
+                        if (region.field == NumericField.DATE) "" else "0123456789۰۱۲۳۴۵۶۷۸۹٠١٢٣٤٥٦٧٨٩.٫,٬")
+                    if (online != null && canonical(region.field, online.first) != null) {
+                        evidence.add(CompanyCellPolicy.Evidence(CompanyCellPolicy.Engine.ONLINE, online.first, online.second))
+                        decision = CompanyCellPolicy.decide(region.field, evidence, strongViewConflict = classic?.conflict == true)
+                        diagnostics?.invoke("Fixed-form ${region.field}: optional online reading used for the still-unknown cell")
+                    }
+                }
                 val marker = region.field == NumericField.HOURS && raw.first.trim() in listOf(".", "-")
                 if (marker) {
                     // A printed dot/dash is not evidence of numeric zero. If
@@ -316,6 +351,29 @@ class OfflineReportOcr(private val context: Context) {
         val pixels = IntArray(w * h)
         bitmap.getPixels(pixels, 0, w, l, t, w, h)
         return PrintedCellRaster.blank(PrintedCellRaster.grey(w, h, pixels))
+    }
+
+    /**
+     * Words returned by the explicitly-consented online service for THIS page.
+     * Intersecting word boxes are re-read with the same bounds/cancellation-safe
+     * cells; falling back to a single cell crop on the shared engine never sends
+     * anything itself and never overrides a strong conflict or a blank cell.
+     */
+    private class OnlineCellFallback(private val api: TessBaseAPI, private val bitmap: Bitmap, private val words: List<OcrWord>) {
+        fun read(rect: GridRect, singleToken: Boolean, whitelist: String): Pair<String, Float>? {
+            val inside = words.filter { it.x > rect.left && it.x < rect.right && it.y > rect.top && it.y < rect.bottom }
+            if (inside.isNotEmpty()) return inside.sortedByDescending { it.x }.joinToString("") { it.text } to inside.minOf { it.confidence }
+            val l = (rect.left * bitmap.width).toInt().coerceIn(0, bitmap.width - 1)
+            val t = (rect.top * bitmap.height).toInt().coerceIn(0, bitmap.height - 1)
+            val w = ((rect.right * bitmap.width).toInt() - l).coerceIn(1, bitmap.width - l)
+            val h = ((rect.bottom * bitmap.height).toInt() - t).coerceIn(1, bitmap.height - t)
+            api.setImage(bitmap) // Same preprocessed page the offline path already used.
+            api.pageSegMode = if (singleToken) TessBaseAPI.PageSegMode.PSM_SINGLE_WORD else TessBaseAPI.PageSegMode.PSM_SINGLE_LINE
+            api.setVariable("tessedit_char_whitelist", whitelist)
+            api.setRectangle(l, t, w, h)
+            val text = api.getUTF8Text().orEmpty().trim()
+            return (text to api.meanConfidence().toFloat()).takeIf { text.isNotEmpty() }
+        }
     }
 
     internal fun installModels(): File {

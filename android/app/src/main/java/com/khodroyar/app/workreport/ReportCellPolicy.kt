@@ -22,7 +22,7 @@ object ReportHoursText {
  * Scores are never increased by agreement, formatting or trying extra views.
  */
 internal object CompanyCellPolicy {
-    enum class Engine { GLYPH, TESSERACT, CLASSIC }
+    enum class Engine { GLYPH, TESSERACT, CLASSIC, ONLINE }
     data class Evidence(val engine: Engine, val raw: String, val confidence: Float)
     data class Decision(val text: String = "", val confidence: Float = 0f, val conflict: Boolean = false)
 
@@ -38,7 +38,7 @@ internal object CompanyCellPolicy {
         require(evidence.map { it.engine }.distinct().size == evidence.size)
         if (strongViewConflict) return Decision(conflict = true)
         val accepted = evidence.mapNotNull { e ->
-            val minimum = if (e.engine == Engine.TESSERACT) 75f else if (e.engine == Engine.CLASSIC) 85f else 70f
+            val minimum = if (e.engine == Engine.TESSERACT) 75f else if (e.engine == Engine.GLYPH) 70f else 85f
             if (!e.confidence.isFinite() || e.confidence !in minimum..100f) null
             else canonical(field, e.raw)?.let { value -> e to value }
         }

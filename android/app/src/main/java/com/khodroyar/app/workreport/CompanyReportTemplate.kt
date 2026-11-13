@@ -78,7 +78,16 @@ object CompanyReportTemplate {
         return null
     }
 
-    fun isGrouped(raw: String): Boolean = ReportLabels.has(raw, "تجمیع", "نیمه", "کارکرد دوره", "کارکرد ماه", "جمع سرویس")
+    fun isGrouped(raw: String): Boolean {
+        // Whole-token matching (both directions for bidi-misordered words): a
+        // destination like «فولاد و پالبکس» must never match «نیمه»/«کارکرد»
+        // fragments inside ordinary words, while «کارکرد نیمه اول» still counts.
+        val words = ReportLabels.normal(raw).split(' ').filter { it.isNotBlank() }
+        val tokens = words.flatMap { listOf(it, it.reversed()) }.toSet()
+        if (tokens.any { it == "تجمیع" || it == "نیمه" }) return true
+        return (tokens.contains("کارکرد") && (tokens.contains("دوره") || tokens.contains("ماه"))) ||
+            (tokens.contains("جمع") && tokens.contains("سرویس"))
+    }
 
     fun extract(page: OcrPage): List<ReportRow>? {
         val header = header(page.words)

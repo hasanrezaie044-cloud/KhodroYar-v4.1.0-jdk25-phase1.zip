@@ -208,7 +208,7 @@ class NativeEnhancementTest {
         automation.executeShellCommand("svc wifi disable").close(); automation.executeShellCommand("svc data disable").close()
         try {
             val diagnostics = mutableListOf<String>()
-            val recognized = runBlocking { OfflineReportOcr(context).recognize(imported.take(2), true, diagnostics = { diagnostics += it }) {} }
+            val recognized = runBlocking { OfflineReportOcr(context).recognize(imported.take(2), true, diagnostics = { diagnostics += it }, progress = {}) }
             val rows = WorkReportParser.extract(recognized)
             println("Synthetic offline OCR text: ${recognized.map { it.text }}")
             println("Synthetic OCR rows: $rows")
@@ -276,12 +276,12 @@ class NativeEnhancementTest {
             val ready = kotlinx.coroutines.CompletableDeferred<Unit>()
             val proceed = java.util.concurrent.CountDownLatch(1)
             val job = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.currentCoroutineContext()).launch(Dispatchers.IO) {
-                engine.recognize(pages, true) {
+                engine.recognize(pages, true, progress = {
                     if (it.startsWith("صفحهٔ")) {
                         ready.complete(Unit)
                         check(proceed.await(30, java.util.concurrent.TimeUnit.SECONDS))
                     }
-                }
+                })
             }
             try {
                 kotlinx.coroutines.withTimeout(30000) { ready.await() } // The real bundled JNI engine is initialised.

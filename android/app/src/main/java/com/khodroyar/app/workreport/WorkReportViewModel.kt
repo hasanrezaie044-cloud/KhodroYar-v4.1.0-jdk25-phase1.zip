@@ -1,6 +1,7 @@
 package com.khodroyar.app.workreport
 
 import android.app.Application
+import android.content.Context
 import android.net.Uri
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -44,8 +45,11 @@ class WorkReportViewModel(app: Application) : AndroidViewModel(app) {
     var sparseComparison by mutableStateOf<SparseHoursResult?>(null); private set
     var reviewConfirmed by mutableStateOf(false); private set
     var sparse by mutableStateOf(true)
+    /** Optional, user-consented online assist endpoint (host-only provenance). */
+    var onlineEndpoint by mutableStateOf(""); private set
 
     init {
+        onlineEndpoint = app.getSharedPreferences(OnlineReportAssist.PREFS, Context.MODE_PRIVATE).getString("endpoint", "").orEmpty()
         viewModelScope.launch {
             try {
                 withContext(Dispatchers.IO) { draft.load() }?.let { saved ->
@@ -104,7 +108,7 @@ class WorkReportViewModel(app: Application) : AndroidViewModel(app) {
         pages = emptyList(); recognized = emptyList(); rows = emptyList(); links = emptyList(); periodNote = ""; start = ""; end = ""; invalidate()
     }
     fun recognize() = work {
-        val result = engine.recognize(pages, sparse) { progress.value = it }
+        val result = engine.recognize(pages, sparse, progress = { progress.value = it })
         val extracted = withContext(Dispatchers.Default) { WorkReportParser.extract(result) }
         require(extracted.size <= 10000) { "گزارش بیش از ۱۰٬۰۰۰ ردیف دارد؛ آن را تقسیم کنید." }
         recognized = result; rows = extracted; links = emptyList(); invalidate()
@@ -112,6 +116,44 @@ class WorkReportViewModel(app: Application) : AndroidViewModel(app) {
         start = period.start; end = period.end; periodNote = period.note; persist()
         if (result.any { it.words.isEmpty() }) error = "یک یا چند صفحه ناخوانا بود. پیش از مقایسه، تصویر را اصلاح کنید یا آن صفحه را صریحاً حذف و دوباره پردازش کنید."
         else if (rows.isEmpty()) error = "ردیف قابل استخراج پیدا نشد؛ چرخش، کیفیت تصویر یا حالت چیدمان را بررسی کنید."
+    }
+
+    fun saveOnlineEndpoint(value: String): Boolean {
+        val trimmed = value.trim()
+        val host = OnlineReportAssist.hostOf(trimmed) ?: return false
+        if (!busy) {
+            onlineEndpoint = trimmed
+            getApplication<Application>().getSharedPreferences(OnlineReportAssist.PREFS, Context.MODE_PRIVATE).edit().putString("endpoint", trimmed).apply()
+        }
+        return host.isNotBlank() && !busy
+    }
+
+    /**
+     * Explicit-consent online assist. Pages are rendered at the same bounded
+     * plan, preprocessed exactly like the offline path, encoded once and posted
+     * to the user-typed HTTPS endpoint; every resulting cell still passes the
+     * unchanged review/strict-comparison gates and no online value is forced.
+     */
+    fun recognizeOnline(url: String) = work {
+        val host = OnlineReportAssist.hostOf(url) ?: error("نشانی باید یک میزبان HTTPS معتبر و بدون نام‌کاربری باشد.")
+        require(pages.isNotEmpty()) { "ابتدا عکس/PDF انتخاب کنید." }
+        require(pages.size <= OnlineReportAssist.MAX_PAGES_PER_SEND) { "برای ارسال آنلاین حداکثر ${OnlineReportAssist.MAX_PAGES_PER_SEND} صفحه در هر بار." }
+        val sender = OnlineReportAssist.Sender()
+        val result = engine.recognize(pages, sparse, null, { msg -> progress.value = msg }) { pageId, bitmap ->
+            // The engine keeps the page for offline reading; do NOT recycle it here.
+            val bytes = OnlineReportAssist.jpeg(bitmap)
+            val body = OnlineReportAssist.requestBody(listOf(OnlineReportAssist.preparePage(pageId, bytes, bitmap.width * bitmap.height)))
+            sender.post(url, body)
+        }
+        val extracted = withContext(Dispatchers.Default) { WorkReportParser.extract(result) }
+        require(extracted.size <= 10000) { "گزارش بیش از ۱۰٬۰۰۰ ردیف دارد؛ آن را تقسیم کنید." }
+        recognized = result; rows = extracted; links = emptyList(); invalidate()
+        val period = CompanyReportTemplate.period(result, extracted)
+        start = period.start; end = period.end
+        periodNote = (period.note + " · پیش‌پر اختیاری آنلاین از $host انجام شد؛ هر خانه را با اصل تصویر تطبیق دهید.").trim()
+        persist()
+        error = null
+        if (extracted.isEmpty()) error = "پاسخ آنلاین ردیفی به‌دست نداد؛ تنظیمات سرویس یا تصویر را بررسی کنید. هیچ چیزی خودکار ذخیره نشد."
     }
     fun remap(columns: ReportColumns) = work {
         require(recognized.isNotEmpty()) { "ابتدا OCR را اجرا کنید." }

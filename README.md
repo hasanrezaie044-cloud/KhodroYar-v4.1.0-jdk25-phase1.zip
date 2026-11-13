@@ -1,6 +1,6 @@
 # مدیریت خودرو — Native Android
 
-## Current source: 5.4.3 (versionCode 65), based on restored 5.4.0
+## Current source: 5.4.4 (versionCode 66), based on restored 5.4.0
 
 Fully integrated into the existing `com.khodroyar.app`, with Room 6 and the existing signing identity:
 - **Offline Persian work-report OCR** in Reports/toolkit: bundled Tesseract + Persian/Arabic/English
@@ -19,10 +19,10 @@ Fully integrated into the existing `com.khodroyar.app`, with Room 6 and the exis
 - **Android form safety**: consumed Scaffold insets plus IME/navigation union, pinned Save/Cancel,
   large-text minimum button heights, bounded confirmation text and native page/column review.
 
-Read the [5.4.3 ruled-form/blank-hours changes](CHANGES_5.4.3.md), the [5.4.2 service-comparison changes](CHANGES_5.4.2.md) and the [Persian usage, safety and verification contract](docs/OFFLINE-WORK-REPORTS.md).
+Read the [5.4.4 optional-online-prefill changes](CHANGES_5.4.4.md), the [5.4.3 ruled-form/blank-hours changes](CHANGES_5.4.3.md), the [5.4.2 service-comparison changes](CHANGES_5.4.2.md) and the [Persian usage, safety and verification contract](docs/OFFLINE-WORK-REPORTS.md).
 No cloud OCR/backend/Firebase, separate installation, new permission or financial
 formula/export rewrite is introduced. Public APK delivery is explicitly opt-in after all release gates. Existing optional online/traffic features are retained,
-not required by OCR or the internal assistant. Compilation and runtime verification are separate:
+not required by OCR or the internal assistant. An optional explicit-consent online prefill (user-typed HTTPS endpoint, documented in docs/ONLINE-OCR-ASSIST.md) can prefill the review table; it is off by default and never skips review. Compilation and runtime verification are separate:
 only the final commit-specific CI results establish a passing release, not this feature list.
 
 ## Preserved 5.4.0 baseline (versionCode 60)

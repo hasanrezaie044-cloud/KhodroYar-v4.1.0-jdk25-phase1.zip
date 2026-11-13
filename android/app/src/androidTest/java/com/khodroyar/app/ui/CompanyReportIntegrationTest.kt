@@ -87,7 +87,7 @@ class CompanyReportIntegrationTest {
         automation.executeShellCommand("svc wifi disable").close(); automation.executeShellCommand("svc data disable").close()
         try {
             val diagnostics = mutableListOf<String>()
-            val recognized = runBlocking { OfflineReportOcr(context).recognize(imported, true, diagnostics = { diagnostics += it }) {} }
+            val recognized = runBlocking { OfflineReportOcr(context).recognize(imported, true, diagnostics = { diagnostics += it }, progress = {}) }
             val rows = WorkReportParser.extract(recognized)
             val evidence = JSONObject().put("environment", "Synthetic fixed recurring form; three PDF pages plus repeated PNG; native offline engine")
                 .put("rows", JSONArray().apply { rows.forEach { r -> put(JSONObject().put("date", r.date).put("ordinal", r.ordinal).put("count", r.count).put("km", r.km).put("hours", r.hours).put("included", r.included).put("kind", r.kind.name).put("note", r.note)) } })

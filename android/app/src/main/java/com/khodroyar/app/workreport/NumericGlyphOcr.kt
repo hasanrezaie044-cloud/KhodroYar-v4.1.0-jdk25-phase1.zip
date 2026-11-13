@@ -56,7 +56,10 @@ class NumericGlyphOcr(context: Context) {
     /** Regions must describe ONE row, so small zeros/points keep their baseline. */
     fun readRow(bitmap: Bitmap, regions: List<NumericRegion>, diagnostics: ((String) -> Unit)? = null, cellBaselines: Boolean = false, checkCancelled: () -> Unit = {}): Map<NumericRegion, Reading?> {
         if (regions.isEmpty()) return emptyMap()
-        val cells = regions.mapNotNull { region ->
+        // data-class equality: identical regions from overlapping line groups
+        // must not compute the same mask twice.
+        val unique = regions.distinct()
+        val cells = unique.mapNotNull { region ->
             checkCancelled()
             val left = (region.left * bitmap.width).toInt().coerceIn(0, bitmap.width - 1)
             val top = (region.top * bitmap.height).toInt().coerceIn(0, bitmap.height - 1)
