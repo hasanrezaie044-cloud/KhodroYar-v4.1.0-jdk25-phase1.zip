@@ -113,7 +113,7 @@ object FastOcrReportText {
         val hours = tokens.filter { it !== km }
             .filter { token ->
                 PersianInput.hours(token.value)?.let { h ->
-                    h <= BigDecimal(24) && (h > BigDecimal.ZERO || (h == BigDecimal.ZERO && km != null &&
+                    h <= BigDecimal(24) && (h > BigDecimal.ZERO || (h.signum() == 0 && km != null &&
                         // An explicitly printed zero directly next to the km cell
                         // is a known value. A blank/dot or a far serial zero is NOT.
                         (if (token.end <= km.start) win.substring(token.end, km.start)

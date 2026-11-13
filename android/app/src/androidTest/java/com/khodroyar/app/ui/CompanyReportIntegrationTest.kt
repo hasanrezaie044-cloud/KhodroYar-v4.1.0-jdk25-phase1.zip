@@ -148,7 +148,8 @@ class CompanyReportIntegrationTest {
         assertEquals(3, mock.uploads.size)
         assertTrue(vm.recognized.all { it.source == ReportTextSource.FASTOCR && it.words.isEmpty() })
         assertTrue(ReportReadCoverage.complete(vm.pages, vm.recognized))
-        assertTrue(vm.rows.all { it.kind == ReportRowKind.SERVICE && it.count == "1" && it.validated() != null })
+        assertTrue("Synthetic mocked provider rows must keep their explicit metrics: ${vm.rows}",
+            vm.rows.all { it.kind == ReportRowKind.SERVICE && it.count == "1" && it.validated() != null })
         assertEquals("1405/05/01", vm.start); assertEquals("1405/05/31", vm.end)
         assertTrue(vm.readWarnings.isEmpty())
         runBlocking {
