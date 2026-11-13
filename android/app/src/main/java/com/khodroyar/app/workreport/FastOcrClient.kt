@@ -80,13 +80,14 @@ class FastOcrClient(
     private fun sha256(bytes: ByteArray): String =
         MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
 
-    private fun call(request: Request, key: Boolean = false): JSONObject {
+    private fun call(request: Request): JSONObject {
         val response = transport.execute(request)
         val text = String(response.body, Charsets.UTF_8)
         if (response.status == 401 || response.status == 403) throw IllegalStateException("کلید API پذیرفته نشد؛ آن را از حساب FastOCR بررسی کنید.")
         if (response.status == 402 || response.status == 429) throw IllegalStateException("سهمیه/محدودیت FastOCR؛ بعداً دوباره تلاش کنید.")
         require(response.status in 200..299) { "FastOCR خطای HTTP ${response.status} داد." }
-        return JSONObject(text)
+        // Empty 2xx bodies (e.g. /start) are valid; org.json rejects blank strings.
+        return if (text.isBlank()) JSONObject() else JSONObject(text)
     }
 
     fun create(apiKey: String, filename: String, bytes: ByteArray): Created {
