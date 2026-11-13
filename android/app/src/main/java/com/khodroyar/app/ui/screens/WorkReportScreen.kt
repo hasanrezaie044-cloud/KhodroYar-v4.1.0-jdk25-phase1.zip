@@ -297,10 +297,22 @@ private fun ReportTextImportDialog(vm: WorkReportViewModel, close: () -> Unit) {
     }
 }
 
+private fun companyServiceText(row: ReportRow): String =
+    "${row.date} · ${row.km} کیلومتر · ${row.hours.ifBlank { "نامشخص" }} ساعت · صفحهٔ ${row.page} / ردیف ${row.ordinal.ifBlank { (row.line + 1).toString() }}" +
+        (if (row.origin.isNotBlank() || row.destination.isNotBlank()) "\n${row.origin} ← ${row.destination}" else "") +
+        (if (row.kind == ReportRowKind.GROUPED) " · تجمیعی" else "")
+
+private fun appServiceText(service: AppWorkService): String =
+    "${service.date} · ${PersianInput.display(service.km)} کیلومتر · ${PersianInput.display(service.hours)} ساعت" +
+        "\n${service.type} · ${service.origin} ← ${service.destination}" +
+        (if (service.startTime.isNotBlank() || service.endTime.isNotBlank()) " · ${service.startTime.ifBlank { "—" }} تا ${service.endTime.ifBlank { "—" }}" else "") +
+        " · شناسه ${service.id.take(8)}" + (if (service.requestNumber.isNotBlank()) " · درخواست ${service.requestNumber}" else "")
+
+/** Each upload is separately consented; no local recognition engine. */
 @Composable
 private fun FastOcrAssistDialog(vm: WorkReportViewModel, close: () -> Unit) {
     var keyDraft by remember { mutableStateOf("") }
-    FullReportDialog(close, "پیش‌پر اختیاری آنلاین صفحه‌ها با FastOCR") {
+    FullReportDialog(close, "خواندن آنلاین صفحه‌ها با FastOCR") {
         Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Text("خواندن تصویر فقط آنلاین است؛ بدون تأیید صریح این پنجره هیچ سندی ارسال نمی‌شود.", style = MaterialTheme.typography.bodySmall)
             Text("در صورت تأیید، تصویرِ ${vm.pages.size} صفحه (هرکدام حداکثر ${FastOcrClient.MAX_IMAGE_BYTES / 1_000_000} مگابایت PDF) در هر بار تأیید به api.fastocr.org ارسال می‌شود. اصل سند و متن پاسخ فقط در پیش‌نویس خصوصی همین گوشی می‌ماند؛ سیاست نگهداری سرویس مستقل است. این سرویس متعلق به برنامه نیست؛ فقط با کلید خودِ شما و به حساب خودِ شماست.", style = MaterialTheme.typography.bodySmall)
