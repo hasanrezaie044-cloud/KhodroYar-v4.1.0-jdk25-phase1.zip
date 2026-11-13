@@ -89,4 +89,66 @@ class FastOcrReportTextTest {
     fun absurdlyLongInputRejected() {
         FastOcrReportText.parsePage("p1", 1, "x".repeat(FastOcrClient.MAX_TEXT_BYTES + 1))
     }
+
+    // -- Real vehicle work-report layout (date · نوع · "HH:MM تا HH:MM" · km · مسیر · عوارضی · درآمد) --
+
+    @Test fun realReportRowWithTimeRangeAndMoney() {
+        val rows = FastOcrReportText.parsePage("p1", 1, "1405/05/02تعطیل --:-- تا 07:00 120بهارستان فولاد 0 2,148,000")
+        val row = rows.single()
+        assertEquals("1405/05/02", row.date)
+        assertEquals("120", row.km)
+        assertEquals("", row.hours) // start is --:-- -> duration unknown, never zero
+        assertEquals("1", row.count)
+    }
+
+    @Test fun moneyWithThousandsSeparatorsNeverBecomesKm() {
+        val rows = FastOcrReportText.parsePage("p1", 1, "1405/05/19ثابت --:-- تا --:-- 160مسیر 0 4,154,530")
+        val row = rows.single()
+        assertEquals("160", row.km)
+        assertEquals("", row.hours)
+        assertTrue(row.note.contains("نامشخص") || row.note.contains("تطبیق"))
+    }
+
+    @Test fun fullTimeRangeComputesDurationAcrossMidnight() {
+        val rows = FastOcrReportText.parsePage("p1", 1, "1405/05/12ثابت 16:00 تا 06:00 120شیخ،فولاد شیخ 0 3,202,992")
+        val row = rows.single()
+        assertEquals("1405/05/12", row.date)
+        assertEquals("120", row.km)
+        assertEquals("14:00", row.hours) // 16:00 -> 06:00 wraps to next day
+    }
+
+    @Test fun wrappedPdfRowIsMergedAcrossLines() {
+        val text = "1405/05/03ثابت--:-- تا --:--\n160حکیم،فولاد\nبلعکس0\n4,154,530"
+        val rows = FastOcrReportText.parsePage("p1", 1, text)
+        val row = rows.single()
+        assertEquals("1405/05/03", row.date)
+        assertEquals("160", row.km)
+        assertEquals("", row.hours)
+        assertTrue(row.raw.contains("·"))
+    }
+
+    @Test fun mergingStopsAtNextDatedRow() {
+        val text = "1405/05/05شب --:-- تا --:--\n80فولاد\n1405/05/06ثابت--:-- تا 06:00\n160حکیم"
+        val rows = FastOcrReportText.parsePage("p1", 1, text)
+        assertEquals(2, rows.size)
+        assertEquals("1405/05/05", rows[0].date)
+        assertEquals("80", rows[0].km)
+        assertEquals("1405/05/06", rows[1].date)
+        assertEquals("160", rows[1].km)
+    }
+
+    @Test fun summaryAndBareMoneyLinesNeverBecomeRows() {
+        val text = "خلاصه بر اساس نوع سرویس\nثابت3,080\n194\n20\n0\n80,235,986\nشب720\n105,062,802\nجمع کل 4,640 194 39 0 105,062,802"
+        assertTrue(FastOcrReportText.parsePage("p1", 1, text).isEmpty())
+    }
+
+    @Test fun tableHeaderBandIsSkipped() {
+        val text = "تاریخ نوع ساعت کیلومتر مبدا مقصد عوارضی درآمد"
+        assertTrue(FastOcrReportText.parsePage("p1", 1, text).isEmpty())
+    }
+
+    @Test fun dateRangeTitleIsNotARow() {
+        val text = "گزارش کارکرد خودرو\n1405/05/31 تا 1405/05/01"
+        assertTrue(FastOcrReportText.parsePage("p1", 1, text).isEmpty())
+    }
 }

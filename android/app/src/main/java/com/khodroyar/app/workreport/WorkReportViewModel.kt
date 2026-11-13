@@ -145,6 +145,7 @@ class WorkReportViewModel(app: Application) : AndroidViewModel(app) {
         require(pages.size <= 10) { "در هر ارسال آنلاین حداکثر ۱۰ صفحه." }
         val client = FastOcrClient()
         val merged = mutableListOf<ReportRow>()
+        val lineCounts = mutableListOf<Int>()
         var truncatedPages = 0
         val named = pages.withIndex().associate { (i, p) -> p.id to "PAGE-${i + 1}" }
         for ((i, page) in pages.withIndex()) {
@@ -160,6 +161,7 @@ class WorkReportViewModel(app: Application) : AndroidViewModel(app) {
                     client.ocrPage(key, "page-${i + 1}.pdf", pdf, "application/pdf") { if (job?.isActive != true) throw CancellationException() }
                 }
                 if (status.truncated || status.pagesProcessed in 0 until status.pagesTotal) truncatedPages++
+                lineCounts += text.split('\n').count { it.isNotBlank() }
                 val rows = withContext(Dispatchers.Default) { FastOcrReportText.parsePage(page.id, i + 1, text) }
                 merged += rows.map { it.copy(raw = "[${named[page.id]}] ${it.raw}") }
             } catch (e: CancellationException) { throw e }
@@ -169,7 +171,10 @@ class WorkReportViewModel(app: Application) : AndroidViewModel(app) {
             }
         }
         val extracted = merged
-        require(extracted.isNotEmpty()) { "متن دریافتی FastOCR ردیفی به‌دست نداد؛ کیفیت تصویر یا جدول را بررسی کنید. هیچ چیزی خودکار ذخیره نشد." }
+        require(extracted.isNotEmpty()) {
+            // Line counts are metadata only; document text is never echoed back.
+            "متن دریافتی FastOCR روی ${lineCounts.size} صفحه مجموعاً ${lineCounts.sum()} خط بود ولی هیچ خطی شکل «تاریخ شمسی + مقدار» ردیف گزارش را نداشت. اگر 402/429 دیدید یعنی سهمیهٔ حساب شما تمام شده؛ وگرنه راستا/کیفیت تصویر را اصلاح کنید. هیچ چیزی خودکار ذخیره نشد."
+        }
         // Rows come from FastOCR text, but the same-comparison gate requires a
         // proven, complete offline pass over every page — that part always stays
         // local and never sends anything anywhere.
