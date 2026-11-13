@@ -37,6 +37,7 @@ class OfflineReportOcr(private val context: Context) {
                 printedApi = print
                 check(print.init(modelDirectory.path, "fas_print", TessBaseAPI.OEM_TESSERACT_ONLY)) { "باز کردن مدل چاپی آفلاین انجام نشد." }
                 print.setVariable("classify_enable_learning", "0")
+                print.setVariable("tessedit_enable_doc_dict", "0")
                 print.setVariable("user_defined_dpi", "220")
                 synchronized(activeLock) { active = listOf(api, print) }
                 return print
@@ -79,10 +80,13 @@ class OfflineReportOcr(private val context: Context) {
                             } finally { iterator.delete() }
                         }
                         diagnostics?.invoke("Page ${index + 1} initial text: $text; words: $words")
-                        val company = CompanyReportTemplate.header(words)?.let { header ->
-                            readCompanyTable(api, ::printedEngine, bitmap, words, header, diagnostics) { row, count -> progress("صفحهٔ ${index + 1} از ${pages.size} · خواندن ردیف $row از $count") }
+                        val headerWords = if (CompanyReportTemplate.header(words) == null)
+                            PrintedHeaderOcr(api, ::printedEngine).refine(bitmap, words, diagnostics) { coroutine.ensureActive() } else words
+                        if (headerWords !== words) api.setImage(bitmap) // Header crops never replace the page used for numeric cells.
+                        val company = CompanyReportTemplate.header(headerWords)?.let { header ->
+                            readCompanyTable(api, ::printedEngine, bitmap, headerWords, header, diagnostics) { row, count -> progress("صفحهٔ ${index + 1} از ${pages.size} · خواندن ردیف $row از $count") }
                         }.orEmpty()
-                        val refined = if (company.isEmpty()) refineTable(api, bitmap, words, diagnostics) else words
+                        val refined = if (company.isEmpty()) refineTable(api, bitmap, headerWords, diagnostics) else headerWords
                         result += OcrPage(page.id, index + 1, refined, text, company)
                     } finally { api.clear(); bitmap.recycle() }
                     require(result.sumOf { it.words.size } <= 200000) { "متن این مقایسه بیش از حد بزرگ است؛ سند را به چند بخش تقسیم کنید." }

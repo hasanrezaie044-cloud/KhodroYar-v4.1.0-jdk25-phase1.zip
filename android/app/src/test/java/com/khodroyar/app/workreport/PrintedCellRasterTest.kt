@@ -17,6 +17,18 @@ class PrintedCellRasterTest {
         assertTrue(PrintedCellRaster.legibleHeight(80, 40, grey))
         assertFalse(PrintedCellRaster.legibleHeight(80, 40, IntArray(3200)))
     }
+    @Test fun headerRuleRemovalPreservesShortLetterStrokesWithoutChangingTheSource() {
+        val grey = paper()
+        for (y in 0 until 40) { grey[y * 80 + 10] = 20; grey[y * 80 + 11] = 20 }
+        for (x in 0 until 80) grey[2 * 80 + x] = 20
+        for (y in 10..25) for (x in 32..38) grey[y * 80 + x] = 40
+        val before = grey.copyOf()
+        val clean = PrintedCellRaster.withoutRules(80, 40, grey)
+        assertArrayEquals(before, grey)
+        assertTrue((0 until 40).all { clean[it * 80 + 10] == 255 })
+        assertTrue((0 until 80).all { clean[2 * 80 + it] == 255 })
+        assertTrue((10..25).all { clean[it * 80 + 35] == 40 })
+    }
     @Test fun viewsDoNotMutateInputOrInventGeometryAndGlobalThresholdStaysBounded() {
         val grey = paper(); for (y in 8..28) for (x in 30..38) grey[y * 80 + x] = 70
         val copy = grey.copyOf()

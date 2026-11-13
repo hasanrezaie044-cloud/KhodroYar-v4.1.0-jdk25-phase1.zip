@@ -152,7 +152,7 @@ class CompanyReportIntegrationTest {
         val bitmap = Bitmap.createBitmap(500, 110, Bitmap.Config.ARGB_8888)
         try {
             assertTrue(api.init(OfflineReportOcr(context).installModels().path, "fas_print", TessBaseAPI.OEM_TESSERACT_ONLY))
-            api.setVariable("classify_enable_learning", "0"); api.setVariable("user_defined_dpi", "220")
+            api.setVariable("classify_enable_learning", "0"); api.setVariable("tessedit_enable_doc_dict", "0"); api.setVariable("user_defined_dpi", "220")
             var requested = 0
             val reader = PrintedCellOcr { requested++; api }
             val region = NumericRegion(NumericField.DATE, 0f, 0f, 1f, 1f)

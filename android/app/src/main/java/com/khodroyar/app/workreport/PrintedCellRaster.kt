@@ -45,6 +45,14 @@ internal object PrintedCellRaster {
         }
         return bottom - top + 1 >= 12 && count < grey.size * .60f
     }
+    /** Remove only rules spanning almost the entire header strip, not letter strokes. */
+    fun withoutRules(width: Int, height: Int, grey: IntArray): IntArray {
+        require(width > 0 && height > 0 && width.toLong() * height == grey.size.toLong())
+        val threshold = threshold(grey)
+        val rows = BooleanArray(height) { y -> (0 until width).count { x -> grey[y * width + x] <= threshold } >= width * .85f }
+        val columns = BooleanArray(width) { x -> (0 until height).count { y -> grey[y * width + x] <= threshold } >= height * .85f }
+        return IntArray(grey.size) { i -> if (rows[i / width] || columns[i % width]) 255 else grey[i] }
+    }
     fun pixels(grey: IntArray, view: View): IntArray {
         val h = histogram(grey)
         val threshold = if (view == View.OTSU) threshold(grey) else 0

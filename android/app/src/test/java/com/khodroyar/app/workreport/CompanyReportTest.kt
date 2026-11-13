@@ -36,6 +36,12 @@ class CompanyReportTest {
         assertNull(CompanyReportTemplate.header(headings() + word("تعداد", .3f)))
         assertNull(CompanyReportTemplate.header(headings().filterNot { it.text in listOf("ردیف", "مبدأ", "مقصد") }))
     }
+    @Test fun missingDateLabelIsNotReplacedByAGuessedAnchorFromOtherHeadings() {
+        val partial = headings().filterNot { it.text == "تاریخ" || it.text == "مقصد" }
+        assertNull(CompanyReportTemplate.header(partial))
+        // Image recognition may supply an actual new label later; the pure parser cannot.
+        assertNotNull(CompanyReportTemplate.header(partial + word("تاریخ", .86f)))
+    }
     @Test fun missingEntireCellOrDateRetainsTheServiceForExplicitReview() {
         val rows = WorkReportParser.extract(listOf(page(cells = listOf(cell(date = "", km = "", hours = ""), cell(1, "8")))))
         assertEquals(2, rows.size); assertTrue(rows.first().included); assertNull(rows.first().validated())
