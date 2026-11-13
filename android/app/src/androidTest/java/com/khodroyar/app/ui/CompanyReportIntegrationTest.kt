@@ -95,6 +95,8 @@ class CompanyReportIntegrationTest {
             publishSyntheticEvidence(context, "KhodroYar-UI-Smoke", "company-template-ocr.json", "application/json", evidence.toString().toByteArray())
             publishSyntheticEvidence(context, "KhodroYar-UI-Smoke", "fixture-company-template.png", "image/png", image.readBytes())
             assertTrue("Every PDF/PNG page must establish its own recognised header", recognized.all { CompanyReportTemplate.header(it.words) != null })
+            assertEquals("Header-selected language policy, never a numeric-result retry", imported.size,
+                diagnostics.count { it == "Fixed-form primary languages: fas+eng; selected from header before cell recognition" })
             val selected = rows.filter { it.included }
             assertEquals("All five real rows, not ordinals or footers: $rows", 5, selected.size)
             assertTrue(selected.all { it.kind == ReportRowKind.SERVICE && it.count == "1" && it.validated() != null })

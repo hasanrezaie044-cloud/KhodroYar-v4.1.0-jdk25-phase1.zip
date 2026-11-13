@@ -15,8 +15,11 @@ The already-published 5.4.1 APK/Release must not be overwritten.
   numeric value substitutes for an unreadable title.
 - Keep numeric glyphs on the actual row baseline; normalising a short Arabic five to its own
   cell height must not turn it into a Western zero. Fixed-form numeric cells use native
-  single-token segmentation; date/description cells keep line segmentation. Strong conflicts
-  remain unknown, with the same confidence/distance/margin gates.
+  single-token segmentation; date/description cells keep line segmentation. Actual fixed-form
+  headings select the Persian/English LSTM pair before reading any cell, avoiding competing
+  Arabic-fast numeric priors. Generic pages/headers keep all three languages. The same engine
+  is reconfigured (no third concurrent engine); options/page images are restored after init.
+  No result-driven model switching: strong conflicts remain unknown with the same gates.
 - Read actual service records with their IDs and stored manual hours. Compare individual
   date/km/hour multiplicities before offering differences or missing records; show route,
   type and start/end as review context, never as invented work hours.

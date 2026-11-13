@@ -31,6 +31,21 @@ class OfflineReportOcr(private val context: Context) {
             val documents = ReportDocuments(context)
             val api = TessBaseAPI { value -> progress("خواندن آفلاین · ${value.percent}٪ از صفحهٔ جاری") }
             var printedApi: TessBaseAPI? = null
+            var primaryLanguages = ""
+            fun configurePrimary(languages: String) {
+                if (languages == primaryLanguages) return
+                // Init changes native state and resets ALL options. Serialize it
+                // with stop/recycle, not recognition, and reapply every setting.
+                synchronized(activeLock) {
+                    check(api.init(modelDirectory.path, languages, TessBaseAPI.OEM_LSTM_ONLY)) { "باز کردن مدل‌های آفلاین OCR انجام نشد." }
+                    api.setVariable("preserve_interword_spaces", "1")
+                    api.setVariable("classify_enable_learning", "0")
+                    api.setVariable("tessedit_enable_doc_dict", "0")
+                    api.setVariable("user_defined_dpi", "220")
+                    primaryLanguages = languages
+                    active = listOfNotNull(api, printedApi)
+                }
+            }
             fun printedEngine(): TessBaseAPI {
                 printedApi?.let { return it }
                 val print = TessBaseAPI()
@@ -43,11 +58,8 @@ class OfflineReportOcr(private val context: Context) {
                 return print
             }
             try {
-                check(api.init(modelDirectory.path, "fas+ara+eng", TessBaseAPI.OEM_LSTM_ONLY)) { "باز کردن مدل‌های آفلاین OCR انجام نشد." }
-                synchronized(activeLock) { active = listOf(api) }
+                configurePrimary("fas+ara+eng")
                 currentCoroutineContext().ensureActive()
-                api.setVariable("preserve_interword_spaces", "1")
-                api.setVariable("user_defined_dpi", "220")
                 val result = mutableListOf<OcrPage>()
                 pages.forEachIndexed { index, page ->
                     currentCoroutineContext().ensureActive()
@@ -58,6 +70,8 @@ class OfflineReportOcr(private val context: Context) {
                         val coroutine = currentCoroutineContext()
                         bitmap = ReportImageGrid.deskew(bitmap) { coroutine.ensureActive() }
                         currentCoroutineContext().ensureActive()
+                        configurePrimary("fas+ara+eng") // Generic page/header recognition is unchanged.
+                        coroutine.ensureActive()
                         api.pageSegMode = if (sparse) TessBaseAPI.PageSegMode.PSM_SPARSE_TEXT else TessBaseAPI.PageSegMode.PSM_AUTO
                         api.setVariable("tessedit_char_whitelist", "")
                         api.setImage(bitmap)
@@ -84,6 +98,16 @@ class OfflineReportOcr(private val context: Context) {
                             PrintedHeaderOcr(api, ::printedEngine).refine(bitmap, words, diagnostics) { coroutine.ensureActive() } else words
                         if (headerWords !== words) api.setImage(bitmap) // Header crops never replace the page used for numeric cells.
                         val company = CompanyReportTemplate.header(headerWords)?.let { header ->
+                            // Select the Persian print language pair solely from
+                            // actual template headings, BEFORE reading any values.
+                            // Competing Arabic-fast priors overconfidently turn
+                            // short Arabic fives into Latin zeroes on this form.
+                            // No engine is selected in response to a numeric result
+                            // or conflict. All existing rejection gates remain.
+                            configurePrimary("fas+eng")
+                            coroutine.ensureActive()
+                            api.setImage(bitmap) // Init discards the previous page image.
+                            diagnostics?.invoke("Fixed-form primary languages: ${api.initLanguagesAsString}; selected from header before cell recognition")
                             readCompanyTable(api, ::printedEngine, bitmap, headerWords, header, diagnostics) { row, count -> progress("صفحهٔ ${index + 1} از ${pages.size} · خواندن ردیف $row از $count") }
                         }.orEmpty()
                         val refined = if (company.isEmpty()) refineTable(api, bitmap, headerWords, diagnostics) else headerWords
