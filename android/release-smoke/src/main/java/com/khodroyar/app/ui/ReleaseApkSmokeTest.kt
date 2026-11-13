@@ -137,6 +137,23 @@ class ReleaseApkSmokeTest {
             offline.put("before", verifyOffline())
             context.startActivity(requireNotNull(context.packageManager.getLaunchIntentForPackage(targetPackage)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
             stage("real launcher opened, radios disabled")
+            // Hosted emulators intermittently ANR Pixel Launcher/System UI during cold
+            // boot; such a SYSTEM dialog hides the real app window and is unrelated to
+            // the target. Dismiss it via "Wait", bounded and evidenced. An ANR of the
+            // target itself is NEVER dismissed: it must still fail this test.
+            val systemDeadline = SystemClock.uptimeMillis() + 90_000
+            var dismissed = 0
+            while (SystemClock.uptimeMillis() < systemDeadline &&
+                device.findObject(By.res("terms-agree")) == null) {
+                val dialog = device.findObject(By.pkg("android").textContains("isn't responding"))
+                val title = dialog?.text.orEmpty()
+                if (dialog != null && (title.startsWith("Pixel Launcher") || title.startsWith("System UI"))) {
+                    device.findObject(By.pkg("android").res("android:id/aerr_wait"))?.click()
+                    dismissed++
+                }
+                SystemClock.sleep(500)
+            }
+            if (dismissed > 0) stage("dismissed $dismissed unrelated system-app ANR dialog(s); target ANR would still fail")
             tagged("terms-agree").click(); tagged("terms-continue").click()
             stage("terms accepted through UI")
             // Lock is ON by default in the recovered app. A real clean install
