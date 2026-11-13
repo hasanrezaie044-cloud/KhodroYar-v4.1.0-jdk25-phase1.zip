@@ -52,11 +52,22 @@ class ReleaseApkSmokeTest {
             ?: throw AssertionError("UI element not found: $selector; stages=$stages")
         fun tagged(value: String, timeout: Long = 30000) = find(By.res(value), timeout)
         fun scrollTo(selector: BySelector, container: String): UiObject2 {
-            repeat(18) {
-                device.findObject(selector)?.takeIf { it.visibleBounds.height() > 0 && it.visibleBounds.width() > 0 }?.let { return it }
-                tagged(container).scroll(Direction.DOWN, .65f)
+            repeat(24) {
+                val list = tagged(container)
+                val viewport = list.visibleBounds
+                val bounds = device.findObject(selector)?.visibleBounds
+                // Accessibility exposes a card as soon as even its title peeks
+                // into the viewport. Its count/controls can still be clipped.
+                // Bring the actual target away from BOTH clipping edges before
+                // returning; do not turn a partial match into a missing-value
+                // failure, and do not skip a row by always scrolling downward.
+                if (bounds != null && bounds.width() > 0 && bounds.height() > 0) {
+                    if (bounds.top > viewport.top + 6 && bounds.bottom < viewport.bottom - 6)
+                        return find(selector)
+                    list.scroll(if (bounds.bottom >= viewport.bottom - 6) Direction.DOWN else Direction.UP, .25f)
+                } else list.scroll(Direction.DOWN, .45f)
             }
-            throw AssertionError("Cannot scroll to $selector; stages=$stages")
+            throw AssertionError("Cannot bring $selector inside $container; stages=$stages")
         }
         val values = ContentValues().apply {
             put(MediaStore.Images.Media.DISPLAY_NAME, "khodroyar-online-review-fixture.png")
@@ -165,29 +176,35 @@ class ReleaseApkSmokeTest {
             device.pressBack() // Hide the actual software IME, not the full-screen editor.
             tagged("report-text-apply").click()
             assertFalse("Review is mandatory even for explicitly entered text", tagged("report-compare").isEnabled)
-            scrollTo(By.res("report-date-compare-1405/05/10"), "work-report-list")
-            find(By.text("شرکت 2 سرویس"))
-            scrollTo(By.res("report-date-compare-1405/05/11"), "work-report-list")
-            find(By.text("شرکت 1 سرویس"))
+            stage("synthetic text applied through UI; comparison still requires explicit review")
+            val dayTen = scrollTo(By.res("report-date-compare-1405/05/10"), "work-report-list")
+            assertNotNull("Day 10 must show TWO parsed company services in its own card", dayTen.findObject(By.text("شرکت 2 سرویس")))
+            val dayEleven = scrollTo(By.res("report-date-compare-1405/05/11"), "work-report-list")
+            assertNotNull("Day 11 must show ONE parsed company service in its own card", dayEleven.findObject(By.text("شرکت 1 سرویس")))
+            stage("exact day 10/day 11 cards show company counts 2/1")
             val dateSelector = By.res(Pattern.compile("report-cell-.*-date"))
-            scrollTo(dateSelector, "work-report-list")
+            val dateCell = scrollTo(dateSelector, "work-report-list")
+            val dateTag = requireNotNull(dateCell.resourceName)
+            val rowId = dateTag.removePrefix("report-cell-").removeSuffix("-date")
+            assertTrue("Editable first row must expose its stable identity", rowId.isNotBlank() && rowId != dateTag)
             fun normalized(text: String) = buildString {
                 text.forEach { c -> append(when (c) { in '۰'..'۹' -> '0' + (c - '۰'); in '٠'..'٩' -> '0' + (c - '٠'); '٫' -> '.'; else -> c }) }
             }
             fun value(field: String, record: JSONObject = firstRow): String {
-                val selector = By.res(Pattern.compile("report-cell-.*-$field"))
+                val selector = By.res("report-cell-$rowId-$field")
                 repeat(5) {
-                    device.findObject(selector)?.takeIf { it.visibleBounds.width() > 0 }?.let { node ->
+                    device.findObject(selector)?.takeIf { it.visibleBounds.width() > 0 && it.visibleBounds.height() > 0 }?.let { node ->
                         val value = normalized(node.text.orEmpty())
                         record.put(field, value)
                         return value
                     }
-                    find(By.res(Pattern.compile("report-row-scroll-.*"))).scroll(Direction.LEFT, .65f)
+                    tagged("report-row-scroll-$rowId").scroll(Direction.LEFT, .65f)
                 }
-                throw AssertionError("Editable $field cell was not reachable; firstRow=$firstRow")
+                throw AssertionError("Editable $field cell of row $rowId was not reachable; firstRow=$firstRow")
             }
             assertEquals("1405/05/10", value("date")); assertEquals("1", value("count"))
             assertEquals(40.0, value("km").toDouble(), .000001); assertEquals(0.0, value("hours").toDouble(), .000001)
+            stage("same first editable row retains date, count 1, 40 km and explicit zero hours")
             scrollTo(By.res("report-review-confirm"), "work-report-list").click()
             tagged("report-compare").click()
             find(By.text("شرکت: 3 سرویس · 215 کیلومتر · ساعت نامشخص"))

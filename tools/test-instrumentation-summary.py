@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
-"""Protocol/parser fixtures only. They do not run Android or establish APK proof."""
+"""Protocol fixtures/source identity only; NOT Android execution or APK proof."""
 import importlib.util
 from pathlib import Path
+import re
 import subprocess
 import sys
 import tempfile
@@ -25,6 +26,15 @@ SUCCESS = record(1) + record(0) + 'INSTRUMENTATION_RESULT: stream=\nOK (1 test)\
 
 
 class InstrumentationSummaryTest(unittest.TestCase):
+    def test_protocol_identity_matches_the_actual_single_kotlin_test(self):
+        root = Path(__file__).resolve().parents[1]
+        source = (root / 'android/release-smoke/src/main/java/com/khodroyar/app/ui/ReleaseApkSmokeTest.kt').read_text()
+        package = re.search(r'^package\s+(\S+)', source, re.M).group(1)
+        klass = re.search(r'^class\s+(\w+)', source, re.M).group(1)
+        tests = re.findall(r'@Test(?:\([^)]*\))?\s+fun\s+(\w+)\s*\(', source)
+        self.assertEqual(summary.CLASS, f'{package}.{klass}')
+        self.assertEqual([summary.TEST], tests)
+
     def test_complete_exact_single_test(self):
         self.assertEqual((True, True), summary.analyze(SUCCESS)[:2])
         self.assertTrue(summary.analyze(SUCCESS.replace('\n', '\r\n'))[0])
