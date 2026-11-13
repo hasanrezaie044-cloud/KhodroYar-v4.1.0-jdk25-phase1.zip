@@ -29,7 +29,7 @@ class FastOcrClientTest {
             200 to """{"format":"text","url":"https://fastocr-prod.s3.amazonaws.com/out?signature=def"}""",
             200 to "ردیف\n۱۴۰۴/۰۹/۱۰ ۱۲۳ ۱۲:۱۵",
         )
-        val (text, status) = client(script).ocrPageJpeg("fok_live_test", "p1.jpg", ByteArray(3) { 7 })
+        val (text, status) = client(script).ocrPage("fok_live_test", "p1.pdf", ByteArray(3) { 7 }, "application/pdf")
         assertEquals("ردیف\n۱۴۰۴/۰۹/۱۰ ۱۲۳ ۱۲:۱۵", text)
         assertEquals("completed", status.status)
         val requests = script.requests
@@ -39,12 +39,12 @@ class FastOcrClientTest {
         assertEquals("Bearer fok_live_test", create.headers["Authorization"])
         assertFalse(create.headers["Idempotency-Key"].isNullOrBlank())
         val createBody = String(create.body!!)
-        assertTrue(createBody.contains("\"size_bytes\"") && createBody.contains("\"sha256\"") && createBody.contains("p1.jpg"))
+        assertTrue(createBody.contains("\"size_bytes\"") && createBody.contains("\"sha256\"") && createBody.contains("p1.pdf"))
         val upload = requests[1]
         assertEquals("PUT", upload.method)
         assertTrue(upload.url.contains("s3.amazonaws.com"))
         assertFalse(upload.headers.containsKey("Authorization"))
-        assertEquals("image/jpeg", upload.headers["Content-Type"])
+        assertEquals("application/pdf", upload.headers["Content-Type"])
         val start = requests[2]
         assertEquals("https://api.fastocr.org/v1/documents/doc_1/start", start.url)
         assertEquals("Bearer fok_live_test", start.headers["Authorization"])
@@ -64,7 +64,7 @@ class FastOcrClientTest {
             200 to """{"url":"https://down.example/get"}""",
             200 to "متن",
         )
-        val (_, status) = client(script).ocrPageJpeg("fok_live_x", "p.jpg", byteArrayOf(1))
+        val (_, status) = client(script).ocrPage("fok_live_x", "p.pdf", byteArrayOf(1), "application/pdf")
         assertEquals("partial", status.status)
         assertTrue(status.truncated)
         // upload and output download must not carry the key
@@ -80,7 +80,7 @@ class FastOcrClientTest {
             200 to "",
             200 to """{"status":"failed","error":{"code":"content_too_large","message":"too big"}}""",
         )
-        client(script).ocrPageJpeg("fok_live_x", "p.jpg", byteArrayOf(1))
+        client(script).ocrPage("fok_live_x", "p.pdf", byteArrayOf(1), "application/pdf")
         Unit
     }
 
@@ -96,13 +96,13 @@ class FastOcrClientTest {
 
     @Test(expected = IllegalArgumentException::class)
     fun blankKeyRejected() = runBlocking {
-        client(Script()).ocrPageJpeg(" ", "p.jpg", byteArrayOf(1))
+        client(Script()).ocrPage(" ", "p.pdf", byteArrayOf(1), "application/pdf")
         Unit
     }
 
     @Test(expected = IllegalArgumentException::class)
     fun oversizedImageRejected() = runBlocking {
-        client(Script()).ocrPageJpeg("fok_x", "p.jpg", ByteArray(FastOcrClient.MAX_IMAGE_BYTES + 1))
+        client(Script()).ocrPage("fok_x", "p.pdf", ByteArray(FastOcrClient.MAX_IMAGE_BYTES + 1), "application/pdf")
         Unit
     }
 

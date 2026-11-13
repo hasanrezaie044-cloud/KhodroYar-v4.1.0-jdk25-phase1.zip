@@ -148,13 +148,22 @@ class WorkReportViewModel(app: Application) : AndroidViewModel(app) {
         var truncatedPages = 0
         val named = pages.withIndex().associate { (i, p) -> p.id to "PAGE-${i + 1}" }
         for ((i, page) in pages.withIndex()) {
-            val bitmap = withContext(Dispatchers.IO) { documents.render(page, 2_400_000, 2000) }
-            val jpeg = try { OnlineReportAssist.jpeg(bitmap) } finally { bitmap.recycle() }
-            progress.value = "ارسال صفحهٔ ${i + 1} از ${pages.size} به api.fastocr.org…"
-            val (text, status) = client.ocrPageJpeg(key, "page-${i + 1}.jpg", jpeg) { if (job?.isActive != true) throw CancellationException() }
-            if (status.truncated || status.pagesProcessed in 0 until status.pagesTotal) truncatedPages++
-            val rows = withContext(Dispatchers.Default) { FastOcrReportText.parsePage(page.id, i + 1, text) }
-            merged += rows.map { it.copy(raw = "[${named[page.id]}] ${it.raw}") }
+            try {
+                val bitmap = withContext(Dispatchers.IO) { documents.render(page, 2_400_000, 2000) }
+                // FastOCR's documented create call requires a *.pdf filename; wrap the
+                // rendered page in an in-memory one-page PDF (still a photo of the page).
+                val pdf = try { OnlineReportAssist.pdf(bitmap) } finally { bitmap.recycle() }
+                require(pdf.size <= FastOcrClient.MAX_IMAGE_BYTES) { "سند صفحهٔ ${i + 1} برای ارسال بزرگ است؛ تصویر را کوچک‌تر انتخاب کنید." }
+                progress.value = "ارسال صفحهٔ ${i + 1} از ${pages.size} به api.fastocr.org…"
+                val (text, status) = client.ocrPage(key, "page-${i + 1}.pdf", pdf, "application/pdf") { if (job?.isActive != true) throw CancellationException() }
+                if (status.truncated || status.pagesProcessed in 0 until status.pagesTotal) truncatedPages++
+                val rows = withContext(Dispatchers.Default) { FastOcrReportText.parsePage(page.id, i + 1, text) }
+                merged += rows.map { it.copy(raw = "[${named[page.id]}] ${it.raw}") }
+            } catch (e: CancellationException) { throw e }
+            catch (e: Exception) {
+                // Stage + exception class, so a screenshot pinpoints the failure without leaking anything.
+                throw IllegalStateException("صفحهٔ ${i + 1} — ${e.javaClass.simpleName}: ${e.message ?: "(بدون پیام)"}")
+            }
         }
         val extracted = merged
         require(extracted.isNotEmpty()) { "متن دریافتی FastOCR ردیفی به‌دست نداد؛ کیفیت تصویر یا جدول را بررسی کنید. هیچ چیزی خودکار ذخیره نشد." }
@@ -237,7 +246,10 @@ class WorkReportViewModel(app: Application) : AndroidViewModel(app) {
             catch (e: CancellationException) { error = "پردازش متوقف شد؛ اطلاعات ثبت‌شدهٔ برنامه تغییری نکرد."; throw e }
             catch (e: OutOfMemoryError) { error = "حافظه برای این صفحه کافی نبود؛ تصویر کوچک‌تر یا PDF با صفحه‌های کمتر انتخاب کنید." }
             catch (e: LinkageError) { error = "موتور آفلاین روی این پردازنده بارگذاری نشد؛ پردازش انجام نشد." }
-            catch (e: Exception) { error = e.message?.take(240) ?: "پردازش انجام نشد؛ فایل یا مقدارهای ورودی را بررسی کنید." }
+            catch (e: Exception) {
+                val detail = (listOfNotNull(e.javaClass.simpleName, e.message).joinToString(": ")).take(240)
+                error = if (detail.isNotBlank()) detail else "پردازش انجام نشد؛ فایل یا مقدارهای ورودی را بررسی کنید."
+            }
             finally { busy = false; progress.value = "" }
         }
     }

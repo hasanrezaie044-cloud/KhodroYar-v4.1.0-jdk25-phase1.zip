@@ -85,7 +85,11 @@ class FastOcrClient(
         val text = String(response.body, Charsets.UTF_8)
         if (response.status == 401 || response.status == 403) throw IllegalStateException("کلید API پذیرفته نشد؛ آن را از حساب FastOCR بررسی کنید.")
         if (response.status == 402 || response.status == 429) throw IllegalStateException("سهمیه/محدودیت FastOCR؛ بعداً دوباره تلاش کنید.")
-        require(response.status in 200..299) { "FastOCR خطای HTTP ${response.status} داد." }
+        if (response.status !in 200..299) {
+            // Surface the service's own error code so a screenshot is enough to diagnose.
+            val code = runCatching { JSONObject(text).optJSONObject("error")?.optString("code") }.getOrNull()
+            throw IllegalStateException("FastOCR خطای HTTP ${response.status} داد${if (!code.isNullOrBlank()) " (کد: $code)" else ""}.")
+        }
         // Empty 2xx bodies (e.g. /start) are valid; org.json rejects blank strings.
         return if (text.isBlank()) JSONObject() else JSONObject(text)
     }
@@ -142,13 +146,13 @@ class FastOcrClient(
         return String(response.body, Charsets.UTF_8)
     }
 
-    /** One JPEG page through the whole published flow. Nothing is cached or retried blindly. */
-    suspend fun ocrPageJpeg(apiKey: String, filename: String, jpeg: ByteArray, checkCancelled: () -> Unit = {}): Pair<String, Status> {
-        require(jpeg.isNotEmpty() && jpeg.size <= MAX_IMAGE_BYTES) { "حجم هر تصویر حداکثر ۲۰ مگابایت است." }
+    /** One document through the whole published flow. Nothing is cached or retried blindly. */
+    suspend fun ocrPage(apiKey: String, filename: String, bytes: ByteArray, mime: String, checkCancelled: () -> Unit = {}): Pair<String, Status> {
+        require(bytes.isNotEmpty() && bytes.size <= MAX_IMAGE_BYTES) { "حجم هر سندِ صفحه حداکثر ۲۰ مگابایت است." }
         require(apiKey.isNotBlank() && apiKey.length <= 256 && apiKey.none { it.isWhitespace() }) { "کلید API نامعتبر است." }
-        val created = create(apiKey, filename, jpeg)
+        val created = create(apiKey, filename, bytes)
         checkCancelled()
-        upload(created, jpeg, "image/jpeg")
+        upload(created, bytes, mime)
         start(apiKey, created.id)
         val status = await(apiKey, created.id, checkCancelled)
         return downloadText(apiKey, created.id) to status

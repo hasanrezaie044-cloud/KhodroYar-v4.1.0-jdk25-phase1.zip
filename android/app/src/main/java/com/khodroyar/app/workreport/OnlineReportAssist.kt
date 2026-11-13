@@ -94,6 +94,24 @@ object OnlineReportAssist {
         throw IllegalStateException("تصویر این صفحه پس از فشرده‌سازی هم بزرگ است؛ صفحهٔ کوچک‌تری انتخاب کنید.")
     }
 
+    /**
+     * In-memory one-page PDF wrapper. FastOCR's documented document contract names
+     * PDF files explicitly; the bitmap is drawn once, never written to disk.
+     */
+    fun pdf(bitmap: android.graphics.Bitmap): ByteArray {
+        val doc = android.graphics.pdf.PdfDocument()
+        val page = doc.startPage(android.graphics.pdf.PdfDocument.PageInfo.Builder(bitmap.width, bitmap.height, 1).create())
+        page.canvas.drawBitmap(bitmap, 0f, 0f, null)
+        doc.finishPage(page)
+        val out = java.io.ByteArrayOutputStream()
+        try {
+            doc.writeTo(out)
+        } finally {
+            doc.close()
+        }
+        return out.toByteArray()
+    }
+
     fun requestBody(pages: List<PreparedPage>): ByteArray {
         require(pages.isNotEmpty() && pages.size <= MAX_PAGES_PER_SEND)
         require(pages.map { it.pageId }.distinct().size == pages.size)

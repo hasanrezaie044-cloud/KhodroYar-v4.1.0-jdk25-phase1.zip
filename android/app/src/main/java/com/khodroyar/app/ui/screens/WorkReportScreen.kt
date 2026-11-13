@@ -277,7 +277,7 @@ private fun FastOcrAssistDialog(vm: WorkReportViewModel, close: () -> Unit) {
     FullReportDialog(close, "پیش‌پر اختیاری آنلاین صفحه‌ها با FastOCR") {
         Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Text("پردازش عادی این صفحه کاملاً آفلاین است و همین‌طور می‌ماند. این دکمه فقط با تأیید صریح شما فعال می‌شود.", style = MaterialTheme.typography.bodySmall)
-            Text("در صورت تأیید، تصویرِ ${vm.pages.size} صفحه (هرکدام حداکثر ${FastOcrClient.MAX_IMAGE_BYTES / 1_000_000} مگابایت JPEG) فقط یک‌بار و فقط برای همین دوره به api.fastocr.org ارسال می‌شود و در برنامه نگه داشته نمی‌شود. این سرویس متعلق به برنامه نیست؛ فقط با کلید خودِ شما و به حساب خودِ شماست.", style = MaterialTheme.typography.bodySmall)
+            Text("در صورت تأیید، تصویرِ ${vm.pages.size} صفحه (هرکدام حداکثر ${FastOcrClient.MAX_IMAGE_BYTES / 1_000_000} مگابایت PDF) فقط یک‌بار و فقط برای همین دوره به api.fastocr.org ارسال می‌شود و در برنامه نگه داشته نمی‌شود. این سرویس متعلق به برنامه نیست؛ فقط با کلید خودِ شما و به حساب خودِ شماست.", style = MaterialTheme.typography.bodySmall)
             if (vm.fastOcrKeySaved) {
                 Text("کلید API شما از قبل رمزنگاری‌شده ذخیره است؛ برای امنیت دوباره نمایش داده نمی‌شود. حذف یا عوض کردنش از دکمهٔ زیر ممکن است.", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.bodySmall)
                 TextButton(onClick = { keyDraft = ""; vm.clearFastOcrKey() }) { Text("حذف کلید ذخیره‌شده") }
