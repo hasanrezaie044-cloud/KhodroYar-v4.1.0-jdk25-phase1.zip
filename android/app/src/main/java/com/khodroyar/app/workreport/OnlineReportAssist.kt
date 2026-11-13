@@ -53,6 +53,13 @@ object OnlineReportAssist {
         }
     }
 
+    /** Real-world JSON may carry numbers as strings (or non-strict ".70"). */
+    private fun number(word: JSONObject, key: String): Double {
+        val direct = word.optDouble(key, Double.NaN)
+        if (!direct.isNaN()) return direct
+        return word.optString(key, "").toDoubleOrNull() ?: Double.NaN
+    }
+
     /** The endpoint contract documented in docs/ONLINE-OCR-ASSIST.md. */
     data class PreparedPage(val pageId: String, val mime: String, val base64: String, val pixels: Int)
 
@@ -110,11 +117,11 @@ object OnlineReportAssist {
             ParsedPage(page.getString("id"), (0 until words.length()).mapNotNull { w ->
                 val word = words.getJSONObject(w)
                 val text = word.optString("text", "").take(120)
-                val left = word.optDouble("left", Double.NaN).toFloat()
-                val top = word.optDouble("top", Double.NaN).toFloat()
-                val right = word.optDouble("right", Double.NaN).toFloat()
-                val bottom = word.optDouble("bottom", Double.NaN).toFloat()
-                val confidence = word.optDouble("confidence", 0.0).toFloat().coerceIn(0f, 100f)
+                val left = number(word, "left").toFloat()
+                val top = number(word, "top").toFloat()
+                val right = number(word, "right").toFloat()
+                val bottom = number(word, "bottom").toFloat()
+                val confidence = number(word, "confidence").takeIf { it.isFinite() }?.toFloat()?.coerceIn(0f, 100f) ?: 0f
                 if (text.isBlank() || listOf(left, top, right, bottom).any { !it.isFinite() || it !in 0f..1f } || left >= right || top >= bottom) null
                 else OcrWord(text, left, top, right, bottom, confidence)
             })
