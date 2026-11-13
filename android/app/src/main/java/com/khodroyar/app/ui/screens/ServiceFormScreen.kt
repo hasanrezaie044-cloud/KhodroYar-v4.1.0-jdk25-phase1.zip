@@ -272,7 +272,7 @@ private fun ServiceFormBody(
             Modifier
                 .weight(1f)
                 .fillMaxWidth()
-                .verticalScroll(rememberScrollState())
+                .verticalScroll(rememberScrollState()).testTag("service-form-list")
                 .clearFocusOnTap()
                 .padding(horizontal = AppDimens.screenPadding)
                 .padding(top = AppDimens.gutter, bottom = AppDimens.gutter),
@@ -301,7 +301,7 @@ private fun ServiceFormBody(
 
             /* ------------------------------------------- 2. date, time, mileage */
             FormSection("زمان و مسافت", Icons.Outlined.Schedule, collapsible = false) {
-                JalaliDateField("تاریخ سرویس", date, { date = it })
+                JalaliDateField("تاریخ سرویس", date, { date = it }, Modifier.testTag("service-date"))
                 Spacer(Modifier.height(AppDimens.gap))
                 Row(horizontalArrangement = Arrangement.spacedBy(AppDimens.gap)) {
                     TimeField("ساعت شروع", startTime, { startTime = it }, Modifier.weight(1f))

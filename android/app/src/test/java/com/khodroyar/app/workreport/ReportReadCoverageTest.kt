@@ -44,4 +44,10 @@ class ReportReadCoverageTest {
     @Test fun newDocumentsDoNotPretendTheyHaveBeenRead() {
         assertTrue(ReportReadCoverage.warnings(pages, emptyList(), emptyList()).isEmpty())
     }
+    @Test fun pageRowSafetyLimitIsDisclosedInsteadOfClaimingCompleteExtraction() {
+        val page = pages.first()
+        val rows = List(FastOcrReportText.MAX_ROWS_PER_PAGE) { ReportRow("r$it", page.id, 1, it, "synthetic", date = "1405/07/05", count = "1", kind = ReportRowKind.SERVICE) }
+        assertTrue(ReportReadCoverage.warnings(listOf(page), listOf(read(page.id)), rows).any { it.contains("سقف ردیف") })
+    }
+
 }

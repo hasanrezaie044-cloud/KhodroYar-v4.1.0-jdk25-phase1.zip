@@ -23,9 +23,10 @@ CERTIFICATE = '03bfbc3575667403c3259fae345f3eb1ad3045373cb62123be376ef4898caaf0'
 BASELINE = '797d7061c5f669cf4fa3e7361c0b3c2dca10490c'
 OFFLINE_REVIEW = dict(airplane_mode='1', wifi_on='0', active_network=False)
 REVIEW = dict(passed=True, text_source='user-entered synthetic fixture; NOT image OCR', rows=3, count_per_row='1',
-    period_start='1405/05/01', period_end='1405/05/31', km='215', hours='unknown',
-    first=dict(date='1405/05/10', count='1', km='40', hours='0'), day10_count=2, day11_count=1,
-    mandatory_review=True, consent_cancelled=True)
+    period_start='1405/07/01', period_end='1405/07/30', first=dict(date='1405/07/05', count='1', km='', hours=''),
+    metrics_blank=True, count_review_required=False, reports_entry=True, main_metric_editors_absent=True,
+    example=dict(date='1405/07/05', company=2, app=3, difference=1), corrected_company=4, corrected_difference=-1,
+    correction_reverted=True, app_services_after=3, consent_cancelled=True)
 BAZAAR = dict(passed=True, source='synthetic IPC fixture; NOT real Bazaar', automatic_entry_prompt=True,
     method='getRemoteVersionCode', queried_package='com.khodroyar.app', update_uri='bazaar://details/modal?id=com.khodroyar.app')
 
@@ -40,7 +41,7 @@ def validate_runtime(runtime):
             or runtime.get('ocr_mode') != 'online-only' or runtime.get('live_ocr_exercised') is not False
             or runtime.get('review') != REVIEW or runtime.get('bazaar') != BAZAAR
             or any(runtime.get('offline_review', {}).get(phase) != OFFLINE_REVIEW for phase in ('before', 'after'))):
-        raise ValueError('Required actual signed-app consent/text-review/simulated-Bazaar IPC evidence did not pass')
+        raise ValueError('Required actual signed-app count-first/consent/simulated-Bazaar IPC evidence did not pass')
     return runtime
 
 
@@ -68,7 +69,7 @@ def verified_proof(apk, verification, expected_head):
             or proof.get('offline_model_assets') != 'absent (online-only)' or proof.get('offline_native_engine') != 'absent'
             or proof.get('native_64_bit_16kb_alignment') != 'passed' or proof.get('bundled_notices_fonts') != 'all hashes verified'
             or not re.fullmatch(r'\d+(?:\.\d+){1,3}', proof.get('version_name', ''))
-            or type(proof.get('version_code')) is not int or proof['version_code'] < 73):
+            or type(proof.get('version_code')) is not int or proof['version_code'] < 74):
         raise ValueError('Public APK does not match the original audited online-only candidate')
     validate_runtime(proof.get('signed_runtime', {}))
     return proof
@@ -104,9 +105,13 @@ def prepare(apk, verification, directory, expected_head):
 - حفظ بایت‌به‌بایت PDF تک‌صفحه‌ای بدون چرخش؛ آماده‌سازی تصاویر/صفحه‌های دیگر تا ۶ مگاپیکسل، بدون مدل دانلودی.
 - بازیابی قالب تاریخ و شماره‌ردیف چسبیده، هشدار ردیف‌های نخوانده و «در متن یافت نشد» به‌جای ادعای قطعی نبود سرویس؛ هیچ تاریخ/سرویس از تعدادهای برنامه ساخته نمی‌شود.
 - بازخوانی متن خصوصی ذخیره‌شده بدون ارسال/هزینه، و ورود صریح متن یک صفحه برای بازبینی. پیش‌نویس قدیمی حفظ می‌شود.
-- جدول روزانهٔ شرکت/برنامه فقط خواندنی است؛ ساعت نامشخص صفر نیست و تطبیق سخت‌گیرانهٔ سرویس‌ها همچنان نیازمند تأیید بازبینی است.
+- گزارش ← مقایسهٔ شرکت: جدول فشردهٔ تاریخ/شرکت/برنامه/اختلاف، بدون شرط کیلومتر، ساعت یا تأیید جزئیات. اختلاف = برنامه − شرکت؛ مثال ۲/۳ برابر +۱ است.
+- اصلاح صریح تعداد شرکت با علامت *، جدا از ردیف‌های OCR و سوابق برنامه، قابل بازگشت است؛ هیچ سرویس خودکار برای برابرکردن تعداد ساخته یا تغییر داده نمی‌شود.
+- جزئیات کیلومتر/ساعت در بخش اختیاری باقی می‌مانند؛ ساعت نامشخص همچنان صفر نیست.
+- سه مسیر اصفهان: شهید کشوری، شهید میثمی و شهید حبیب‌اللهی؛ ابتدا/انتها و نقاط میانی با منبع نقشه، جهت مشخص و کنترل هندسهٔ پاسخ. وضعیت تخمین زمان است، نه ترافیک نقطه‌به‌نقطه.
+- متن حریم خصوصی/سلب مسئولیت نسخهٔ ۲، شامل خطای ورودی، OCR، خدمات ثالث و غیررسمی بودن خروجی‌ها؛ نسخهٔ قابل استفاده برای بازار در مخزن است.
 - اعلان نسخهٔ جدید هنگام ورود، فقط پس از پاسخ نسخهٔ بازار؛ دکمهٔ به‌روزرسانی صفحهٔ همان بسته را در خود بازار باز می‌کند. نبود بازار/شبکه ورود را مسدود نمی‌کند.
-- آزمون امضاشده روی امولاتور API 35: SAF واقعی، رضایت/انصراف FastOCR، ورود متن مصنوعی، بازبینی اجباری، شمارش روزهای ۱۰/۱۱ و ساعت نامشخص، IPC و لینک به‌روزرسانی با **بازار شبیه‌سازی‌شده**.
+- آزمون همان APK امضاشده روی امولاتور API 35: ثبت ۳ سرویس مصنوعی از فرم واقعی، SAF، رضایت/انصراف FastOCR، ورود صریح متن مصنوعیِ بدون کیلومتر/ساعت، نمایش شرکت ۲ / برنامه ۳ / اختلاف +۱ در ۱۴۰۵/۰۷/۰۵، اصلاح دستی و بازگشت، حفظ تعداد برنامه، IPC و لینک به‌روزرسانی با **بازار شبیه‌سازی‌شده**.
 - آزمون ادغام آنلاین از پاسخ HTTP ساختگی استفاده می‌کند؛ **آزمون زندهٔ FastOCR، انتشار واقعی در بازار یا آزمایش فیزیکی Samsung ادعا نمی‌شود**. سند خصوصی کاربر در مخزن/CI نیست؛ کامل‌خوانی هر اسکن تضمین نمی‌شود.
 - ابزار CI، APK تست و بازار مصنوعی جزو فایل تحویلی نیستند. بسته، گواهی اصلی، Room 6 و محاسبات مالی حفظ شده‌اند؛ مجوز نصب/دسترسی عمومی فایل اضافه نشده است.
 
@@ -180,7 +185,7 @@ def publish(directory, repository, expected_head, run_id):
         stream.write(f'\nصفحهٔ بیلد و آزمون‌ها: {build_url}\n')
     assets = [apk, proof_path, root / 'SHA256SUMS', notes]
     subprocess.run(['gh', 'release', 'create', tag, '--repo', repository, '--target', expected_head,
-                    '--title', f"KhodroYar {proof['version_name']} — Online reports and Bazaar updates",
+                    '--title', f"KhodroYar {proof['version_name']} — Daily counts, Isfahan routes and privacy",
                     '--notes-file', str(notes), '--draft', '--latest=false', *map(str, assets)], check=True, timeout=240)
     release = gh_json(f'{api}/releases/tags/{tag}', missing_ok=True)
     if release is None:

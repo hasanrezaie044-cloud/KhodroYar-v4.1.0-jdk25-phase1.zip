@@ -52,6 +52,8 @@ class WorkReportViewModel @JvmOverloads constructor(
     /** Mandatory output: per-date company service count vs app-registered count. */
     var dateComparison by mutableStateOf<List<DateServiceComparison>>(emptyList()); private set
     var dateComparisonError by mutableStateOf<String?>(null); private set
+    /** Transparent, user-entered daily count corrections; never service rows. */
+    var companyCounts by mutableStateOf<Map<String, Int>>(emptyMap()); private set
     private val fastOcrKeys = com.khodroyar.app.ai.FastOcrApiKeyStore(app)
     /** Whether the user once stored their own FastOCR key (encrypted at rest). */
     var fastOcrKeySaved by mutableStateOf(false); private set
@@ -62,7 +64,7 @@ class WorkReportViewModel @JvmOverloads constructor(
             try {
                 withContext(Dispatchers.IO) { draft.load() }?.let { saved ->
                     pages = saved.pages; recognized = saved.recognized; rows = saved.rows; start = saved.start; end = saved.end
-                    links = saved.links; periodNote = saved.periodNote
+                    links = saved.links; periodNote = saved.periodNote; companyCounts = saved.companyCounts
                     refreshDateComparison()
                 }
             } catch (e: CancellationException) { throw e }
@@ -79,7 +81,7 @@ class WorkReportViewModel @JvmOverloads constructor(
         }
     }
     fun clearError() { error = null }
-    private fun snapshot() = WorkReportDraft.Draft(pages, recognized, rows, start, end, links, periodNote)
+    private fun snapshot() = WorkReportDraft.Draft(pages, recognized, rows, start, end, links, periodNote, companyCounts)
     private fun persist() {
         saveJob?.cancel()
         val snapshot = snapshot()
@@ -102,7 +104,7 @@ class WorkReportViewModel @JvmOverloads constructor(
         val revision = ++dateComparisonRevision
         dateComparison = emptyList(); dateComparisonError = null
         val snapshot = rows
-        if (snapshot.none { it.included && it.kind == ReportRowKind.SERVICE && PersianInput.date(it.date) != null }) return
+        val correctedCounts = companyCounts
         val a = PersianInput.date(start) ?: return
         val b = PersianInput.date(end) ?: return
         if (a > b) return
@@ -110,20 +112,37 @@ class WorkReportViewModel @JvmOverloads constructor(
             try {
                 delay(100) // Coalesce keystrokes without holding up OCR or draft saving.
                 val appDates = repository.servicesInRangeOnce(a, b).map { it.date }
-                val result = DateServiceCountComparison.compare(snapshot, appDates, a, b)
+                val result = DateServiceCountComparison.compare(snapshot, appDates, a, b, correctedCounts)
                 if (revision == dateComparisonRevision) dateComparison = result
             } catch (e: CancellationException) { throw e }
             catch (_: Exception) {
                 if (revision == dateComparisonRevision)
-                    dateComparisonError = "مقایسهٔ تعداد فعلاً در دسترس نیست؛ جدول بازبینی محفوظ است."
+                    dateComparisonError = "دریافت تعدادهای برنامه انجام نشد؛ دوباره تلاش کنید."
             }
         }
     }
+    /** Explicit daily count entry, stored separately from extraction and app data. */
+    fun correctCompanyCount(date: String, count: String): Boolean {
+        if (busy) return false
+        val day = PersianInput.date(date) ?: return false
+        val n = PersianInput.count(count) ?: return false
+        if (day !in companyCounts && companyCounts.size >= 3660) return false
+        companyCounts = companyCounts + (day to n)
+        refreshDateComparison(); persist()
+        return true
+    }
+    fun restoreCompanyCount(date: String) {
+        if (busy) return
+        val day = PersianInput.date(date) ?: return
+        companyCounts = companyCounts - day
+        refreshDateComparison(); persist()
+    }
+    fun retryDateComparison() { if (!busy) refreshDateComparison() }
     fun setReview(value: Boolean) { if (!busy) { reviewConfirmed = value; comparison = null; sparseComparison = null } }
     fun range(a: String, b: String) { if (!busy) { start = a; end = b; invalidate(); persist() } }
     fun importDocuments(uris: List<Uri>) = work {
         pages = withContext(Dispatchers.IO) { documents.import(uris, pages) }
-        recognized = emptyList(); rows = emptyList(); links = emptyList(); periodNote = ""; invalidate(); persist()
+        recognized = emptyList(); rows = emptyList(); links = emptyList(); companyCounts = emptyMap(); periodNote = ""; invalidate(); persist()
     }
     fun rotate(id: String) = changePages(pages.map { if (it.id == id) it.copy(rotation = (it.rotation + 1) % 4) else it })
     fun remove(id: String) = changePages(pages.filter { it.id != id })
@@ -134,7 +153,7 @@ class WorkReportViewModel @JvmOverloads constructor(
     }
     private fun changePages(value: List<ReportPage>) {
         if (busy) return
-        pages = value; recognized = emptyList(); rows = emptyList(); links = emptyList(); periodNote = ""; invalidate(); persist()
+        pages = value; recognized = emptyList(); rows = emptyList(); links = emptyList(); companyCounts = emptyMap(); periodNote = ""; invalidate(); persist()
         // Keep removed source files until explicit reset. This also makes interrupted
         // draft writes recoverable; no stale background prune can delete a fresh import.
     }
@@ -142,7 +161,7 @@ class WorkReportViewModel @JvmOverloads constructor(
         saveJob?.cancel()
         val empty = WorkReportDraft.Draft(emptyList(), emptyList(), emptyList(), "", "")
         withContext(Dispatchers.IO) { persistLock.withLock { draft.save(empty); documents.prune(emptyList()) } }
-        pages = emptyList(); recognized = emptyList(); rows = emptyList(); links = emptyList(); periodNote = ""; start = ""; end = ""; invalidate()
+        pages = emptyList(); recognized = emptyList(); rows = emptyList(); links = emptyList(); companyCounts = emptyMap(); periodNote = ""; start = ""; end = ""; invalidate()
     }
     /** One-time key entry; stored encrypted. Returns true when the key was valid and saved. */
     fun saveFastOcrKey(raw: String): Boolean {
@@ -159,7 +178,7 @@ class WorkReportViewModel @JvmOverloads constructor(
         val context = currentCoroutineContext()
         val result = reader.read(documents, pages, key, progress = { progress.value = it }) { context.ensureActive() }
         applyReadResult(result.pages, result.rows,
-            "خواندن آنلاین با api.fastocr.org انجام شد؛ تاریخ‌ها، ردیف‌های جاافتاده و کل بازه را با اصل سند بازبینی کنید.")
+            "تعدادهای خوانده‌شده؛ با اصل سند بررسی کنید.")
     }
 
     /** Re-run just the parser against privately saved text: no network/charge. */
@@ -175,7 +194,7 @@ class WorkReportViewModel @JvmOverloads constructor(
                 else FastOcrReportText.parsePage(page.id, page.number, page.text)
             }
         }
-        applyReadResult(saved, extracted, "متن ذخیره‌شده دوباره تحلیل شد؛ هیچ صفحه‌ای ارسال و هزینه‌ای مصرف نشد. بازه را با سند تأیید کنید.")
+        applyReadResult(saved, extracted, "متن دوباره تحلیل شد؛ بدون ارسال.")
     }
 
     /** A user's pasted/exported OCR text is review input, not a trusted OCR claim. */
@@ -186,7 +205,7 @@ class WorkReportViewModel @JvmOverloads constructor(
         val updated = recognized.filterNot { it.id == pageId } +
             OcrPage(pageId, index + 1, emptyList(), text, source = ReportTextSource.USER_TEXT)
         applyReadResult(updated.sortedBy { it.number }, rows.filterNot { it.pageId == pageId } + extracted,
-            "متن صفحه را خودتان وارد کرده‌اید؛ با تصویر اصلی تطبیق دهید. چیزی ارسال نشد.")
+            "متن واردشده توسط شما؛ بدون ارسال.")
     }
 
     private fun applyReadResult(read: List<OcrPage>, extracted: List<ReportRow>, note: String) {
@@ -194,11 +213,11 @@ class WorkReportViewModel @JvmOverloads constructor(
         val order = pages.withIndex().associate { it.value.id to it.index }
         recognized = read
         rows = extracted.sortedWith(compareBy<ReportRow> { order[it.pageId] ?: it.page }.thenBy { it.line })
-        links = emptyList()
+        links = emptyList(); companyCounts = emptyMap()
         val range = DateServiceCountComparison.suggestedRange(extracted)
         start = range?.first.orEmpty(); end = range?.second.orEmpty(); periodNote = note
         invalidate(); persist()
-        error = if (rows.isEmpty()) "متن دریافت شد ولی سرویس خوانایی پیدا نشد؛ اصل صفحه یا متن ذخیره‌شده را بازبینی کنید. نبود ردیف، نبود سرویس نیست." else null
+        error = if (rows.isEmpty()) "ردیفی خوانده نشد؛ متن یا اصل سند را بررسی کنید." else null
     }
     fun edit(row: ReportRow) { if (!busy) {
         val previous = rows.firstOrNull { it.id == row.id }
@@ -219,7 +238,7 @@ class WorkReportViewModel @JvmOverloads constructor(
     fun addRow() {
         if (busy || pages.isEmpty() || rows.size >= 10000) return
         rows = rows + ReportRow("manual:${java.util.UUID.randomUUID()}", pages.first().id, 1, rows.size, "ردیف واردشده توسط کاربر", count = "1",
-            note = "ورود دستی یک سرویس؛ تاریخ و کیلومتر الزامی است؛ ساعت خالی نامشخص می‌ماند", kind = ReportRowKind.SERVICE)
+            note = "سرویس واردشده توسط شما", kind = ReportRowKind.SERVICE)
         invalidate(); persist()
     }
     fun compare() = work {

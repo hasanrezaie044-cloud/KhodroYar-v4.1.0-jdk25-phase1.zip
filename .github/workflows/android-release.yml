@@ -303,7 +303,7 @@ jobs:
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
 
-      - name: Verify signed R8 consent/review and Bazaar IPC (synthetic store, no live OCR)
+      - name: Verify signed R8 daily counts, consent and Bazaar IPC (synthetic store, no live OCR)
         uses: reactivecircus/android-emulator-runner@v2
         env:
           ANDROID_KEYSTORE_PATH: ${{ steps.keystore.outputs.path }}

@@ -104,7 +104,7 @@ object Notifications {
         manager.createNotificationChannel(
             NotificationChannel(CHANNEL_TRAFFIC, "ترافیک", NotificationManager.IMPORTANCE_HIGH)
                 .apply {
-                    description = "هشدار سنگین شدن مسیر مبارکه–اصفهان"
+                    description = "هشدار تغییر ترافیک مسیرهای اصفهان و مبارکه"
                     enableVibration(true)
                     enableLights(true)
                     lightColor = BRAND_COLOR

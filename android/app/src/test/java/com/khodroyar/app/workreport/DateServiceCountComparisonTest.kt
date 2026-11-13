@@ -15,13 +15,13 @@ class DateServiceCountComparisonTest {
         kind = kind, ordinal = "99", hoursBlank = true,
     )
 
-    @Test fun twoCompanyRowsAndFiveActualServicesHaveDifferenceMinusThree() {
+    @Test fun twoCompanyRowsAndFiveActualServicesHaveDifferencePlusThree() {
         val rows = listOf(row("r1"), row("r2")) // km/hours intentionally unreadable
         val result = DateServiceCountComparison.compare(rows, List(5) { "1405/05/03" }, start, end).single()
         assertEquals("1405/05/03", result.date)
         assertEquals(2, result.companyCount)
         assertEquals(5, result.appCount)
-        assertEquals(-3, result.difference)
+        assertEquals(3, result.difference)
         assertTrue(rows.all { it.km.isBlank() && it.hours.isBlank() })
     }
 
@@ -45,7 +45,7 @@ class DateServiceCountComparisonTest {
             row("group", kind = ReportRowKind.GROUPED), row("daily", kind = ReportRowKind.DAILY_TOTAL))
         val result = DateServiceCountComparison.compare(rows, emptyList(), start, end).single()
         assertEquals(1, result.companyCount)
-        assertEquals(1, result.difference)
+        assertEquals(-1, result.difference)
     }
 
     @Test fun persianArabicUnpaddedAndCompactDatesShareCanonicalDay() {
@@ -70,7 +70,7 @@ class DateServiceCountComparisonTest {
         val edited = listOf(original[0].copy(date = "1405/05/04"), original[1].copy(included = false))
         val result = DateServiceCountComparison.compare(edited, listOf("1405/05/03"), start, end)
         assertEquals(listOf("1405/05/03", "1405/05/04"), result.map { it.date })
-        assertEquals(listOf(-1, 1), result.map { it.difference })
+        assertEquals(listOf(1, -1), result.map { it.difference })
         assertEquals(copy, original)
     }
 
@@ -113,6 +113,36 @@ class DateServiceCountComparisonTest {
         assertEquals(1, rows.count { it.kind == ReportRowKind.GROUPED })
         assertEquals(listOf(2, 2), compared.map { it.companyCount })
         assertEquals(listOf(3, 3), compared.map { it.appCount })
-        assertEquals(listOf(-1, -1), compared.map { it.difference })
+        assertEquals(listOf(1, 1), compared.map { it.difference })
     }
+    @Test fun explicitDailyCorrectionIsLabelledAndNeverManufacturesRowsOrChangesAppDates() {
+        val rows = listOf(row("r1"), row("r2"))
+        val app = List(3) { "1405/05/03" }
+        val corrected = DateServiceCountComparison.compare(rows, app, start, end, mapOf("1405/05/03" to 4)).single()
+        assertEquals(4, corrected.companyCount)
+        assertEquals(2, corrected.extractedCount)
+        assertTrue(corrected.manuallyCorrected)
+        assertEquals(-1, corrected.difference)
+        assertEquals(2, rows.size)
+        assertEquals(3, app.size)
+        val original = DateServiceCountComparison.compare(rows, app, start, end).single()
+        assertEquals(2, original.companyCount)
+        assertEquals(1, original.difference)
+    }
+    @Test fun noIncludedCompanyServiceStillShowsAppOnlyDaysInsteadOfHidingComparison() {
+        val result = DateServiceCountComparison.compare(listOf(row("r1", included = false)), listOf(start, end), start, end)
+        assertEquals(listOf(start, end), result.map { it.date })
+        assertEquals(listOf(0, 0), result.map { it.companyCount })
+        assertEquals(listOf(1, 1), result.map { it.difference })
+    }
+    @Test fun explicitZeroAndAManualOnlyDateArePreservedWithoutPretendingTheyWereRead() {
+        val result = DateServiceCountComparison.compare(emptyList(), listOf(start), start, end, mapOf(start to 0, end to 2))
+        assertEquals(listOf(start, end), result.map { it.date })
+        assertEquals(listOf(0, 2), result.map { it.companyCount })
+        assertTrue(result.all { it.manuallyCorrected && it.extractedCount == 0 })
+    }
+    @Test(expected = IllegalArgumentException::class) fun negativeManualCountIsRejectedNotCoerced() {
+        DateServiceCountComparison.compare(emptyList(), emptyList(), start, end, mapOf(start to -1))
+    }
+
 }

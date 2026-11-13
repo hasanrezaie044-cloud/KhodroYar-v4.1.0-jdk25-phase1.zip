@@ -1,37 +1,49 @@
 # مدیریت خودرو — Native Android
 
-## Current source: 5.5.6 (versionCode 73), based on restored 5.4.0
+## Current source: 5.5.7 (versionCode 74), based on restored 5.4.0
 
 Same `com.khodroyar.app`, Room 6, financial formulas and original signing identity:
 
-- **Online-only report image OCR**: the unused native/offline engine, JNI libraries,
-  four traineddata files and print-reference fonts are removed. FastOCR uses the user's
-  encrypted personal key and explicit consent for **each** send. Ordinary records and
-  calculations still work offline. There is no runtime model download.
-- **Better date coverage/review**: preserve unrotated one-page PDFs byte-for-byte instead
-  of shrinking the photographed table; other pages/images use bounded high-resolution
-  preparation. Recover formatting such as glued ordinals, split years and table pipes.
-  Warn about ordinal gaps/partial replies; “not found in text” is not proof of no service.
-  Never create dates or services from app counts. Unknown hours remain unknown.
-- **Local review**: keep the online text privately with the draft, reparse without another
-  upload/charge, or explicitly enter/edit one page's OCR text. Old drafts remain readable.
-  Daily counts are read-only; individual-service comparison still requires reviewed data.
-- **Cafe Bazaar updates**: an asynchronous, timeout-bounded entry check asks Bazaar for
-  its published version code. A newer code offers **Update through Bazaar** / Later;
-  only user action opens the store's update sheet. Missing Bazaar/network never blocks entry.
-  Settings → About provides a manual check and listing link. No APK self-installer.
-- Existing guarded service/expense commands, approval/staleness checks, charts, exports,
-  IME/navigation safety and automation scheduling are preserved.
+- **Count-first company reports**: Reports → Company service counts shows a compact
+  date/company/app/difference table. Difference is **app − company**: company 2 and
+  app 3 on `1405/07/05` gives **+1**, even when all km/hours cells are blank. No
+  mandatory metric entry or review checkbox in this flow; row/metric review and source
+  pages remain optional dialogs. The report is deliberately absent from Tools.
+- **Extraction and verification**: preserve genuine dated rows across month boundaries,
+  repeated dates, missing metrics, wrapped/HTML cells and three-digit ordinals. Never
+  infer missing company rows from application totals. Explicit daily corrections are
+  marked `*`, reversible and stored separately in private draft version 5 (loads 1–5).
+  They never create, edit or delete application services. Equal counts do not prove
+  OCR coverage or service identity. Source warnings remain available without blocking counts.
+- **Online-only image OCR**: no native/offline OCR engine, models or runtime model
+  download. FastOCR uses the user's encrypted personal key and explicit consent for
+  **each** send. Saved text can be reparsed locally without another upload/charge;
+  ordinary records, calculations and the local agent still work offline.
+- **Isfahan traffic**: add Shahid Keshvari, Shahid Meysami and Shahid Habibollahi to the
+  three existing routes. Sourced endpoints, intermediate waypoints and response-geometry
+  checks cover one stated direction of each full named road, not both carriageways or
+  point-by-point congestion. These are travel-time estimates, not live-provider validation.
+- **Privacy & disclaimer v2**: shared in-app and Bazaar-ready Persian text covers
+  responsibility for inputs, incomplete/wrong OCR, unofficial outputs, optional third-party
+  services and decisions based on results. Existing v1 acceptance must be renewed explicitly.
+- **Cafe Bazaar updates preserved**: asynchronous entry notice and user-triggered Bazaar
+  action, Settings → About manual check; no APK self-installer or developer-account access.
+  Existing guarded record commands, approvals, charts, exports and IME/navigation safety remain.
 
-Guides: [FastOCR/report review (Persian)](docs/FASTOCR-ASSIST.md),
+Guides: [FastOCR/daily counts (Persian)](docs/FASTOCR-ASSIST.md),
+[route sources and limitations](docs/TRAFFIC-ROUTES.md),
+[Bazaar-ready privacy policy](docs/PRIVACY-POLICY.fa.md),
 [Bazaar publishing/update contract](docs/BAZAAR-UPDATES.md), [changes](CHANGELOG.md),
 [third-party notices](THIRD_PARTY_NOTICES.md).
 
 Verification is commit-specific: JVM contracts, native integration with a **mock FastOCR
-transport**, and the exact signed/R8 APK driven through SAF, consent/cancel and **synthetic
-text** review. A CI-only simulated store tests actual Binder/deep-link routing; it is not
-live Bazaar publishing or a live OCR quality test. No private report/API key enters CI.
-The delivered APK alone must stay **below 30,000,000 bytes**; test/store APKs are never delivered.
+transport**, narrow/large-font RTL UI, and the exact signed/R8 APK driven through real form
+submissions, SAF, consent/cancel and **synthetic text**. The signed test verifies the exact
+2/3/+1 example, reversible corrections and blank optional metrics. A CI-only simulated
+store tests actual Binder/deep-link routing; this is not live Bazaar publishing or a live
+OCR/traffic quality test. No private report/API key enters CI. Release publication waits
+for both runtime jobs and original-signature/size/audit/readback checks. The delivered
+APK alone must stay **below 30,000,000 bytes**; test/store APKs are never delivered.
 
 ## Preserved 5.4.0 baseline (versionCode 60)
 

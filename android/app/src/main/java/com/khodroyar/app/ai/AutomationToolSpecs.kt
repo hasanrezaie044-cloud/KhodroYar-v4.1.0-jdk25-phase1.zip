@@ -16,7 +16,7 @@ object AutomationToolSpecs {
             listOf(ToolParam("section", ParamType.ENUM, true, options = AgentSection.entries.map { it.wire }))),
         ToolSpec("list_automations", ToolKind.READ, "قانون‌های ثبت خودکار، وضعیت و آخرین نتیجه"),
         ToolSpec("get_service_preset", ToolKind.READ, "الگوی ذخیره‌شدهٔ سرویس رفت‌وآمد؛ نه تعمیرات خودرو"),
-        ToolSpec("get_traffic_status", ToolKind.READ, "دریافت آنلاین وضعیت سه مسیر تب ترافیک از نشان؛ مستقل از API هوش مصنوعی"),
+        ToolSpec("get_traffic_status", ToolKind.READ, "دریافت آنلاین وضعیت مسیرهای تب ترافیک از نشان؛ مستقل از API هوش مصنوعی"),
         ToolSpec("set_traffic_alerts", ToolKind.WRITE, "فعال/متوقف‌کردن اعلان تغییر وضعیت مسیرهای تب ترافیک؛ نیاز به کلید نشان و اینترنت",
             listOf(ToolParam("state", ParamType.ENUM, true, options = listOf("on", "off")))),
         ToolSpec("create_expense_rule", ToolKind.WRITE, "ایجاد ثبت واقعی هزینهٔ تکراری پس از تأیید؛ پولی پرداخت نمی‌کند",

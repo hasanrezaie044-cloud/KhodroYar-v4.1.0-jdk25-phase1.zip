@@ -25,9 +25,11 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.testTagsAsResourceId
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextDirection
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
@@ -38,31 +40,41 @@ import com.khodroyar.app.workreport.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
-/** The existing Reports/toolkit route, not a separate activity or app. No database writer. */
+/** Reports sub-screen. Daily counts are primary; no metric/review gate or DB writer. */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun WorkReportScreen(vm: WorkReportViewModel = viewModel()) {
     val progress by vm.progress.collectAsState()
     var preview by remember { mutableStateOf<ReportPage?>(null) }
+    var showPages by remember { mutableStateOf(false) }
+    var showRows by remember { mutableStateOf(false) }
+    var showDetails by remember { mutableStateOf(false) }
+    var showWarnings by remember { mutableStateOf(false) }
+    var editDay by remember { mutableStateOf<String?>(null) }
     var showTextImport by remember { mutableStateOf(false) }
     var confirmReset by remember { mutableStateOf(false) }
     var pageAction by remember { mutableStateOf<(() -> Unit)?>(null) }
     var showComparison by remember { mutableStateOf(false) }
     var onlineConsent by remember { mutableStateOf(false) }
-    val horizontal = rememberScrollState()
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
         if (uris.isNotEmpty()) vm.importDocuments(uris)
     }
-    fun changePages(action: () -> Unit) { if (vm.rows.isEmpty()) action() else pageAction = action }
-    LaunchedEffect(vm.comparison, vm.sparseComparison) { if (vm.comparison != null || vm.sparseComparison != null) showComparison = true }
-    LaunchedEffect(vm.recognized) { horizontal.scrollTo(0) }
+    fun changePages(action: () -> Unit) {
+        if (vm.rows.isEmpty() && vm.companyCounts.isEmpty()) action() else pageAction = action
+    }
+    LaunchedEffect(vm.comparison, vm.sparseComparison) {
+        if (vm.comparison != null || vm.sparseComparison != null) { showDetails = false; showComparison = true }
+    }
     BackHandler(vm.busy) { vm.stop() }
 
     Column(Modifier.fillMaxSize().testTag("work-report-screen")) {
-        FlowRow(Modifier.fillMaxWidth().padding(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
             FilledTonalButton(onClick = { changePages { picker.launch(arrayOf("image/*", "application/pdf")) } }, enabled = !vm.busy,
-                modifier = Modifier.testTag("report-import")) { Icon(Icons.Outlined.AddPhotoAlternate, null); Spacer(Modifier.width(6.dp)); Text("انتخاب عکس / PDF") }
-            TextButton(onClick = { confirmReset = true }, enabled = !vm.busy) { Text("پاک کردن پیش‌نویس") }
+                modifier = Modifier.testTag("report-import")) {
+                Icon(Icons.Outlined.AddPhotoAlternate, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text("عکس / PDF")
+            }
+            Spacer(Modifier.weight(1f))
+            if (vm.pages.isNotEmpty()) TextButton(onClick = { confirmReset = true }, enabled = !vm.busy) { Text("پاک کردن") }
         }
         if (vm.busy) {
             LinearProgressIndicator(Modifier.fillMaxWidth().padding(horizontal = 16.dp))
@@ -72,147 +84,259 @@ fun WorkReportScreen(vm: WorkReportViewModel = viewModel()) {
             }
         }
         vm.error?.let { message ->
-            Surface(color = MaterialTheme.colorScheme.errorContainer, modifier = Modifier.fillMaxWidth().padding(12.dp), shape = FieldShape) {
-                Row(Modifier.padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Text(message, Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
-                    IconButton(onClick = vm::clearError) { Icon(Icons.Outlined.Close, "بستن خطا") }
-                }
+            Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text(message, Modifier.weight(1f), color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+                IconButton(onClick = vm::clearError) { Icon(Icons.Outlined.Close, "بستن خطا") }
             }
         }
-        LazyColumn(Modifier.weight(1f).fillMaxWidth().testTag("work-report-list"), contentPadding = PaddingValues(12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        LazyColumn(Modifier.weight(1f).fillMaxWidth().testTag("work-report-list"), contentPadding = PaddingValues(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             if (vm.pages.isEmpty()) item {
-                EmptyState("گزارش شرکت را انتخاب کنید", "خواندن تصویر با FastOCR و اینترنت انجام می‌شود؛ هر ارسال فقط با تأیید شماست. موتور آفلاین حذف شده است.", Icons.Outlined.DocumentScanner)
+                EmptyState("گزارش شرکت", "عکس یا PDF را انتخاب کنید؛ خواندن آنلاین فقط با تأیید شماست.", Icons.Outlined.DocumentScanner)
             }
             if (vm.pages.isNotEmpty()) item {
-                Text("${vm.pages.size} صفحه · ترتیب و جهت را قبل از پردازش بررسی کنید", style = MaterialTheme.typography.labelLarge)
-                LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    items(vm.pages, key = { it.id }) { page ->
-                        SurfaceCard(modifier = Modifier.width(228.dp), contentPadding = 8.dp) {
-                            Text("صفحهٔ ${vm.pages.indexOf(page) + 1} · ${page.name}", maxLines = 2, style = MaterialTheme.typography.labelSmall)
-                            TextButton(onClick = { preview = page }, modifier = Modifier.fillMaxWidth()) {
-                                PageImage(vm.documents, page, Modifier.fillMaxWidth().height(120.dp), thumbnail = true)
-                            }
-                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
-                                IconButton(onClick = { changePages { vm.move(page.id, -1) } }, enabled = !vm.busy && page != vm.pages.first()) { Icon(Icons.Outlined.ArrowUpward, "صفحه جلوتر") }
-                                IconButton(onClick = { changePages { vm.move(page.id, 1) } }, enabled = !vm.busy && page != vm.pages.last()) { Icon(Icons.Outlined.ArrowDownward, "صفحه عقب‌تر") }
-                                IconButton(onClick = { changePages { vm.rotate(page.id) } }, enabled = !vm.busy) { Icon(Icons.Outlined.RotateRight, "چرخش ۹۰ درجه") }
-                                IconButton(onClick = { changePages { vm.remove(page.id) } }, enabled = !vm.busy) { Icon(Icons.Outlined.DeleteOutline, "حذف صفحه") }
-                            }
-                        }
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    TextButton(onClick = { showPages = true }, modifier = Modifier.testTag("report-source-pages")) { Text("${vm.pages.size} صفحه") }
+                    Spacer(Modifier.weight(1f))
+                    Button(onClick = { onlineConsent = true }, enabled = !vm.busy && vm.pages.size in 1..10,
+                        modifier = Modifier.testTag("report-online-assist")) {
+                        Icon(Icons.Outlined.CloudUpload, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp))
+                        Text(if (vm.recognized.isEmpty()) "خواندن آنلاین" else "ارسال دوباره")
                     }
                 }
-                OutlinedButton(onClick = { onlineConsent = true }, enabled = !vm.busy && vm.pages.size in 1..10,
-                    modifier = Modifier.fillMaxWidth().testTag("report-online-assist")) {
-                    Icon(Icons.Outlined.CloudUpload, null); Spacer(Modifier.width(8.dp))
-                    Text(if (vm.rows.isEmpty()) "خواندن آنلاین با FastOCR" else "خواندن دوبارهٔ آنلاین (ارسال مجدد)")
-                }
-                Text("ارسال با وضوح بالا؛ برای PDF تک‌صفحه‌ای اصل فایل ارسال می‌شود. قبل از ارسال، حاشیه‌های اضافی عکس را تا حد امکان کم کنید.",
-                    style = MaterialTheme.typography.bodySmall)
-                if (vm.pages.size > 10) Text("برای هر ارسال آنلاین حداکثر ۱۰ صفحه انتخاب کنید.", color = MaterialTheme.colorScheme.error)
-                if (vm.recognized.any { it.source != ReportTextSource.LEGACY && it.text.isNotBlank() })
-                    TextButton(onClick = { changePages { vm.reparseSavedText() } }, enabled = !vm.busy,
-                        modifier = Modifier.fillMaxWidth().testTag("report-reparse")) { Text("بازخوانی متن ذخیره‌شده (بدون ارسال و هزینه)") }
-                TextButton(onClick = { showTextImport = true }, enabled = !vm.busy,
-                    modifier = Modifier.fillMaxWidth().testTag("report-import-text")) { Text("ورود / بازبینی متن یک صفحه") }
+                if (vm.pages.size > 10) Text("حداکثر ۱۰ صفحه در هر ارسال", style = MaterialTheme.typography.bodySmall)
             }
-            if (vm.readWarnings.isNotEmpty()) item {
-                SurfaceCard {
-                    Text("پوشش خواندن نیاز به بررسی دارد", color = MaterialTheme.colorScheme.error,
-                        modifier = Modifier.testTag("report-read-warning"))
-                    vm.readWarnings.forEach { Text(it, style = MaterialTheme.typography.bodySmall) }
-                }
-            }
-            if (vm.recognized.isNotEmpty()) item {
-                SurfaceCard {
-                    Text("جدول بازبینی", style = MaterialTheme.typography.titleMedium)
-                    Text("${vm.rows.count { it.included }} ردیف انتخاب‌شده · ${vm.rows.count { !it.included }} ردیف کنارگذاشته‌شده", style = MaterialTheme.typography.bodySmall)
-                    Text("هر ردیف فرم شرکت یک سرویس است؛ «ردیف» تعداد سرویس نیست. ساعت خالی، نقطه یا خط تیره نامشخص است، نه صفر؛ مقایسهٔ تعداد/کیلومتر ممکن است ولی ساعت و هویت سرویس قطعی نمی‌شود. ساعت عددی اعشاری یا HH:mm؛ مسیر فقط برای شناسایی در بازبینی نمایش داده می‌شود.", style = MaterialTheme.typography.bodySmall)
-                    if (vm.rows.any { it.kind == ReportRowKind.GROUPED }) Text("شرح تجمیعی دیده شده است؛ پوشش آن در نتیجه باید دستی تعیین شود تا سرویس پوشش‌داده‌شده، جاافتاده اعلام نشود.", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
-                    if (vm.links.isNotEmpty()) TextButton(onClick = vm::clearLinks, enabled = !vm.busy) { Text("بازنشانی ${vm.links.size} تطبیق دستی (بدون تغییر سوابق)") }
-                    Row {
-                        TextButton(onClick = vm::addRow, enabled = !vm.busy) { Text("افزودن ردیف دستی") }
+            // The range can be supplied even when extraction found no company
+            // rows. App-only dates must not disappear behind an early return.
+            if (vm.pages.isNotEmpty()) item {
+                SurfaceCard(contentPadding = 10.dp) {
+                    Text("تعداد روزانه", style = MaterialTheme.typography.titleSmall, modifier = Modifier.testTag("report-date-compare-title"))
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        ReportRangeField("از", vm.start, !vm.busy, Modifier.weight(1f)) { vm.range(it, vm.end) }
+                        ReportRangeField("تا", vm.end, !vm.busy, Modifier.weight(1f)) { vm.range(vm.start, it) }
                     }
-                    JalaliDateField("ابتدای بازهٔ کامل گزارش", vm.start, { vm.range(it, vm.end) })
-                    Spacer(Modifier.height(8.dp))
-                    JalaliDateField("پایان بازهٔ کامل گزارش", vm.end, { vm.range(vm.start, it) })
-                    Text(vm.periodNote.ifBlank { "بازه را از سند بررسی کنید." }, style = MaterialTheme.typography.labelSmall)
-                    Text("همهٔ ۲ یا ۳ برگهٔ یک دوره را با هم انتخاب کنید. روزهای اول/آخر ماه که فقط در برنامه هستند هم باید در بازه باشند.", style = MaterialTheme.typography.labelSmall)
+                    if (vm.companyCounts.isNotEmpty()) Text("* اصلاح شما", style = MaterialTheme.typography.labelSmall)
+                    Text("اختلاف = برنامه − شرکت · با اصل سند بررسی کنید.", style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    if (vm.dateComparison.isNotEmpty()) Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text("شرکت ${vm.dateComparison.sumOf { it.companyCount }}", style = MaterialTheme.typography.labelLarge, modifier = Modifier.testTag("report-total-company"))
+                        Text("برنامه ${vm.dateComparison.sumOf { it.appCount }}", style = MaterialTheme.typography.labelLarge, modifier = Modifier.testTag("report-total-app"))
+                        Text("اختلاف ${signedCount(vm.dateComparison.sumOf { it.difference })}", style = MaterialTheme.typography.labelLarge, modifier = Modifier.testTag("report-total-difference"))
+                    }
+                }
+            }
+            if (vm.readWarnings.isNotEmpty() || vm.rows.any { it.included && it.kind != ReportRowKind.SERVICE }) item {
+                TextButton(onClick = { showWarnings = true }, modifier = Modifier.testTag("report-read-warning")) {
+                    Icon(Icons.Outlined.Info, null, Modifier.size(16.dp)); Spacer(Modifier.width(6.dp)); Text("پوشش خواندن را بررسی کنید")
                 }
             }
             if (vm.dateComparison.isNotEmpty()) {
-                item(key = "report-date-compare-header") {
-                    SurfaceCard {
-                        Text("مقایسهٔ روزبه‌روز (تعداد سرویس)", style = MaterialTheme.typography.titleSmall,
-                            modifier = Modifier.testTag("report-date-compare-title"))
-                        Text("از ردیف‌های خوانده‌شده و انتخاب‌شده؛ «در متن یافت نشد» به معنی نبود سرویس در اصل سند نیست. برابری تعداد هم تطابق هویت نیست.",
-                            style = MaterialTheme.typography.bodySmall)
-                        if (vm.rows.any { it.included && it.kind == ReportRowKind.GROUPED })
-                            Text("شرح‌های تجمیعی در تعداد سرویس شمرده نشده‌اند؛ پوشش آن‌ها باید دستی تعیین شود.",
-                                color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
-                        Text("این مقایسه فقط خواندنی است؛ هیچ سرویسی خودکار ثبت یا حذف نمی‌شود.",
-                            color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
-                    }
-                }
-                items(vm.dateComparison, key = { "date-compare:${it.date}" }) { d ->
-                    SurfaceCard(modifier = Modifier.testTag("report-date-compare-${d.date}")) {
-                        Text(d.date, style = MaterialTheme.typography.labelLarge)
-                        FlowRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                            Text(if (d.companyCount == 0) "شرکت: در متن یافت نشد" else "شرکت ${d.companyCount} سرویس")
-                            Text("برنامه ${d.appCount} سرویس")
-                            Text(if (d.difference == 0) "برابر ✓" else "اختلاف ${kotlin.math.abs(d.difference)}",
-                                color = if (d.difference == 0) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error)
-                        }
-                    }
+                item(key = "report-date-compare-header") { DateCountTableHeader() }
+                items(vm.dateComparison, key = { "date-compare:${it.date}" }) { day ->
+                    DateCountTableRow(day, enabled = !vm.busy, onEdit = { editDay = day.date })
                 }
             }
             vm.dateComparisonError?.let { message -> item {
-                Text(message, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall,
-                    modifier = Modifier.testTag("report-date-compare-error"))
-            } }
-            if (vm.rows.isNotEmpty()) item {
-                Row(Modifier.horizontalScroll(horizontal).width(760.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("شامل", Modifier.width(48.dp)); Text("تاریخ", Modifier.width(160.dp)); Text("تعداد", Modifier.width(90.dp))
-                    Text("کیلومتر", Modifier.width(120.dp)); Text("ساعت", Modifier.width(120.dp)); Text("اصل صفحه", Modifier.width(120.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(message, Modifier.weight(1f).testTag("report-date-compare-error"), style = MaterialTheme.typography.bodySmall)
+                    TextButton(onClick = vm::retryDateComparison) { Text("تلاش دوباره") }
                 }
+            } }
+            if (vm.recognized.isNotEmpty() && vm.dateComparison.isEmpty() && !vm.busy && vm.dateComparisonError == null) item {
+                Text("برای این بازه تعدادی یافت نشد.", style = MaterialTheme.typography.bodySmall)
             }
-            items(vm.rows, key = { it.id }) { row ->
-                ReportRowEditor(row, horizontal, enabled = !vm.busy, onChange = vm::edit,
-                    onPreview = { preview = vm.pages.firstOrNull { it.id == row.pageId } })
-            }
-            if (vm.rows.isNotEmpty()) item {
-                SurfaceCard {
-                    val invalid = vm.rows.count { it.included && it.reviewed() == null }
-                    if (invalid > 0) Text("$invalid ردیف مقدار نامعتبر/ناخوانا دارد؛ ابتدا اصلاح کنید یا صریحاً از مقایسه کنار بگذارید.", color = MaterialTheme.colorScheme.error)
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Checkbox(checked = vm.reviewConfirmed, onCheckedChange = { if (!vm.busy) vm.setReview(it) }, modifier = Modifier.testTag("report-review-confirm"))
-                        Text("جدول، صفحه‌ها، بازه و ردیف‌های کنارگذاشته‌شده را با سند اصلی بازبینی کردم.", style = MaterialTheme.typography.bodySmall)
-                    }
+            if (vm.pages.isNotEmpty()) item {
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    TextButton(onClick = { editDay = "" }, enabled = !vm.busy, modifier = Modifier.testTag("report-add-count")) { Text("افزودن روز") }
+                    TextButton(onClick = { showRows = true }, enabled = !vm.busy, modifier = Modifier.testTag("report-edit-rows")) { Text("اصلاح ردیف‌ها") }
+                    TextButton(onClick = { showTextImport = true }, enabled = !vm.busy, modifier = Modifier.testTag("report-import-text")) { Text("متن صفحه") }
+                    if (vm.recognized.any { it.source != ReportTextSource.LEGACY && it.text.isNotBlank() })
+                        TextButton(onClick = { changePages { vm.reparseSavedText() } }, enabled = !vm.busy,
+                            modifier = Modifier.testTag("report-reparse")) { Text("تحلیل دوبارهٔ متن") }
+                    if (vm.rows.isNotEmpty()) TextButton(onClick = { showDetails = true }, enabled = !vm.busy,
+                        modifier = Modifier.testTag("report-open-details")) { Text("جزئیات اختیاری") }
                 }
             }
         }
-        if (vm.rows.isNotEmpty()) Surface(shadowElevation = 3.dp) {
-            Column(Modifier.fillMaxWidth().padding(12.dp)) {
-                Button(onClick = vm::compare, enabled = !vm.busy && vm.reviewConfirmed, modifier = Modifier.fillMaxWidth().testTag("report-compare")) { Text("مقایسهٔ تک‌تک سرویس‌ها با خودرویار") }
-                if (vm.comparison != null || vm.sparseComparison != null) TextButton(onClick = { showComparison = true }, modifier = Modifier.fillMaxWidth()) { Text("نمایش نتیجهٔ مقایسه") }
-            }
+    }
+    if (showPages) ReportPagesDialog(vm, onPreview = { preview = it }, onChange = ::changePages) { showPages = false }
+    if (showRows) ReportRowsDialog(vm, onPreview = { row -> preview = vm.pages.firstOrNull { it.id == row.pageId } }) { showRows = false }
+    if (showDetails) ReportDetailsDialog(vm, onPreview = { row -> preview = vm.pages.firstOrNull { it.id == row.pageId } }) { showDetails = false }
+    editDay?.let { date -> ReportCountCorrectionDialog(vm, date) { editDay = null } }
+    if (showWarnings) FullReportDialog({ showWarnings = false }, "پوشش گزارش") {
+        Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            vm.readWarnings.forEach { Text(it, style = MaterialTheme.typography.bodySmall) }
+            if (vm.rows.any { it.included && it.kind != ReportRowKind.SERVICE }) Text("ردیف‌های تجمیعی در تعداد سرویس شمرده نمی‌شوند؛ تعداد روز را از سند اصلاح کنید.", style = MaterialTheme.typography.bodySmall)
+            Text("صفرِ شرکت یعنی در متن ردیفی یافت نشد، نه اثبات نبود سرویس. برابری تعداد نیز تطابق سرویس‌ها را ثابت نمی‌کند.", style = MaterialTheme.typography.bodySmall)
         }
     }
     preview?.let { page ->
         FullReportDialog(onClose = { preview = null }, title = "اصل صفحه · ${page.name}") {
             PageImage(vm.documents, page, Modifier.weight(1f).fillMaxWidth(), thumbnail = false)
-            Text("چرخش و ترتیب از فهرست صفحه‌ها قابل تغییر است.", Modifier.padding(12.dp), style = MaterialTheme.typography.bodySmall)
         }
     }
     if (showTextImport) ReportTextImportDialog(vm) { showTextImport = false }
-    if (confirmReset) ConfirmDialog("پاک کردن پیش‌نویس مقایسه", "فقط اسناد واردشده و جدول OCR پاک می‌شود؛ سرویس‌ها و داده‌های اصلی برنامه تغییر نمی‌کنند.",
+    if (confirmReset) ConfirmDialog("پاک کردن پیش‌نویس؟", "فقط گزارش و اصلاح‌های آن پاک می‌شوند؛ سوابق برنامه حفظ می‌شوند.",
         confirmLabel = "پاک کردن", destructive = true, onConfirm = { confirmReset = false; vm.reset() }, onDismiss = { confirmReset = false })
-    pageAction?.let { action -> ConfirmDialog("بازنشانی جدول OCR", "تغییر صفحه‌ها یا خواندن دوباره، ویرایش‌های جدول فعلی را پاک می‌کند. سوابق اصلی برنامه تغییر نمی‌کنند.",
+    pageAction?.let { action -> ConfirmDialog("تحلیل تازه؟", "ردیف‌ها و اصلاح‌های پیش‌نویس بازنشانی می‌شوند؛ سوابق برنامه تغییر نمی‌کنند.",
         confirmLabel = "ادامه", onConfirm = { pageAction = null; action() }, onDismiss = { pageAction = null }) }
     if (onlineConsent) FastOcrAssistDialog(vm) { onlineConsent = false }
     if (showComparison) {
         val partial = vm.sparseComparison
         if (partial != null) SparseHoursComparisonDialog(partial, onLink = { company, app -> vm.link(company, app); showComparison = false }) { showComparison = false }
         else vm.comparison?.let { result -> WorkComparisonDialog(result, onLink = { company, app -> vm.link(company, app); showComparison = false }) { showComparison = false } }
+    }
+}
+
+@Composable
+private fun ReportRangeField(label: String, value: String, enabled: Boolean, modifier: Modifier, onValue: (String) -> Unit) {
+    var open by remember { mutableStateOf(false) }
+    OutlinedButton(onClick = { open = true }, enabled = enabled, modifier = modifier.semantics { contentDescription = "$label: $value" },
+        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp), shape = FieldShape) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Text(label, style = MaterialTheme.typography.labelSmall)
+            Text(value.ifBlank { "انتخاب" }, style = MaterialTheme.typography.bodySmall.copy(textDirection = TextDirection.Ltr))
+        }
+    }
+    if (open) JalaliDatePickerDialog(value, label, onDismiss = { open = false }, onPick = { onValue(it); open = false })
+}
+
+private fun signedCount(value: Int): String = if (value > 0) "+$value" else value.toString()
+
+@Composable
+private fun RowScope.CountColumn(text: String, weight: Float, tag: String = "", muted: Boolean = false) {
+    Text(text, Modifier.weight(weight).then(if (tag.isBlank()) Modifier else Modifier.testTag(tag)),
+        style = MaterialTheme.typography.bodySmall.copy(textDirection = TextDirection.Ltr, textAlign = TextAlign.Center),
+        color = if (muted) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface)
+}
+
+@Composable
+private fun DateCountTableHeader() {
+    Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+        CountColumn("تاریخ", 1.75f, muted = true)
+        CountColumn("شرکت", .7f, muted = true); CountColumn("برنامه", .7f, muted = true); CountColumn("اختلاف", .7f, muted = true)
+        Spacer(Modifier.width(40.dp))
+    }
+}
+
+@Composable
+private fun DateCountTableRow(day: DateServiceComparison, enabled: Boolean, onEdit: () -> Unit) {
+    Surface(shape = FieldShape, color = MaterialTheme.colorScheme.surfaceContainerLow,
+        modifier = Modifier.fillMaxWidth().testTag("report-date-compare-${day.date}")) {
+        Row(Modifier.fillMaxWidth().heightIn(min = 52.dp), verticalAlignment = Alignment.CenterVertically) {
+            CountColumn(day.date, 1.75f, "report-count-date-${day.date}")
+            CountColumn("${day.companyCount}${if (day.manuallyCorrected) "*" else ""}", .7f, "report-count-company-${day.date}")
+            CountColumn(day.appCount.toString(), .7f, "report-count-app-${day.date}")
+            CountColumn(signedCount(day.difference), .7f, "report-count-difference-${day.date}")
+            IconButton(onClick = onEdit, enabled = enabled, modifier = Modifier.width(40.dp).testTag("report-count-edit-${day.date}")) {
+                Icon(Icons.Outlined.Edit, "اصلاح تعداد ${day.date}", Modifier.size(18.dp))
+            }
+        }
+    }
+}
+
+@Composable
+private fun ReportCountCorrectionDialog(vm: WorkReportViewModel, initialDate: String, close: () -> Unit) {
+    var date by remember(initialDate) { mutableStateOf(initialDate) }
+    val current = vm.dateComparison.firstOrNull { it.date == initialDate }
+    var count by remember(initialDate) { mutableStateOf(current?.companyCount?.toString().orEmpty()) }
+    FullReportDialog(close, "اصلاح تعداد شرکت") {
+        Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            OutlinedTextField(date, { date = ReportDateText.normalize(it.take(16)) }, readOnly = initialDate.isNotEmpty(), label = { Text("تاریخ") },
+                modifier = Modifier.fillMaxWidth().testTag("report-count-date-input"), singleLine = true,
+                textStyle = LocalTextStyle.current.copy(textDirection = TextDirection.Ltr), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Ascii))
+            OutlinedTextField(count, { count = it.take(12) }, label = { Text("تعداد شرکت") }, modifier = Modifier.fillMaxWidth().testTag("report-count-input"),
+                singleLine = true, textStyle = LocalTextStyle.current.copy(textDirection = TextDirection.Ltr), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number))
+            val day = vm.dateComparison.firstOrNull { it.date == PersianInput.date(date) }
+            Text("خوانده‌شده: ${day?.extractedCount ?: 0} · برنامه: ${day?.appCount ?: 0}", style = MaterialTheme.typography.bodySmall)
+            Text("اصلاح شما با * مشخص می‌شود؛ ردیف OCR یا سرویس برنامه ساخته و تغییر داده نمی‌شود.", style = MaterialTheme.typography.bodySmall)
+            if (day != null && day.companyCount == 0 && !day.manuallyCorrected) Text("صفر یعنی در متن یافت نشد؛ اصل سند را بررسی کنید.", style = MaterialTheme.typography.bodySmall)
+            val canonical = PersianInput.date(date)
+            if (canonical != null && (vm.start.isBlank() || vm.end.isBlank() || canonical !in vm.start..vm.end))
+                Text("ابتدا بازهٔ گزارش را برای این تاریخ تنظیم کنید.", style = MaterialTheme.typography.bodySmall)
+            if (date in vm.companyCounts) TextButton(onClick = { vm.restoreCompanyCount(date); close() }, enabled = !vm.busy,
+                modifier = Modifier.testTag("report-count-restore")) { Text("استفاده از تعداد خوانده‌شده") }
+        }
+        Button(onClick = { if (vm.correctCompanyCount(date, count)) close() },
+            enabled = !vm.busy && PersianInput.date(date)?.let { it in vm.start..vm.end } == true && PersianInput.count(count) != null,
+            modifier = Modifier.fillMaxWidth().padding(12.dp).testTag("report-count-save")) { Text("ثبت اصلاح") }
+    }
+}
+
+@Composable
+private fun ReportRowsDialog(vm: WorkReportViewModel, onPreview: (ReportRow) -> Unit, close: () -> Unit) {
+    FullReportDialog(close, "ردیف‌های شرکت") {
+        LazyColumn(Modifier.weight(1f).fillMaxWidth().testTag("report-rows-list"), contentPadding = PaddingValues(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            item {
+                Text("اصلاح تاریخ و انتخاب ردیف؛ بدون نیاز به کیلومتر و ساعت.", style = MaterialTheme.typography.bodySmall)
+                TextButton(onClick = vm::addRow, enabled = !vm.busy, modifier = Modifier.testTag("report-add-row")) { Text("افزودن سرویس از سند") }
+            }
+            items(vm.rows, key = { it.id }) { row ->
+                SurfaceCard(contentPadding = 8.dp) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Checkbox(row.included, { vm.edit(row.copy(included = it)) }, enabled = !vm.busy, modifier = Modifier.testTag("report-row-include-${row.id}"))
+                        OutlinedTextField(row.date, { vm.edit(row.copy(date = it.take(16))) }, label = { Text("تاریخ") }, enabled = !vm.busy,
+                            modifier = Modifier.weight(1f).testTag("report-row-date-${row.id}"), singleLine = true,
+                            isError = row.included && ReportDateText.parse(row.date) == null,
+                            textStyle = LocalTextStyle.current.copy(textDirection = TextDirection.Ltr), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Ascii))
+                        IconButton(onClick = { onPreview(row) }) { Icon(Icons.Outlined.Image, "صفحهٔ ${row.page}") }
+                    }
+                    Text("صفحه ${row.page} · ردیف ${row.ordinal.ifBlank { (row.line + 1).toString() }}${if (row.id.startsWith("manual:")) " · دستی" else ""}", style = MaterialTheme.typography.labelSmall)
+                    SelectionContainer { Text(row.raw, maxLines = 2, style = MaterialTheme.typography.labelSmall.copy(textDirection = TextDirection.Content)) }
+                    if (row.kind != ReportRowKind.DAILY_TOTAL) TextButton(onClick = {
+                        vm.edit(row.copy(kind = if (row.kind == ReportRowKind.GROUPED) ReportRowKind.SERVICE else ReportRowKind.GROUPED, count = "1"))
+                    }, enabled = !vm.busy) { Text(if (row.kind == ReportRowKind.GROUPED) "تجمیعی؛ تغییر به سرویس" else "یک سرویس؛ تغییر به تجمیعی") }
+                    else Text("جمع روزانه؛ در شمارش ردیف‌های سرویس نیست", style = MaterialTheme.typography.labelSmall)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ReportPagesDialog(vm: WorkReportViewModel, onPreview: (ReportPage) -> Unit, onChange: (() -> Unit) -> Unit, close: () -> Unit) {
+    FullReportDialog(close, "صفحه‌های گزارش") {
+        LazyColumn(Modifier.weight(1f).fillMaxWidth(), contentPadding = PaddingValues(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            items(vm.pages, key = { it.id }) { page ->
+                SurfaceCard {
+                    Text("${vm.pages.indexOf(page) + 1} · ${page.name}", maxLines = 2, style = MaterialTheme.typography.labelSmall)
+                    TextButton(onClick = { onPreview(page) }, modifier = Modifier.fillMaxWidth()) {
+                        PageImage(vm.documents, page, Modifier.fillMaxWidth().height(140.dp), thumbnail = true)
+                    }
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
+                        IconButton(onClick = { onChange { vm.move(page.id, -1) } }, enabled = !vm.busy && page != vm.pages.first()) { Icon(Icons.Outlined.ArrowUpward, "صفحه جلوتر") }
+                        IconButton(onClick = { onChange { vm.move(page.id, 1) } }, enabled = !vm.busy && page != vm.pages.last()) { Icon(Icons.Outlined.ArrowDownward, "صفحه عقب‌تر") }
+                        IconButton(onClick = { onChange { vm.rotate(page.id) } }, enabled = !vm.busy) { Icon(Icons.Outlined.RotateRight, "چرخش ۹۰ درجه") }
+                        IconButton(onClick = { onChange { vm.remove(page.id) } }, enabled = !vm.busy) { Icon(Icons.Outlined.DeleteOutline, "حذف صفحه") }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/** Optional legacy metric review stays off the count-first main flow. */
+@Composable
+private fun ReportDetailsDialog(vm: WorkReportViewModel, onPreview: (ReportRow) -> Unit, close: () -> Unit) {
+    val horizontal = rememberScrollState()
+    FullReportDialog(close, "جزئیات اختیاری") {
+        LazyColumn(Modifier.weight(1f).fillMaxWidth().testTag("report-details-list"), contentPadding = PaddingValues(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            item {
+                Text("کیلومتر و ساعت فقط برای تطبیق جزئی؛ شمارش روزانه مستقل است.", style = MaterialTheme.typography.bodySmall)
+                if (vm.companyCounts.isNotEmpty()) Text("اصلاح تعداد روزانه در این بخش اعمال نمی‌شود؛ مبنا ردیف‌های سند است.", style = MaterialTheme.typography.bodySmall)
+                if (vm.links.isNotEmpty()) TextButton(onClick = vm::clearLinks) { Text("بازنشانی تطبیق‌های دستی") }
+            }
+            items(vm.rows, key = { it.id }) { row ->
+                ReportRowEditor(row, horizontal, enabled = !vm.busy, onChange = vm::edit, onPreview = { onPreview(row) })
+            }
+            item {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Checkbox(vm.reviewConfirmed, vm::setReview, enabled = !vm.busy, modifier = Modifier.testTag("report-review-confirm"))
+                    Text("جزئیات و بازه را با سند بررسی کردم.", style = MaterialTheme.typography.bodySmall)
+                }
+                vm.error?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
+                Button(onClick = vm::compare, enabled = !vm.busy && vm.reviewConfirmed, modifier = Modifier.fillMaxWidth().testTag("report-compare")) { Text("تطبیق جزئیات") }
+            }
+        }
     }
 }
 
@@ -225,7 +349,7 @@ private fun ReportRowEditor(row: ReportRow, scroll: ScrollState, enabled: Boolea
             ReportCell(row.count, if (row.kind == ReportRowKind.DAILY_TOTAL) "تعداد" else "یک ردیف", 90, enabled && row.kind == ReportRowKind.DAILY_TOTAL,
                 row.included && PersianInput.count(row.count) == null, "report-cell-${row.id}-count") { onChange(row.copy(count = it)) }
             ReportCell(row.km, "کیلومتر", 120, enabled, row.included && PersianInput.decimal(row.km) == null, "report-cell-${row.id}-km") { onChange(row.copy(km = it)) }
-            ReportCell(row.hours, "ساعت (می‌تواند خالی باشد)", 120, enabled,
+            ReportCell(row.hours, "ساعت", 120, enabled,
                 row.included && PersianInput.hours(row.hours) == null && !ReportHoursText.isEmpty(row.hours),
                 "report-cell-${row.id}-hours") { onChange(row.copy(hours = it, hoursBlank = ReportHoursText.isEmpty(it))) }
             TextButton(onClick = onPreview, modifier = Modifier.width(120.dp)) { Text("صفحهٔ ${row.page}") }
@@ -236,9 +360,6 @@ private fun ReportRowEditor(row: ReportRow, scroll: ScrollState, enabled: Boolea
                 Text(if (row.kind == ReportRowKind.GROUPED) "تغییر به یک سرویس" else "این ردیف تجمیعی است")
             }
         }
-        Text((listOf(row.note) + if (row.included) row.fieldMessages() else emptyList()).filter { it.isNotBlank() }.joinToString("\n"),
-            color = if (row.included && row.reviewed() == null) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
-            style = MaterialTheme.typography.labelSmall)
         SelectionContainer { Text(row.raw, style = MaterialTheme.typography.labelSmall.copy(textDirection = TextDirection.Content)) }
     }
 }
@@ -289,7 +410,7 @@ private fun ReportTextImportDialog(vm: WorkReportViewModel, close: () -> Unit) {
     val page = vm.pages.getOrNull(selected)
     var text by remember(page?.id) { mutableStateOf(vm.recognized.firstOrNull { it.id == page?.id }?.text.orEmpty()) }
     FullReportDialog(close, "متن صفحهٔ گزارش") {
-        Text("متن صادرشده از OCR را وارد یا متن قبلی را بازبینی کنید. فقط جدول همین صفحه بازنشانی می‌شود؛ ارسال اینترنتی انجام نمی‌شود.",
+        Text("متن همین صفحه؛ بدون ارسال. اصلاح‌های پیش‌نویس بازنشانی می‌شوند.",
             Modifier.padding(12.dp), style = MaterialTheme.typography.bodySmall)
         LazyRow(Modifier.fillMaxWidth().padding(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             items(vm.pages.size) { index -> FilterChip(selected = selected == index, onClick = { selected = index }, label = { Text("صفحهٔ ${index + 1}") }) }
@@ -298,7 +419,7 @@ private fun ReportTextImportDialog(vm: WorkReportViewModel, close: () -> Unit) {
             label = { Text("متن همین صفحه") }, modifier = Modifier.weight(1f).fillMaxWidth().padding(12.dp).testTag("report-text-input"),
             textStyle = LocalTextStyle.current.copy(textDirection = TextDirection.Content))
         Button(onClick = { page?.let { vm.importText(it.id, text) }; close() }, enabled = page != null && text.isNotBlank() && !vm.busy,
-            modifier = Modifier.fillMaxWidth().padding(12.dp).testTag("report-text-apply")) { Text("اعمال متن این صفحه و بازبینی") }
+            modifier = Modifier.fillMaxWidth().padding(12.dp).testTag("report-text-apply")) { Text("اعمال متن") }
     }
 }
 
@@ -334,7 +455,7 @@ private fun FastOcrAssistDialog(vm: WorkReportViewModel, close: () -> Unit) {
                 Text("کلید فقط روی همین گوشی و رمزنگاری‌شده نگه داشته می‌شود و در هیچ گزارش/صادراتی درج نمی‌شود.", style = MaterialTheme.typography.labelSmall)
             }
             Text("گیرندهٔ تصاویر: api.fastocr.org", modifier = Modifier.testTag("report-fastocr-host"), color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelLarge)
-            Text("متن دریافتی فقط جدول بازبینی را پیش‌پر می‌کند: هیچ مقداری خودکار صفر، ذخیره یا به سوابق اضافه نمی‌شود، خانه‌های خالی/نقطه/خط‌تیره دست‌نخورده می‌مانند و هر ردیف با همان ویرایشگر دستی قابل اصلاح است.", style = MaterialTheme.typography.bodySmall)
+            Text("نتیجه فقط پیش‌نویس گزارش را جایگزین می‌کند؛ اصلاح‌های قبلی آن بازنشانی می‌شوند و سوابق برنامه تغییر نمی‌کنند. مقدار خالی صفر نمی‌شود.", style = MaterialTheme.typography.bodySmall)
             Text("سند ممکن است نام و مبالغ محرمانه داشته باشد؛ مدت نگهداری و حذف نزد سرویس تابع سیاست FastOCR است؛ فقط در صورت موافقت با آن ارسال کنید.", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
         }
         Column(Modifier.fillMaxWidth().padding(12.dp)) {

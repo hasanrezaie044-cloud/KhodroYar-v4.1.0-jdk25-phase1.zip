@@ -308,7 +308,7 @@ fun ReportsScreen(repository: AppRepository, onOpenService: (ServiceEntity) -> U
 
         item {
             Box(Modifier.testTag("open-work-report")) {
-                ActionRow(title = "مقایسهٔ کارکرد شرکت", subtitle = "عکس / PDF · FastOCR آنلاین و اختلاف روزبه‌روز",
+                ActionRow(title = "مقایسهٔ کارکرد شرکت", subtitle = "تاریخ و تعداد سرویس",
                     icon = Icons.Outlined.DocumentScanner, onClick = onWorkReport)
             }
         }

@@ -87,7 +87,7 @@ if ! python3 "$ROOT/tools/summarize-instrumentation.py" "$EVIDENCE/instrumentati
   "$ROOT/android/app/build/outputs/androidTest-results/connected/manual-release/TEST-com.khodroyar.app.ui.ReleaseApkSmokeTest.xml"; then
   RESULT=1
 fi
-if ! python3 "$ROOT/tools/summarize-tests.py" "$ROOT/android/app/build/outputs/androidTest-results/connected" "Signed release online-only review and Bazaar IPC tests"; then
+if ! python3 "$ROOT/tools/summarize-tests.py" "$ROOT/android/app/build/outputs/androidTest-results/connected" "Signed release count-first reports and Bazaar IPC tests"; then
   RESULT=1
 fi
 AFTER=$(sha256sum app/build/outputs/apk/release/app-release.apk | awk '{print $1}')

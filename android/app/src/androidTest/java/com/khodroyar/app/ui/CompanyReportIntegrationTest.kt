@@ -10,13 +10,20 @@ import android.os.Build
 import android.os.Looper
 import android.os.ParcelFileDescriptor
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.width
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.unit.LayoutDirection
+import androidx.compose.ui.unit.Density
+import androidx.compose.ui.unit.dp
 import androidx.core.content.FileProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -40,6 +47,7 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import java.io.File
+import java.io.ByteArrayOutputStream
 
 /** Synthetic documents + mocked HTTP only. This is NOT live FastOCR/scan-accuracy proof. */
 @RunWith(AndroidJUnit4::class)
@@ -161,8 +169,11 @@ class CompanyReportIntegrationTest {
         compose.waitUntil(30000) { vm.dateComparison.count { it.companyCount == 2 && it.appCount == 3 } == 2 }
         compose.onNodeWithTag("work-report-list").performScrollToNode(hasTestTag("report-date-compare-1405/05/10"))
         compose.onNodeWithTag("report-date-compare-1405/05/10").assertIsDisplayed()
-            .assert(hasAnyDescendant(hasText("شرکت 2 سرویس"))).assert(hasAnyDescendant(hasText("برنامه 3 سرویس")))
-        compose.onNodeWithTag("report-compare").assertIsNotEnabled()
+        compose.onNodeWithTag("report-count-company-1405/05/10").assertTextEquals("2")
+        compose.onNodeWithTag("report-count-app-1405/05/10").assertTextEquals("3")
+        compose.onNodeWithTag("report-count-difference-1405/05/10").assertTextEquals("+1")
+        compose.onNodeWithTag("report-compare").assertDoesNotExist()
+        compose.onNodeWithTag("report-review-confirm").assertDoesNotExist()
         val reviewRow = vm.rows.first()
         compose.runOnIdle { vm.edit(reviewRow.copy(included = false)) }
         compose.waitUntil(30000) { vm.dateComparison.any { it.date == "1405/05/10" && it.companyCount == 1 && it.appCount == 3 } }
@@ -173,7 +184,7 @@ class CompanyReportIntegrationTest {
         runBlocking { db.services().insert(service("synthetic-first-day", listOf("", vm.start, "40", "1"))) }
         compose.waitUntil(30000) { vm.dateComparison.any { it.date == "1405/05/01" && it.companyCount == 0 && it.appCount == 1 } }
         compose.onNodeWithTag("work-report-list").performScrollToNode(hasTestTag("report-date-compare-1405/05/01"))
-        compose.onNodeWithTag("report-date-compare-1405/05/01").assert(hasAnyDescendant(hasText("شرکت: در متن یافت نشد")))
+        compose.onNodeWithTag("report-count-company-1405/05/01").assertTextEquals("0")
         compose.runOnIdle { vm.range("1405/05/02", vm.end) }
         compose.waitUntil(30000) { vm.dateComparison.isNotEmpty() && vm.dateComparison.none { it.date == "1405/05/01" } }
         runBlocking { db.services().deleteById("synthetic-first-day") }
@@ -195,6 +206,86 @@ class CompanyReportIntegrationTest {
             .put("days", JSONArray(listOf("1405/05/10", "1405/05/11"))).put("unchanged_app_services", before.size)
         publishSyntheticEvidence(context, "KhodroYar-UI-Smoke", "online-report.json", "application/json", evidence.toString().toByteArray())
         file.delete()
+    }
+
+    @Test fun exactUserDayShowsTwoThreePlusOneWithBlankMetricsAndTransparentCountCorrection() {
+        val file = pdf("count-first-synthetic", 1)
+        val vm = WorkReportViewModel(context.applicationContext as Application)
+        viewModels.put("synthetic-count-first", vm)
+        compose.setContent {
+            val density = LocalDensity.current
+            CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl, LocalDensity provides Density(density.density, 1.35f)) {
+                CarManagerTheme { Surface(Modifier.width(320.dp).fillMaxHeight().testTag("compact-company-report")) { WorkReportScreen(vm) } }
+            }
+        }
+        compose.waitUntil(30000) { !vm.busy }
+        compose.runOnIdle { vm.importDocuments(listOf(FileProvider.getUriForFile(context, "com.khodroyar.app.fileprovider", file))) }
+        compose.waitUntil(30000) { !vm.busy && vm.pages.size == 1 }
+        val page = vm.pages.single()
+        compose.runOnIdle { vm.importText(page.id, "1405/07/05 شهر الف شهر ب . .\n1405/07/05 شهر ب شهر الف . .") }
+        compose.waitUntil(30000) { !vm.busy && vm.rows.size == 2 }
+        runBlocking { repeat(3) { db.services().insert(service("count-app-$it", listOf("", "1405/07/05", "40", "1"))) } }
+        val before = runBlocking { db.services().allOnce() }
+        val original = vm.rows.toList()
+        compose.waitUntil(30000) { vm.dateComparison.singleOrNull()?.let { it.companyCount == 2 && it.appCount == 3 && it.difference == 1 } == true }
+        assertTrue(vm.rows.all { it.km.isBlank() && it.hours.isBlank() })
+        assertFalse(vm.reviewConfirmed)
+        compose.onNodeWithTag("work-report-list").performScrollToNode(hasTestTag("report-count-edit-1405/07/05"))
+        compose.onNodeWithTag("report-count-company-1405/07/05").assertTextEquals("2")
+        compose.onNodeWithTag("report-count-app-1405/07/05").assertTextEquals("3")
+        compose.onNodeWithTag("report-count-difference-1405/07/05").assertTextEquals("+1")
+        compose.onNodeWithTag("report-compare").assertDoesNotExist()
+        compose.onNode(hasTestTag("report-cell-${original.first().id}-km")).assertDoesNotExist()
+        val image = compose.onNodeWithTag("compact-company-report").captureToImage().asAndroidBitmap()
+        val output = ByteArrayOutputStream()
+        image.compress(Bitmap.CompressFormat.PNG, 100, output)
+        publishSyntheticEvidence(context, "KhodroYar-UI-Smoke", "36-count-first-320-large-font.png", "image/png", output.toByteArray())
+        compose.onNodeWithTag("report-count-edit-1405/07/05").performClick()
+        compose.onNodeWithTag("report-count-input").performTextReplacement("4")
+        compose.onNodeWithTag("report-count-save").performClick()
+        compose.waitUntil(30000) { vm.dateComparison.singleOrNull()?.companyCount == 4 }
+        compose.onNodeWithTag("report-count-company-1405/07/05").assertTextEquals("4*")
+        compose.onNodeWithTag("report-count-difference-1405/07/05").assertTextEquals("-1")
+        assertEquals(original, vm.rows)
+        assertEquals(before, runBlocking { db.services().allOnce() })
+        // Explicit daily correction is private draft metadata, not new OCR/service rows.
+        compose.waitUntil(30000) {
+            runCatching { WorkReportDraft(ReportDocuments(context).directory).load()?.companyCounts == mapOf("1405/07/05" to 4) }.getOrDefault(false)
+        }
+        compose.onNodeWithTag("report-count-edit-1405/07/05").performClick()
+        compose.onNodeWithTag("report-count-restore").performClick()
+        compose.waitUntil(30000) { vm.dateComparison.singleOrNull()?.companyCount == 2 }
+        compose.onNodeWithTag("work-report-list").performScrollToNode(hasTestTag("report-edit-rows"))
+        compose.onNodeWithTag("report-edit-rows").performClick()
+        compose.onNodeWithTag("report-row-date-${original.first().id}").performTextReplacement("1405/07/06")
+        compose.waitUntil(30000) { vm.dateComparison.any { it.date == "1405/07/06" && it.companyCount == 1 } }
+        compose.onNodeWithContentDescription("بستن").performClick()
+        assertEquals(before, runBlocking { db.services().allOnce() })
+        compose.runOnIdle { original.forEach { vm.edit(it.copy(included = false)) } }
+        compose.waitUntil(30000) { vm.dateComparison.singleOrNull()?.let { it.companyCount == 0 && it.appCount == 3 && it.difference == 3 } == true }
+        assertEquals(before, runBlocking { db.services().allOnce() })
+        file.delete()
+    }
+
+    @Test fun partialReportStillOffersAdvisoryCountsWithoutPretendingCoverageIsComplete() {
+        val file = pdf("partial-count-synthetic", 1)
+        try {
+            val vm = WorkReportViewModel(context.applicationContext as Application,
+                FastOcrReportReader(FastOcrClient(MockFastOcr(listOf("7 1405/07/05 شهر الف شهر ب . ."), partial = true), sleeper = {})))
+            viewModels.put("partial-count", vm)
+            compose.setContent { CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) {
+                CarManagerTheme { Surface(Modifier.fillMaxSize()) { WorkReportScreen(vm) } }
+            } }
+            compose.waitUntil(30000) { !vm.busy }
+            compose.runOnIdle { vm.importDocuments(listOf(FileProvider.getUriForFile(context, "com.khodroyar.app.fileprovider", file))) }
+            compose.waitUntil(30000) { !vm.busy && vm.pages.size == 1 }
+            compose.runOnIdle { assertTrue(vm.saveFastOcrKey("fok_live_synthetic_fixture_only")); vm.recognizeFastOcr() }
+            compose.waitUntil(30000) { !vm.busy && vm.dateComparison.isNotEmpty() }
+            assertTrue(vm.recognized.single().incomplete)
+            assertEquals(1, vm.dateComparison.single().companyCount)
+            assertFalse(vm.reviewConfirmed)
+            assertTrue(vm.readWarnings.any { it.contains("ناقص") })
+        } finally { file.delete() }
     }
 
     @Test fun singlePagePdfIsSentByteForByteAndRotationCreatesOnlyOneBoundedPage() {

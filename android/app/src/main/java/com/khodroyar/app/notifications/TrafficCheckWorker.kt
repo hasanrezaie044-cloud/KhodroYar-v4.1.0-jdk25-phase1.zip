@@ -8,7 +8,7 @@ import com.khodroyar.app.traffic.TrafficRepository
 import org.json.JSONObject
 
 /**
- * Background check for the three Mobarakeh→Isfahan corridors.
+ * Background check of the shared Isfahan/Mobarakeh route catalogue.
  * Posts a notification only when a corridor worsens into MODERATE or HEAVY
  * compared with the last stored level.
  */

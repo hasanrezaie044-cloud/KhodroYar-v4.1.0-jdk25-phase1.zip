@@ -14,7 +14,7 @@ import java.text.Normalizer
  * clusters bound whole rows, including wrapped lines. The vehicle report's
  * explicit type/time-range column establishes date-first order without ordinals.
  * Neither income tails, title dates nor footer totals may become row fields.
- * Unknown hours stay blank; all existing review/comparison gates still apply.
+ * Unknown hours stay blank; neither optional metric gates daily count comparison.
  */
 object FastOcrReportText {
     private val numberToken = Regex("[0-9]+(?::[0-9]{2}|[.٫][0-9]+)?")
@@ -22,25 +22,22 @@ object FastOcrReportText {
     private val clock = "(?:--:--|[0-9]{1,2}:[0-9]{2})"
     private val timeRange = Regex("$clock\\s*تا\\s*$clock")
     private val clockToken = Regex(clock)
-    private val word = Regex("[آ-یA-Za-z]{3,}")
+    private val word = Regex("[آ-یA-Za-z]{2,}")
     // \z, NOT $: Java's $ also matches before a final newline, which let the
     // tail of the previous row's income (4,154,530\n) masquerade as an ordinal.
-    private val ordinalBefore = Regex("(?<![0-9,٬./:٫])([0-9]{1,2})[ \\t]{0,8}\\z")
-    private val ordinalAfter = Regex("\\A[ \\t]{0,8}([0-9]{1,2})(?![0-9,٬./:٫])")
+    private val ordinalBefore = Regex("(?<![0-9,٬./:٫])([0-9]{1,3})[ \\t]{0,8}\\z")
+    private val ordinalAfter = Regex("\\A[ \\t]{0,8}([0-9]{1,3})(?![0-9,٬./:٫])")
     // A wrapped ordinal must occupy its ENTIRE cell line. In particular, never
     // match the last digits of an income line such as 4,154,530 before a newline.
-    private val wrappedOrdinalBefore = Regex("(?:\\A|\\n)[ \\t]{0,8}([0-9]{1,2})[ \\t]{0,8}\\r?\\n[ \\t]{0,8}\\z")
-    private val wrappedOrdinalAfter = Regex("\\A[ \\t]{0,8}\\r?\\n[ \\t]{0,8}([0-9]{1,2})[ \\t]{0,8}(?=\\r?\\n|\\z)")
+    private val wrappedOrdinalBefore = Regex("(?:\\A|\\n)[ \\t]{0,8}([0-9]{1,3})[ \\t]{0,8}\\r?\\n[ \\t]{0,8}\\z")
+    private val wrappedOrdinalAfter = Regex("\\A[ \\t]{0,8}\\r?\\n[ \\t]{0,8}([0-9]{1,3})[ \\t]{0,8}(?=\\r?\\n|\\z)")
     private val vehicleType = Regex("\\A\\s*(?:ثابت|شب|درخواستی|تعطیل)(?=\\s|[0-9-]|\\z)")
     private val titleSeparator = Regex("\\s*(?:تا|الی|[-–—]|to)\\s*", RegexOption.IGNORE_CASE)
     private val headerDateLabel = Regex("(?:تاریخ\\s*(?:گزارش|چاپ|تهیه)|(?:از|تا)\\s*تاریخ)\\s*[:：]?\\s*\\z")
     private val blankCell = Regex("(?:^|\\s)[.-](?:\\s|$)")
-    private val junkWords = listOf(
-        "جمع", "مجموع", "حقوق", "بیمه", "سپرده", "غذا", "هتل", "عوارض",
-        "خلاصه", "جزئیات", "گزارش", "درآمد", "هزینه", "سوخت", "تعمیرات",
-        "وام", "پاداش", "معوقه", "جریمه", "تعاونی", "صندوق", "الحساب",
-        "کسور", "دریافتی", "خالص", "مبلغ", "تومان", "کسر",
-        "total", "subtotal", "summary",
+    private val sectionBoundary = Regex(
+        "(?:^|\\n)[ \\t]*(?:جمع|مجموع|حقوق|بیمه|خلاصه|جزئیات|گزارش|خالص|دریافتی|کسور|total|subtotal|summary)(?=\\s|[:：0-9]|$)",
+        RegexOption.IGNORE_CASE,
     )
     private val footerLabels = listOf("جمع", "مجموع", "حقوق", "بیمه", "خلاصه", "خالص", "دریافتی", "کسور", "total", "subtotal", "summary")
     private val headerWords = listOf(
@@ -78,12 +75,20 @@ object FastOcrReportText {
         val lineStart = full.lastIndexOf('\n', anchor.start - 1) + 1
         val prefix = full.substring(maxOf(lineStart, anchor.start - 320), anchor.start)
         if (headerDateLabel.containsMatchIn(prefix)) return true
-        if (prefix.trim().trimEnd(':', '：') == "تاریخ") return true
-        val gluedBefore = word.findAll(prefix).lastOrNull()?.takeIf { it.range.last == prefix.lastIndex }?.value.orEmpty()
+        if (prefix.trim().trimEnd(':', '：') == "تاریخ") {
+            val nextDate = PersianInput.datePattern.find(full, anchor.end)?.range?.first ?: full.length
+            val following = full.substring(anchor.end, minOf(nextDate, anchor.end + 400))
+            // A labelled service record may have no ordinal at all. Bound the
+            // check to THIS date, so a title cannot borrow the next row's route.
+            return !Regex("(?m)^[ \\t]*(?:مبدأ|مبدا|مقصد)[ \\t]*[:：]").containsMatchIn(following)
+        }
         val suffix = full.substring(anchor.end, minOf(full.length, anchor.end + 40))
         val gluedAfter = word.find(suffix)?.takeIf { it.range.first == 0 }?.value.orEmpty()
-        return headerWords.any { gluedBefore.startsWith(it) || gluedAfter.startsWith(it) } ||
-            footerLabels.any { prefix.trimStart().lowercase().startsWith(it) || gluedAfter.startsWith(it) }
+        // A route may start with شرکت/هتل/عوارضی, even glued to its date.
+        // Exclude explicitly labelled metadata, not every such place word.
+        return footerLabels.any { prefix.trimStart().lowercase().startsWith(it) || gluedAfter.startsWith(it) } ||
+            Regex("(?:کد\\s*راننده|شماره\\s*(?:خودرو|گزارش)|تاریخ\\s*صدور)\\s*[:：]?\\s*\\z").containsMatchIn(prefix)
+
     }
 
     private fun columns(
@@ -137,9 +142,20 @@ object FastOcrReportText {
         var result = PersianInput.latin(Normalizer.normalize(text, Normalizer.Form.NFKC))
             .replace(Regex("[\\u061c\\u200b\\u200e\\u200f\\u202a-\\u202e\\u2060\\u2066-\\u2069\\ufeff]"), "")
             .replace('|', ' ').replace('⁄', '/').replace('∕', '/').replace('／', '/').replace('\\', '/')
+        // FastOCR exports can contain HTML tables. Preserve row boundaries and
+        // empty cells as spacing; never execute markup or merge separate rows.
+        result = result.replace(Regex("<\\s*(?:script|style)\\b[^>]*>.*?<\\s*/\\s*(?:script|style)\\s*>", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)), " ")
+            .replace(Regex("<\\s*(?:/\\s*tr|br\\s*/?)\\s*>", RegexOption.IGNORE_CASE), "\n")
+            .replace(Regex("<[^>]*>"), " ")
+            .replace(Regex("&(?:nbsp|#160|#x0*a0);", RegexOption.IGNORE_CASE), " ")
+        // Some structured exports put the ordinal/date labels on separate cell
+        // lines. Only collapse this explicit pair; a printing date is untouched.
+        result = Regex("(?m)^[ \\t]*ردیف\\s*[:：]\\s*([0-9]{1,3})[ \\t]*\\r?\\n[ \\t]*تاریخ\\s*[:：]\\s*").replace(result) { m ->
+            if (PersianInput.count(m.groupValues[1]) in 1..MAX_ROWS_PER_PAGE) "${m.groupValues[1]} " else m.value
+        }
         // Join a split four-digit year and spaces around date separators only.
         // Never join '1 1' after the last slash: day 1 + ordinal 1 is ambiguous.
-        val spacedDate = Regex("(?<![0-9])(1[ \\t]*[3-6][ \\t]*[0-9][ \\t]*[0-9])[ \\t]*/[ \\t]*([0-9]{1,2})[ \\t]*/[ \\t]*([0-9]{1,2})(?![0-9])")
+        val spacedDate = Regex("(?<![0-9])(1[ \\t]*[3-6][ \\t]*[0-9][ \\t]*[0-9])[ \\t]*/[ \\t]*(0[ \\t]+[1-9]|[0-9]{1,2})[ \\t]*/[ \\t]*(0[ \\t]+[1-9]|[0-9]{1,2})(?![0-9])")
         result = spacedDate.replace(result) { m ->
             val date = (1..3).joinToString("/") { m.groupValues[it].filter(Char::isDigit) }
             if (PersianInput.date(date) != null) date else m.value
@@ -147,14 +163,14 @@ object FastOcrReportText {
         // A five/six-digit 'year' can be an ordinal glued BEFORE the full,
         // independently valid four-digit year. A 3/4-digit 'day' can be a
         // two-digit day followed by an ordinal. Compact dates are NOT split.
-        val before = Regex("(?<![0-9])([0-9]{1,2})(1[3-6][0-9]{2}/[0-9]{1,2}/[0-9]{2})(?![0-9])")
+        val before = Regex("(?<![0-9])([0-9]{1,3})(1[3-6][0-9]{2}/[0-9]{1,2}/[0-9]{2})(?![0-9])")
         result = before.replace(result) { m ->
-            if (PersianInput.count(m.groupValues[1]) in 1..99 && PersianInput.date(m.groupValues[2]) != null)
+            if (PersianInput.count(m.groupValues[1]) in 1..MAX_ROWS_PER_PAGE && PersianInput.date(m.groupValues[2]) != null)
                 "${m.groupValues[1]} ${m.groupValues[2]}" else m.value
         }
-        val after = Regex("(?<![0-9])(1[3-6][0-9]{2}/[0-9]{1,2}/[0-9]{2})([0-9]{1,2})(?![0-9])")
+        val after = Regex("(?<![0-9])(1[3-6][0-9]{2}/[0-9]{1,2}/[0-9]{2})([0-9]{1,3})(?![0-9])")
         result = after.replace(result) { m ->
-            if (PersianInput.date(m.groupValues[1]) != null && PersianInput.count(m.groupValues[2]) in 1..99)
+            if (PersianInput.date(m.groupValues[1]) != null && PersianInput.count(m.groupValues[2]) in 1..MAX_ROWS_PER_PAGE)
                 "${m.groupValues[1]} ${m.groupValues[2]}" else m.value
         }
         return result
@@ -181,13 +197,13 @@ object FastOcrReportText {
                 ignored[i] = true; ignored[i + 1] = true
             }
         }
-        // The supported fixed statement is monthly. Do not import its printing
-        // date from another month. Header anchors still bound adjacent windows.
-        val byMonth = dates.indices.filterNot { ignored[it] }.groupingBy { dates[it].date.take(7) }.eachCount()
-        val top = byMonth.maxByOrNull { it.value }
-        if (top != null && top.value >= 2 && byMonth.count { it.value == top.value } == 1) {
-            dates.indices.filter { !dates[it].date.startsWith(top.key) }.forEach { ignored[it] = true }
-        }
+        // Never vote away a genuine dated row from a minority/adjacent month.
+        // Header labels and period-title ranges already identify title dates.
+        val sections = sectionBoundary.findAll(full).toList()
+        val tableHeadings = Regex("(?m)^.*$").findAll(full).filter { line ->
+            line.value.contains("تاریخ") && listOf("ردیف", "مبدأ", "مبدا", "مقصد", "کیلومتر", "ساعت").count { line.value.contains(it) } >= 2 &&
+                !PersianInput.datePattern.containsMatchIn(line.value)
+        }.map { it.range.last + 1 }.toList()
         val before = arrayOfNulls<Token>(dates.size)
         val after = arrayOfNulls<Token>(dates.size)
         var rtl = 0; var ltr = 0; var vehicle = false
@@ -197,13 +213,13 @@ object FastOcrReportText {
             val prefixStart = maxOf(0, anchor.start - 32)
             val prefix = full.substring(prefixStart, anchor.start)
             (ordinalBefore.find(prefix) ?: wrappedOrdinalBefore.find(prefix))
-                ?.takeIf { PersianInput.count(it.groupValues[1]) in 1..99 }?.let { m ->
+                ?.takeIf { PersianInput.count(it.groupValues[1]) in 1..MAX_ROWS_PER_PAGE }?.let { m ->
                     val group = m.groups[1]!!
                     before[i] = Token(group.value, prefixStart + group.range.first, prefixStart + group.range.last + 1)
                 }
             val suffix = full.substring(anchor.end, minOf(full.length, anchor.end + 32))
             (ordinalAfter.find(suffix) ?: wrappedOrdinalAfter.find(suffix))
-                ?.takeIf { PersianInput.count(it.groupValues[1]) in 1..99 }?.let { m ->
+                ?.takeIf { PersianInput.count(it.groupValues[1]) in 1..MAX_ROWS_PER_PAGE }?.let { m ->
                     val group = m.groups[1]!!
                     after[i] = Token(group.value, anchor.end + group.range.first, anchor.end + group.range.last + 1)
                 }
@@ -229,45 +245,68 @@ object FastOcrReportText {
                 Direction.BEFORE_DATE -> after[i]
                 Direction.UNKNOWN -> before[i] ?: after[i]
             }
-            var start = when (direction) {
-                Direction.AFTER_DATE -> ordinal?.start ?: anchor.start
-                Direction.BEFORE_DATE -> if (i == 0) 0 else after[i - 1]?.end ?: dates[i - 1].end
-                Direction.UNKNOWN -> if (i == 0) 0 else maxOf((dates[i - 1].start + anchor.start) / 2, dates[i - 1].end)
+            val lineStart = full.lastIndexOf('\n', anchor.start - 1) + 1
+            val lineEnd = full.indexOf('\n', anchor.end).let { if (it < 0) full.length else it }
+            val sameLineBefore = full.substring(lineStart, anchor.start)
+            val sameLineAfter = full.substring(anchor.end, lineEnd)
+            // An ordinal-less row still has its own direction. A page-wide vote
+            // cannot be a prerequisite for retaining its readable date/count.
+            val rowDirection = when {
+                vehicle -> Direction.AFTER_DATE
+                sameLineBefore.trim().trimEnd(':', '：') == "تاریخ" -> Direction.AFTER_DATE
+                word.containsMatchIn(sameLineAfter) && !word.containsMatchIn(sameLineBefore) -> Direction.AFTER_DATE
+                word.containsMatchIn(sameLineBefore) && !word.containsMatchIn(sameLineAfter) -> Direction.BEFORE_DATE
+                direction != Direction.UNKNOWN -> direction
+                else -> Direction.AFTER_DATE
             }
-            var end = when (direction) {
+            val rowOrdinal = when {
+                vehicle -> null
+                direction == Direction.UNKNOWN -> ordinal
+                rowDirection == Direction.BEFORE_DATE -> after[i]
+                else -> before[i]
+            }
+            var start = when (rowDirection) {
+                Direction.AFTER_DATE -> rowOrdinal?.takeIf { it.start < anchor.start }?.start ?: anchor.start
+                Direction.BEFORE_DATE -> if (i == 0) 0 else after[i - 1]?.end ?: dates[i - 1].end
+                Direction.UNKNOWN -> anchor.start
+            }
+            var end = when (rowDirection) {
                 Direction.AFTER_DATE -> if (i == dates.lastIndex) full.length
                     else if (vehicle) dates[i + 1].start else before[i + 1]?.start ?: dates[i + 1].start
-                Direction.BEFORE_DATE -> ordinal?.end ?: anchor.end
-                Direction.UNKNOWN -> if (i == dates.lastIndex) full.length else minOf((anchor.end + dates[i + 1].start) / 2, dates[i + 1].start)
+                Direction.BEFORE_DATE -> rowOrdinal?.end ?: anchor.end
+                Direction.UNKNOWN -> anchor.end
             }
-            // A preceding excluded header may contain a driver code AFTER its
-            // date. Exclude the rest of that header line as well as the date.
-            if (direction == Direction.BEFORE_DATE && i > 0 && ignored[i - 1]) {
+            // Header dates bound windows but never donate their trailing codes.
+            if (rowDirection == Direction.BEFORE_DATE && i > 0 && ignored[i - 1]) {
                 val headerEnd = full.indexOf('\n', dates[i - 1].end)
                 if (headerEnd in start until anchor.start) start = headerEnd + 1
             }
             if (start > anchor.start || end < anchor.end) continue
-            val lower = full.substring(start, end).lowercase()
-            val cutAfter = junkWords.mapNotNull { w ->
-                lower.indexOf(w, anchor.end - start).takeIf { it >= 0 }?.let { start + it }
-            }.minOrNull()
-            val cutBefore = junkWords.mapNotNull { w ->
-                lower.substring(0, anchor.start - start).lastIndexOf(w).takeIf { it >= 0 }?.let { start + it + w.length }
-            }.maxOrNull()
-            if (cutAfter != null) end = cutAfter
-            if (cutBefore != null) start = cutBefore
+            sections.filter { it.range.first >= anchor.end && it.range.first < end }.minByOrNull { it.range.first }
+                ?.let { end = it.range.first }
+            sections.filter { it.range.first in start until anchor.start }.maxByOrNull { it.range.first }?.let {
+                val boundaryEnd = full.indexOf('\n', it.range.last + 1)
+                if (boundaryEnd in start until anchor.start) start = boundaryEnd + 1
+            }
             if (start > anchor.start || end < anchor.end) continue
             val win = full.substring(start, end)
-            val localOrdinal = ordinal?.takeIf { it.start >= start && it.end <= end }
+            val localOrdinal = rowOrdinal?.takeIf { it.start >= start && it.end <= end }
                 ?.let { Token(it.value, it.start - start, it.end - start) }
             val withoutDate = win.replaceRange(anchor.start - start, anchor.end - start, " ".repeat(anchor.end - anchor.start))
             if (PersianInput.datePattern.findAll(withoutDate).any { PersianInput.date(it.value) != null }) continue
             val payload = blank(commaMoney, blank(timeRange, withoutDate))
             val explicitVehicle = vehicleType.containsMatchIn(full.substring(anchor.end, minOf(end, anchor.end + 80)))
-            // Ordinal + date is sufficient even when km/hours are unreadable.
-            // Date-only titles, salary lines and summaries are not service rows.
-            if (localOrdinal == null && !explicitVehicle && !numberToken.containsMatchIn(payload)) continue
-            val shape = columns(win, anchor.start - start, anchor.end - start, localOrdinal, direction)
+            val tableStart = tableHeadings.lastOrNull { it <= anchor.start }
+            val inTable = tableStart != null && sections.none { it.range.first in tableStart until anchor.start }
+            val routeWords = word.findAll(payload).any { token ->
+                headerWords.none { it == token.value } && footerLabels.none { token.value.startsWith(it) }
+            }
+            // Keep every real dated table cell, even if ALL optional columns
+            // failed. Identical dates are separate rows, never deduplicated.
+            // Outside a table, require row/route content; an isolated title date
+            // is not a service and missing dates are never manufactured.
+            if (localOrdinal == null && !explicitVehicle && !numberToken.containsMatchIn(payload) && !routeWords && !inTable) continue
+            val shape = columns(win, anchor.start - start, anchor.end - start, localOrdinal, rowDirection)
             val km = shape.km?.let(PersianInput::decimal)
             val hours = shape.hours.orEmpty()
             val grouped = CompanyReportTemplate.isGrouped(win)

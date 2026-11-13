@@ -22,6 +22,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -91,10 +92,11 @@ fun TrafficAssistantScreen(repository: AppRepository) {
     }
 
     Column(
-        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(AppDimens.screenPadding),
+        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).testTag("traffic-list").padding(AppDimens.screenPadding),
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
-        Text("مبارکه — اصفهان", style = MaterialTheme.typography.titleMedium)
+        Text("اصفهان و مسیرهای مبارکه", style = MaterialTheme.typography.titleMedium)
+        Text("وضعیت، برآورد زمان مسیر در جهت مشخص‌شده است؛ نه ترافیک تک‌تک نقاط.", style = MaterialTheme.typography.bodySmall)
         Collapsible(title = "اتصال به نشان", summary = if (settings.neshanApiKey.isBlank()) "کلید تنظیم نشده" else "کلید ذخیره شده",
             initiallyExpanded = settings.neshanApiKey.isBlank()) {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -184,13 +186,12 @@ fun TrafficAssistantScreen(repository: AppRepository) {
         }
 
         CORRIDORS.forEach { c ->
-            RouteStatusCard(
-                title = c.title,
-                status = statuses[c.id],
-                loading = loading && statuses[c.id] == null,
-            )
+            Box(Modifier.testTag("traffic-route-${c.id}")) {
+                RouteStatusCard(title = c.title, coverage = c.coverageFa, status = statuses[c.id], loading = loading && statuses[c.id] == null)
+            }
         }
 
+        Text("مختصات مسیرهای جدید: © مشارکت‌کنندگان OpenStreetMap · ODbL", style = MaterialTheme.typography.labelSmall)
         OutlinedButton(
             onClick = {
                 val c = CORRIDORS[1]
@@ -207,7 +208,7 @@ fun TrafficAssistantScreen(repository: AppRepository) {
 }
 
 @Composable
-private fun RouteStatusCard(title: String, status: RouteStatus?, loading: Boolean) {
+private fun RouteStatusCard(title: String, coverage: String, status: RouteStatus?, loading: Boolean) {
     val color = when (status?.level) {
         TrafficLevel.SMOOTH -> appAccents.positive
         TrafficLevel.MODERATE -> MaterialTheme.colorScheme.tertiary
@@ -219,7 +220,8 @@ private fun RouteStatusCard(title: String, status: RouteStatus?, loading: Boolea
             IconBadge(Icons.Outlined.DirectionsCar, tint = color)
             Text(title, Modifier.weight(1f), style = MaterialTheme.typography.titleSmall)
         }
-        Spacer(Modifier.height(16.dp))
+        if (coverage.isNotBlank()) Text(coverage, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Spacer(Modifier.height(12.dp))
         when {
             loading -> LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
             status != null -> {

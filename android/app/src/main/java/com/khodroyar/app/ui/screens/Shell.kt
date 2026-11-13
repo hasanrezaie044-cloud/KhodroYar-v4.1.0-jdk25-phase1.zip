@@ -88,6 +88,7 @@ fun CarManagerRoot(
     LaunchedEffect(Unit) { AgentAutomationScheduler.checkNow(context); TrafficCheckScheduler.sync(context) }
     var agentReturn by remember { mutableStateOf(false) }
     var destination by remember { mutableStateOf(AppDestination.HOME) }
+    var companyReportOpen by remember { mutableStateOf(false) }
     var tool by remember { mutableStateOf<ToolDestination?>(null) }
     var overlay by remember { mutableStateOf<Overlay?>(null) }
     val recentEntry by repository.quickEntries.receipt.collectAsState()
@@ -102,6 +103,7 @@ fun CarManagerRoot(
         val target = launchTarget ?: return@LaunchedEffect
         overlay = null
         quick = null
+        companyReportOpen = false
         val maintenanceType = Notifications.maintenanceTypeFromTarget(target)
         if (maintenanceType != null) {
             tool = ToolDestination.MAINTENANCE
@@ -164,6 +166,7 @@ fun CarManagerRoot(
     val title = when {
         overlay != null -> overlay!!.title
         tool != null -> if (settings.language == AppSettings.LANGUAGE_EN) tool!!.englishTitle else tool!!.title
+        companyReportOpen && destination == AppDestination.REPORTS -> if (settings.language == AppSettings.LANGUAGE_EN) "Company service counts" else "مقایسهٔ کارکرد شرکت"
         else -> if (settings.language == AppSettings.LANGUAGE_EN) destination.englishTitle else destination.title
     }
     val subtitle = when {
@@ -221,6 +224,7 @@ fun CarManagerRoot(
                         onSelect = { picked ->
                             agentReturn = false
                             destination = picked
+                            companyReportOpen = false
                             tool = null
                             overlay = null
                         },
@@ -241,14 +245,15 @@ fun CarManagerRoot(
                         title = title,
                         subtitle = subtitle,
                         privacyMode = settings.privacyMode,
-                        showBack = overlay != null || tool != null || agentReturn,
+                        showBack = overlay != null || tool != null || companyReportOpen || agentReturn,
                         onBack = {
                             when {
                                 keyboardVisible -> { focus.clearFocus(force = true); keyboard?.hide() }
                                 overlay is Overlay.FastEntry -> (context as? androidx.activity.ComponentActivity)?.onBackPressedDispatcher?.onBackPressed()
                                 agentReturn -> { overlay = null; tool = ToolDestination.AI_ASSISTANT; agentReturn = false }
                                 overlay != null -> overlay = null
-                                else -> tool = null
+                                tool != null -> tool = null
+                                else -> companyReportOpen = false
                             }
                         },
                         onOpenTools = { scope.launch { drawerState.open() } },
@@ -256,7 +261,7 @@ fun CarManagerRoot(
                         onQuick = { overlay = Overlay.FastEntry() },
                     )
                     AnimatedContent(
-                        targetState = (overlay ?: tool ?: destination) as Any,
+                        targetState = (overlay ?: tool ?: if (companyReportOpen && destination == AppDestination.REPORTS) CompanyReportRoute else destination) as Any,
                         transitionSpec = { fadeIn(tween(180)) togetherWith fadeOut(tween(140)) },
                         label = "screen",
                         modifier = Modifier.fillMaxSize(),
@@ -292,7 +297,7 @@ fun CarManagerRoot(
                             )
 
                             /* ---------------------------------------------- tools */
-                            ToolDestination.WORK_REPORT -> WorkReportScreen()
+                            CompanyReportRoute -> WorkReportScreen()
                             ToolDestination.FUEL -> FuelScreen(
                                 repository,
                                 quickDate = quick?.takeIf { it.tool == ToolDestination.FUEL }?.date,
@@ -315,6 +320,7 @@ fun CarManagerRoot(
                                 overlay = null
                                 quick = null
                                 agentReturn = true
+                                companyReportOpen = false
                                 when (section) {
                                     AgentSection.HOME -> { tool = null; destination = AppDestination.HOME }
                                     AgentSection.SERVICES -> { tool = null; destination = AppDestination.SERVICES }
@@ -328,7 +334,7 @@ fun CarManagerRoot(
                                     AgentSection.RATES -> tool = ToolDestination.RATES
                                     AgentSection.TRAFFIC -> tool = ToolDestination.TRAFFIC
                                     AgentSection.SEARCH -> overlay = Overlay.Search
-                                    AgentSection.WORK_REPORT -> tool = ToolDestination.WORK_REPORT
+                                    AgentSection.WORK_REPORT -> { tool = null; destination = AppDestination.REPORTS; companyReportOpen = true }
                                 }
                             })
 
@@ -360,7 +366,7 @@ fun CarManagerRoot(
                                 onQuickExpense = { date -> quick = QuickEntry(ToolDestination.FINANCE, date); tool = ToolDestination.FINANCE },
                                 onEditService = { overlay = Overlay.EditService(it) },
                             )
-                            AppDestination.REPORTS -> ReportsScreen(repository, onOpenService = { overlay = Overlay.EditService(it) }, onWorkReport = { tool = ToolDestination.WORK_REPORT })
+                            AppDestination.REPORTS -> ReportsScreen(repository, onOpenService = { overlay = Overlay.EditService(it) }, onWorkReport = { companyReportOpen = true })
                             AppDestination.SETTINGS -> SettingsScreen(repository, settings, onToggleTheme)
                             else -> DashboardScreen(
                                 repository = repository,
@@ -398,6 +404,7 @@ fun CarManagerRoot(
                 agentReturn -> { overlay = null; tool = ToolDestination.AI_ASSISTANT; agentReturn = false }
                 overlay != null -> overlay = null
                 tool != null -> tool = null
+                companyReportOpen -> companyReportOpen = false
                 destination != AppDestination.HOME -> destination = AppDestination.HOME
                 else -> showExitDialog = true
             }
@@ -544,7 +551,7 @@ private fun AppBottomBar(selected: AppDestination, toolActive: Boolean, onSelect
 @Composable
 private fun ToolsDrawer(active: ToolDestination?, onPick: (ToolDestination) -> Unit, onClose: () -> Unit) {
     ModalDrawerSheet(drawerContainerColor = MaterialTheme.colorScheme.background,
-        drawerShape = RoundedCornerShape(topEnd = 28.dp, bottomEnd = 28.dp), modifier = Modifier.widthIn(max = 350.dp)) {
+        drawerShape = RoundedCornerShape(topEnd = 28.dp, bottomEnd = 28.dp), modifier = Modifier.widthIn(max = 350.dp).testTag("tools-drawer")) {
         Column(Modifier.fillMaxHeight().verticalScroll(rememberScrollState()).navigationBarsPadding()
             .padding(horizontal = 20.dp, vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -575,3 +582,6 @@ fun themeLabel(settings: AppSettings): String = when (settings.themeMode) {
 
 /** A calendar quick link in flight: which tool to open, and the day it was tapped on. */
 private data class QuickEntry(val tool: ToolDestination, val date: String)
+
+/** A child of Reports, deliberately absent from the tools drawer. */
+private data object CompanyReportRoute

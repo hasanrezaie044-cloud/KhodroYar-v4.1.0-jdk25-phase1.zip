@@ -137,9 +137,11 @@ class ReportDocuments(private val context: Context) {
 class WorkReportDraft(private val directory: File) {
     private val file = android.util.AtomicFile(File(directory, "draft.json"))
     data class Draft(val pages: List<ReportPage>, val recognized: List<OcrPage>, val rows: List<ReportRow>, val start: String, val end: String,
-        val links: List<ReportMatchLink> = emptyList(), val periodNote: String = "")
+        val links: List<ReportMatchLink> = emptyList(), val periodNote: String = "", val companyCounts: Map<String, Int> = emptyMap())
     fun save(draft: Draft) {
-        val j = JSONObject().put("version", 4).put("start", draft.start).put("end", draft.end).put("periodNote", draft.periodNote)
+        val j = JSONObject().put("version", 5).put("start", draft.start).put("end", draft.end).put("periodNote", draft.periodNote)
+        require(draft.companyCounts.size <= 3660 && draft.companyCounts.all { (date, count) -> com.khodroyar.app.core.text.PersianInput.date(date) == date && count in 0..10000 })
+        j.put("companyCounts", JSONObject(draft.companyCounts))
         j.put("links", JSONArray().apply { draft.links.forEach { link -> put(JSONObject().put("company", JSONArray(link.companyIds)).put("app", JSONArray(link.appIds)).put("fingerprint", link.appFingerprint)) } })
         j.put("pages", JSONArray().apply { draft.pages.forEach { p -> put(JSONObject().put("id", p.id).put("file", p.file).put("name", p.name).put("pdf", p.pdfPage).put("rotation", p.rotation)) } })
         j.put("ocr", JSONArray().apply { draft.recognized.forEach { p -> put(JSONObject().put("id", p.id).put("number", p.number).put("text", p.text.take(200000)).put("source", p.source.name).put("incomplete", p.incomplete).put("words", JSONArray().apply {
@@ -160,7 +162,7 @@ class WorkReportDraft(private val directory: File) {
             if (!file.baseFile.exists() && !File(directory, "draft.json.bak").exists()) return null else throw e
         }
         val j = input.use { require(file.baseFile.length() <= 32_000_000); JSONObject(it.bufferedReader().readText()) }
-        require(j.getInt("version") in 1..4)
+        require(j.getInt("version") in 1..5)
         val pages = j.getJSONArray("pages").objects().map { p -> ReportPage(p.getString("id"), p.getString("file"), p.getString("name"), p.getInt("pdf"), p.getInt("rotation").also { require(it in 0..3) }) }
         require(pages.size <= ReportDocuments.MAX_PAGES)
         val recognized = j.getJSONArray("ocr").objects().map { p ->
@@ -181,7 +183,15 @@ class WorkReportDraft(private val directory: File) {
             ReportMatchLink(ids("company"), ids("app"), link.getString("fingerprint"))
         }
         require(links.sumOf { it.companyIds.size } <= 10000 && links.sumOf { it.appIds.size } <= 10000)
-        return Draft(pages, recognized, rows, j.optString("start"), j.optString("end"), links, j.optString("periodNote"))
+        val counts = j.optJSONObject("companyCounts") ?: JSONObject()
+        require(counts.length() <= 3660)
+        val companyCounts = counts.keys().asSequence().associateWith { date ->
+            require(com.khodroyar.app.core.text.PersianInput.date(date) == date)
+            val value = counts.get(date)
+            require(value is Int && value in 0..10000)
+            value
+        }
+        return Draft(pages, recognized, rows, j.optString("start"), j.optString("end"), links, j.optString("periodNote"), companyCounts)
     }
     private fun JSONArray.objects(): List<JSONObject> = (0 until length()).map { getJSONObject(it) }
 }

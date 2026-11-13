@@ -285,13 +285,38 @@ class OrbitUiSmokeTest {
 
     @Test fun agreementKeepsExplicitConsentAtEnlargedFont() {
         var accepted = false
-        render(fontScale = 1.35f) { AgreementScreen({ accepted = true }, {}) }
+        var declined = false
+        render(fontScale = 1.35f) { AgreementScreen({ accepted = true }, { declined = true }) }
+        compose.onNodeWithText("نمی‌پذیرم و خروج").performClick()
+        compose.runOnIdle { assertTrue(declined); assertFalse(accepted) }
         compose.onNodeWithText("می‌پذیرم و ادامه").assertIsNotEnabled()
         compose.onNodeWithText("متن بالا را خوانده‌ام و می‌پذیرم").performClick()
         compose.onNodeWithText("می‌پذیرم و ادامه").assertIsEnabled()
         shot("17-agreement-large-text")
         compose.onNodeWithText("می‌پذیرم و ادامه").performClick()
         compose.runOnIdle { assertTrue(accepted) }
+    }
+
+    @Test fun versionOneAcceptanceCannotBypassUpdatedPolicyEvenWithLockOff() {
+        val settings = SettingsStore.get(context)
+        val pin = com.khodroyar.app.security.PinStore(context)
+        val wasLocked = pin.lockEnabled
+        pin.lockEnabled = false
+        settings.update { it.copy(acceptedTermsVersion = 1) }
+        try {
+            render(fontScale = 1.35f) {
+                AuthGate(pin, settings) { Text("ورود مجاز", Modifier.testTag("policy-protected-content")) }
+            }
+            compose.onNodeWithText(TermsOfUse.TITLE).assertIsDisplayed()
+            compose.onNodeWithTag("policy-protected-content").assertDoesNotExist()
+            compose.onNodeWithTag("terms-continue").assertIsNotEnabled()
+            compose.onNodeWithTag("terms-agree").performClick()
+            compose.runOnIdle { assertEquals(1, settings.current.acceptedTermsVersion) }
+            compose.onNodeWithTag("terms-continue").performClick()
+            compose.onNodeWithTag("policy-protected-content").assertIsDisplayed()
+            compose.runOnIdle { assertEquals(2, settings.current.acceptedTermsVersion) }
+            compose.onNodeWithTag("terms-agree").assertDoesNotExist()
+        } finally { pin.lockEnabled = wasLocked }
     }
 
     @Test fun darkNavigationStaysUsableAt320DpAndEnlargedFont() {
@@ -411,7 +436,20 @@ class OrbitUiSmokeTest {
         compose.onNode(hasText("مقایسهٔ کارکرد شرکت") and hasAnyAncestor(hasTestTag("open-work-report"))).performClick()
         compose.onNodeWithTag("work-report-screen").assertIsDisplayed()
         compose.onNodeWithTag("report-import").assertIsDisplayed()
+        compose.onNodeWithTag("nav-REPORTS").assertIsSelected()
         shot("35-integrated-work-report-entry")
+        compose.onNodeWithContentDescription("ابزارها").performClick()
+        compose.onNode(hasText("مقایسهٔ کارکرد شرکت") and hasAnyAncestor(hasTestTag("tools-drawer"))).assertDoesNotExist()
+        compose.onNodeWithContentDescription("بستن پنل").performClick()
+        compose.onNodeWithContentDescription("بازگشت").performClick()
+        compose.onNodeWithTag("report-list").assertIsDisplayed()
+        compose.onNodeWithTag("nav-REPORTS").assertIsSelected()
+        compose.onNodeWithContentDescription("ابزارها").performClick()
+        compose.onNode(hasText("دستیار ترافیک") and hasAnyAncestor(hasTestTag("tools-drawer"))).performClick()
+        for (id in listOf("keshvari", "meysami", "habibollahi")) {
+            compose.onNodeWithTag("traffic-route-$id").performScrollTo().assertIsDisplayed()
+        }
+        shot("35b-isfahan-full-road-catalogue")
     }
 
     @Test fun quickExpenseRequiresReviewSupportsCorrectionAndConfirmedUndoAtLargeFont() {

@@ -39,8 +39,9 @@ class InstrumentationSummaryTest(unittest.TestCase):
         self.assertEqual((True, True), summary.analyze(SUCCESS)[:2])
         self.assertTrue(summary.analyze(SUCCESS.replace('\n', '\r\n'))[0])
 
-    def test_retired_offline_test_name_is_not_accepted_for_the_online_only_release(self):
-        self.assertFalse(summary.analyze(SUCCESS.replace(summary.TEST, 'signedMinifiedApkLaunchesAndReadsPersianReportWithRadiosDisabled'))[0])
+    def test_retired_offline_or_heavy_review_test_cannot_replace_count_first_proof(self):
+        for method in ('signedMinifiedApkLaunchesAndReadsPersianReportWithRadiosDisabled', 'signedOnlineOnlyReviewAndBazaarIpcDoNotNeedAnOfflineOcrEngine'):
+            self.assertFalse(summary.analyze(SUCCESS.replace(summary.TEST, method))[0])
 
     def test_exit_without_tests_or_start_without_finish_is_not_a_pass(self):
         for raw in ('', 'INSTRUMENTATION_CODE: -1\n', record(1), 'OK (1 test)\n'):

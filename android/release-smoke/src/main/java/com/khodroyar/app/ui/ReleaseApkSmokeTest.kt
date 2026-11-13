@@ -23,12 +23,12 @@ import java.util.regex.Pattern
 
 /**
  * Accessibility-only interaction with the exact originally signed R8 APK.
- * Tests online-only consent/cancel, explicit synthetic TEXT entry + review,
+ * Tests online-only consent/cancel, explicit synthetic TEXT entry + count-first comparison,
  * and the genuine marketplace IPC/deep link against a disposable store fixture.
  * Never calls a live OCR provider and is NOT live Bazaar publishing proof.
  */
 class ReleaseApkSmokeTest {
-    @Test(timeout = 900000) fun signedOnlineOnlyReviewAndBazaarIpcDoNotNeedAnOfflineOcrEngine() {
+    @Test(timeout = 900000) fun signedCountFirstReportsAndBazaarIpcPreserveBlankMetrics() {
         check(Build.HARDWARE.contains("ranchu") || Build.HARDWARE.contains("goldfish"))
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val context = instrumentation.context
@@ -52,7 +52,9 @@ class ReleaseApkSmokeTest {
             ?: throw AssertionError("UI element not found: $selector; stages=$stages")
         fun tagged(value: String, timeout: Long = 30000) = find(By.res(value), timeout)
         fun scrollTo(selector: BySelector, container: String): UiObject2 {
-            repeat(24) {
+            var scan = Direction.DOWN
+            var turned = false
+            repeat(48) {
                 val list = tagged(container)
                 val viewport = list.visibleBounds
                 val bounds = device.findObject(selector)?.visibleBounds
@@ -65,7 +67,10 @@ class ReleaseApkSmokeTest {
                     if (bounds.top > viewport.top + 6 && bounds.bottom < viewport.bottom - 6)
                         return find(selector)
                     list.scroll(if (bounds.bottom >= viewport.bottom - 6) Direction.DOWN else Direction.UP, .25f)
-                } else list.scroll(Direction.DOWN, .45f)
+                } else if (!list.scroll(scan, .4f)) {
+                    if (turned) throw AssertionError("Cannot find $selector in $container; stages=$stages")
+                    scan = Direction.UP; turned = true
+                }
             }
             throw AssertionError("Cannot bring $selector inside $container; stages=$stages")
         }
@@ -80,7 +85,7 @@ class ReleaseApkSmokeTest {
             drawColor(Color.WHITE)
             val paint = Paint().apply { color = Color.BLACK; textSize = 40f }
             drawText("SYNTHETIC REVIEW FIXTURE — NOT LIVE OCR", 60f, 100f, paint)
-            listOf("7  1405/05/10  CityA CityB  40  0", "8  1405/05/10  CityB CityA  95  0", "9  1405/05/11  CityA CityB  80  .")
+            listOf("1405/07/05  CityA CityB  .  .", "1405/07/05  CityB CityA  .  .", "1405/07/06  CityA CityB  .  .")
                 .forEachIndexed { i, text -> drawText(text, 60f, 220f + 100 * i, paint) }
         }
         context.contentResolver.openOutputStream(uri)!!.use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }; bitmap.recycle()
@@ -129,6 +134,7 @@ class ReleaseApkSmokeTest {
                 SystemClock.sleep(500)
             }
             if (dismissed > 0) stage("dismissed $dismissed unrelated system-app ANR dialog(s); target ANR would still fail")
+            find(By.text("حریم خصوصی و سلب مسئولیت"))
             tagged("terms-agree").click(); tagged("terms-continue").click()
             stage("terms accepted through UI")
             // Lock is ON by default in the recovered app. A real clean install
@@ -157,6 +163,28 @@ class ReleaseApkSmokeTest {
                 .put("queried_package", targetPackage).put("update_uri", "bazaar://details/modal?id=com.khodroyar.app")
             stage("production entry prompt, explicit Bazaar IPC and user-triggered modal deep link passed against simulated store")
             device.pressBack()
+            fun normalized(text: String) = buildString {
+                text.forEach { c -> append(when (c) { in '۰'..'۹' -> '0' + (c - '۰'); in '٠'..'٩' -> '0' + (c - '٠'); '٫' -> '.'; else -> c }) }
+            }
+            // Real form submissions, not run-as/DB injection or an alternate
+            // target. The company parser must never manufacture rows from them.
+            tagged("nav-SERVICES").click()
+            repeat(3) {
+                val dateButton = scrollTo(By.res("service-date"), "service-form-list")
+                val shown = normalized(dateButton.contentDescription.orEmpty())
+                val date = Regex("(1[3-6][0-9]{2})/([0-9]{2})/([0-9]{2})").find(shown)
+                    ?: throw AssertionError("Real service date not accessible: $shown")
+                val monthDelta = (date.groupValues[1].toInt() - 1405) * 12 + date.groupValues[2].toInt() - 7
+                assertTrue("Bounded real date-picker navigation", monthDelta in -24..24)
+                dateButton.click()
+                repeat(kotlin.math.abs(monthDelta)) { find(By.desc(if (monthDelta > 0) "ماه قبل" else "ماه بعد")).click(); device.waitForIdle() }
+                find(By.descStartsWith("1405/07/05،")).click()
+                find(By.text("انتخاب")).click()
+                find(By.desc("تاریخ سرویس: 1405/07/05"))
+                tagged("service-save").click()
+                assertTrue("Successful save resets the real form", device.wait(Until.gone(By.desc("تاریخ سرویس: 1405/07/05")), 30000))
+            }
+            stage("three actual synthetic app services registered through the signed app's real form for 1405/07/05")
             tagged("nav-REPORTS").click()
             scrollTo(By.res("open-work-report"), "report-list").click()
             tagged("report-import").click()
@@ -171,50 +199,74 @@ class ReleaseApkSmokeTest {
             stage("FastOCR destination/explicit consent shown, upload cancelled; no live provider invoked")
             assertNull(device.findObject(By.res("report-ocr")))
             scrollTo(By.res("report-import-text"), "work-report-list").click()
-            val syntheticText = "71405/05/10 شهر الف شهر ب 40 0\n81405/05/10 شهر ب شهر الف 95 0\n91405/05/11 شهر الف شهر ب 80 ."
+            val syntheticText = "1405/07/05 شهر الف شهر ب . .\n1405/07/05 شهر ب شهر الف . .\n1405/07/06 شهر الف شهر ب . ."
             tagged("report-text-input").apply { click(); text = syntheticText }
-            device.pressBack() // Hide the actual software IME, not the full-screen editor.
+            device.pressBack() // Hide IME, not the full-screen text editor.
             tagged("report-text-apply").click()
-            assertFalse("Review is mandatory even for explicitly entered text", tagged("report-compare").isEnabled)
-            stage("synthetic text applied through UI; comparison still requires explicit review")
-            val dayTen = scrollTo(By.res("report-date-compare-1405/05/10"), "work-report-list")
-            assertNotNull("Day 10 must show TWO parsed company services in its own card", dayTen.findObject(By.text("شرکت 2 سرویس")))
-            val dayEleven = scrollTo(By.res("report-date-compare-1405/05/11"), "work-report-list")
-            assertNotNull("Day 11 must show ONE parsed company service in its own card", dayEleven.findObject(By.text("شرکت 1 سرویس")))
-            stage("exact day 10/day 11 cards show company counts 2/1")
+            fun column(day: String, name: String, value: String) {
+                scrollTo(By.res("report-date-compare-$day"), "work-report-list")
+                find(By.res("report-count-$name-$day").text(value))
+            }
+            column("1405/07/05", "company", "2")
+            column("1405/07/05", "app", "3")
+            column("1405/07/05", "difference", "+1")
+            assertNull("No mandatory metric comparison in the main flow", device.findObject(By.res("report-compare")))
+            assertNull("No main review checkbox", device.findObject(By.res("report-review-confirm")))
+            assertNull("No heavy row metric editors on the primary screen", device.findObject(By.res(Pattern.compile("report-cell-.*"))))
+            column("1405/07/06", "company", "1")
+            column("1405/07/06", "app", "0")
+            column("1405/07/06", "difference", "-1")
+            stage("Reports child shows 1405/07/05: company 2, real app 3, difference +1 without km/hours or review")
+            scrollTo(By.res("report-count-edit-1405/07/05"), "work-report-list").click()
+            tagged("report-count-input").apply { click(); text = "4" }
+            device.pressBack()
+            tagged("report-count-save").click()
+            column("1405/07/05", "company", "4*")
+            column("1405/07/05", "app", "3")
+            column("1405/07/05", "difference", "-1")
+            tagged("report-count-edit-1405/07/05").click()
+            tagged("report-count-restore").click()
+            column("1405/07/05", "company", "2")
+            column("1405/07/05", "app", "3")
+            column("1405/07/05", "difference", "+1")
+            stage("explicit daily correction labelled *, reverted to extraction; app count remains 3")
+            scrollTo(By.res("report-open-details"), "work-report-list").click()
             val dateSelector = By.res(Pattern.compile("report-cell-.*-date"))
-            val dateCell = scrollTo(dateSelector, "work-report-list")
+            val dateCell = scrollTo(dateSelector, "report-details-list")
             val dateTag = requireNotNull(dateCell.resourceName)
             val rowId = dateTag.removePrefix("report-cell-").removeSuffix("-date")
-            assertTrue("Editable first row must expose its stable identity", rowId.isNotBlank() && rowId != dateTag)
-            fun normalized(text: String) = buildString {
-                text.forEach { c -> append(when (c) { in '۰'..'۹' -> '0' + (c - '۰'); in '٠'..'٩' -> '0' + (c - '٠'); '٫' -> '.'; else -> c }) }
-            }
-            fun value(field: String, record: JSONObject = firstRow): String {
+            assertTrue(rowId.isNotBlank() && rowId != dateTag)
+            fun value(field: String): String {
                 val selector = By.res("report-cell-$rowId-$field")
                 repeat(5) {
                     device.findObject(selector)?.takeIf { it.visibleBounds.width() > 0 && it.visibleBounds.height() > 0 }?.let { node ->
                         val value = normalized(node.text.orEmpty())
-                        record.put(field, value)
+                        firstRow.put(field, value)
                         return value
                     }
                     tagged("report-row-scroll-$rowId").scroll(Direction.LEFT, .65f)
                 }
-                throw AssertionError("Editable $field cell of row $rowId was not reachable; firstRow=$firstRow")
+                throw AssertionError("Optional $field cell of row $rowId unreachable; firstRow=$firstRow")
             }
-            assertEquals("1405/05/10", value("date")); assertEquals("1", value("count"))
-            assertEquals(40.0, value("km").toDouble(), .000001); assertEquals(0.0, value("hours").toDouble(), .000001)
-            stage("same first editable row retains date, count 1, 40 km and explicit zero hours")
-            scrollTo(By.res("report-review-confirm"), "work-report-list").click()
-            tagged("report-compare").click()
-            find(By.text("شرکت: 3 سرویس · 215 کیلومتر · ساعت نامشخص"))
-            find(By.text("1405/05/01 تا 1405/05/31"))
+            assertEquals("1405/07/05", value("date")); assertEquals("1", value("count"))
+            assertEquals("", value("km")); assertEquals("", value("hours"))
+            device.pressBack()
+            column("1405/07/05", "company", "2")
+            column("1405/07/05", "app", "3")
+            column("1405/07/05", "difference", "+1")
+            // Assert the actual range controls, not merely their heading while
+            // the two buttons can still be outside the visible viewport.
+            scrollTo(By.desc("تا: 1405/07/30"), "work-report-list")
+            find(By.desc("از: 1405/07/01")); find(By.desc("تا: 1405/07/30"))
             review.put("passed", true).put("text_source", "user-entered synthetic fixture; NOT image OCR")
-                .put("rows", 3).put("count_per_row", "1").put("period_start", "1405/05/01").put("period_end", "1405/05/31")
-                .put("km", "215").put("hours", "unknown").put("first", firstRow)
-                .put("day10_count", 2).put("day11_count", 1).put("mandatory_review", true).put("consent_cancelled", true)
+                .put("rows", 3).put("count_per_row", "1").put("period_start", "1405/07/01").put("period_end", "1405/07/30")
+                .put("first", firstRow).put("metrics_blank", true).put("count_review_required", false)
+                .put("reports_entry", true).put("main_metric_editors_absent", true)
+                .put("example", JSONObject().put("date", "1405/07/05").put("company", 2).put("app", 3).put("difference", 1))
+                .put("corrected_company", 4).put("corrected_difference", -1).put("correction_reverted", true)
+                .put("app_services_after", 3).put("consent_cancelled", true)
             offline.put("after", verifyOffline())
-            stage("local synthetic text parsing, date counts, mandatory review and unknown-hour comparison passed in signed R8 APK")
+            stage("blank metrics retained in optional detail; signed R8 count-first UI and original Bazaar updater passed")
             val screenshot = File(context.cacheDir, "signed-release-online-only-review.png")
             assertTrue(device.takeScreenshot(screenshot))
             publishSyntheticEvidence(context, "KhodroYar-Release-Smoke", screenshot.name, "image/png", screenshot.readBytes())
