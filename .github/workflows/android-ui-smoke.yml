@@ -156,3 +156,7 @@ jobs:
       - name: Quick edit failure diagnostics
         if: always()
         run: '"$RUNNER_TEMP/feature-preview-env/bin/python" tools/ui-previews.py "$RUNNER_TEMP/native-feature-review" debug-quick-edit-state'
+      - name: Count-first reports at 320 dp and large font
+        run: '"$RUNNER_TEMP/feature-preview-env/bin/python" tools/ui-previews.py "$RUNNER_TEMP/native-feature-review" 36-count-first-320-large-font'
+      - name: Full-road Isfahan catalogue
+        run: '"$RUNNER_TEMP/feature-preview-env/bin/python" tools/ui-previews.py "$RUNNER_TEMP/native-feature-review" 35b-isfahan-full-road-catalogue'

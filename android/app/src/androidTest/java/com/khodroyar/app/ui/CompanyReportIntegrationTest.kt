@@ -218,6 +218,7 @@ class CompanyReportIntegrationTest {
                 CarManagerTheme { Surface(Modifier.width(320.dp).fillMaxHeight().testTag("compact-company-report")) { WorkReportScreen(vm) } }
             }
         }
+        compose.onNodeWithTag("compact-company-report").assertWidthIsEqualTo(320.dp)
         compose.waitUntil(30000) { !vm.busy }
         compose.runOnIdle { vm.importDocuments(listOf(FileProvider.getUriForFile(context, "com.khodroyar.app.fileprovider", file))) }
         compose.waitUntil(30000) { !vm.busy && vm.pages.size == 1 }

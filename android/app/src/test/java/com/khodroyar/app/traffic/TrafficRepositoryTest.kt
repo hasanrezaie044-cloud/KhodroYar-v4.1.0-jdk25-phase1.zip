@@ -94,10 +94,20 @@ class TrafficRepositoryTest {
         for (c in TrafficRepository.CORRIDORS.filter { it.trace.isNotEmpty() }) {
             val wrong = listOf(c.trace.drop(1), c.trace.dropLast(1), c.trace.reversed(),
                 c.trace.toMutableList().apply { this[2] = TrafficPoint(this[2].lat + .02, this[2].lng) })
-            for (points in wrong) {
-                assertTrue(c.id, runCatching { TrafficRepository.parse(body(c.referenceSec, points), c.referenceSec, c.trace) }.isFailure)
+            for ((index, points) in wrong.withIndex()) {
+                assertTrue("${c.id}: invalid geometry $index", runCatching { TrafficRepository.parse(body(c.referenceSec, points), c.referenceSec, c.trace) }.isFailure)
             }
             assertTrue(runCatching { TrafficRepository.parse(body(c.referenceSec), c.referenceSec, c.trace) }.isFailure)
+        }
+    }
+    @Test fun endpointsRequireTheWholeRoadButAllowSmallProviderSnapping() {
+        for (c in TrafficRepository.CORRIDORS.filter { it.trace.isNotEmpty() }) {
+            for (index in listOf(0, c.trace.lastIndex)) {
+                val near = c.trace.toMutableList().apply { this[index] = TrafficPoint(this[index].lat + .0002, this[index].lng) }
+                assertEquals(TrafficLevel.SMOOTH, TrafficRepository.parse(body(c.referenceSec, near), c.referenceSec, c.trace).level)
+                val short = c.trace.toMutableList().apply { this[index] = TrafficPoint(this[index].lat + .0007, this[index].lng) }
+                assertTrue("${c.id}: endpoint $index is over 50 m away", runCatching { TrafficRepository.parse(body(c.referenceSec, short), c.referenceSec, c.trace) }.isFailure)
+            }
         }
     }
     @Test fun malformedOrHugePolylineIsBoundedAndDoesNotBecomeFreshTraffic() {

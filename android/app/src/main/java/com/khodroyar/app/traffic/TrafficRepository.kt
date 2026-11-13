@@ -131,9 +131,13 @@ class TrafficRepository(private val transport: AiHttpTransport = UrlConnectionAi
                 val t = if (length == 0.0) 0.0 else (((p.lng - a.lng) * xScale * dx + (p.lat - a.lat) * yScale * dy) / length).coerceIn(0.0, 1.0)
                 distance2(p, TrafficPoint(a.lat + t * (b.lat - a.lat), a.lng + t * (b.lng - a.lng)))
             }
-            val tolerance2 = 150.0 * 150.0 // Snap/simplification tolerance, NOT a live-traffic measurement.
-            require(distance2(points.first(), trace.first()) <= tolerance2 && distance2(points.last(), trace.last()) <= tolerance2)
-            require(trace.all { toPath2(it, points) <= tolerance2 } && points.all { toPath2(it, trace) <= tolerance2 })
+            // A simplified overview may deviate along a bend, but endpoints
+            // must actually reach the named road's boundary. Using the wider
+            // path tolerance here could accept a missing 100 m terminal tunnel.
+            val endpointTolerance2 = 50.0 * 50.0
+            val pathTolerance2 = 150.0 * 150.0 // Simplification tolerance, NOT live-traffic data.
+            require(distance2(points.first(), trace.first()) <= endpointTolerance2 && distance2(points.last(), trace.last()) <= endpointTolerance2)
+            require(trace.all { toPath2(it, points) <= pathTolerance2 } && points.all { toPath2(it, trace) <= pathTolerance2 })
         }
 
     }

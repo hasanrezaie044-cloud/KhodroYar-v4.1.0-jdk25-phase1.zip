@@ -445,7 +445,7 @@ class OrbitUiSmokeTest {
         compose.onNodeWithTag("report-list").assertIsDisplayed()
         compose.onNodeWithTag("nav-REPORTS").assertIsSelected()
         compose.onNodeWithContentDescription("ابزارها").performClick()
-        compose.onNode(hasText("دستیار ترافیک") and hasAnyAncestor(hasTestTag("tools-drawer"))).performClick()
+        compose.onNode(hasText("دستیار ترافیک") and hasAnyAncestor(hasTestTag("tools-drawer"))).performScrollTo().performClick()
         for (id in listOf("keshvari", "meysami", "habibollahi")) {
             compose.onNodeWithTag("traffic-route-$id").performScrollTo().assertIsDisplayed()
         }
