@@ -70,7 +70,7 @@ class NativeOpenRouterAgentTest {
     @Volatile private var chatImeBottom = 0
     private val syntheticKey get() = "sk-or-v1-" + "b".repeat(64)
 
-    @Before fun reset() = runBlocking {
+    @Before fun reset(): Unit = runBlocking {
         check(Build.HARDWARE.contains("ranchu") || Build.HARDWARE.contains("goldfish")) { "Synthetic fixture must not reset a real phone" }
         val device = UiDevice.getInstance(InstrumentationRegistry.getInstrumentation())
         device.executeShellCommand("settings put secure show_ime_with_hard_keyboard 1")
@@ -100,7 +100,7 @@ class NativeOpenRouterAgentTest {
         (AgentApprovalGate(tools).prepare(call(name, args)) as AgentStep.Confirm).pending
     private val explicitBulk = """{"start_date":"1404/01/01","end_date":"1404/12/29","service_type":"night","per_day":1,"days":"all","template_source":"explicit","origin":"مبارکه","destination":"اصفهان","km":60,"hours":3,"toll_count":1}"""
 
-    @Test fun full1404PersianNativePlanShows365ExactDatesAndPricesBeforeAnyDatabaseWrite() = runBlocking {
+    @Test fun full1404PersianNativePlanShows365ExactDatesAndPricesBeforeAnyDatabaseWrite(): Unit = runBlocking {
         val tools = AppAgentTools(context, repo)
         val calendar = tools.execute(call("get_jalali_calendar", """{"year":1404}"""))
         assertTrue(calendar.ok); assertTrue(calendar.text.contains("1404/12/29")); assertTrue(calendar.text.contains("365"))
@@ -119,7 +119,7 @@ class NativeOpenRouterAgentTest {
         assertEquals(365, db.services().allOnce().size); assertEquals(22900.0, settings.current.vehicleCurrentKm, 0.0)
         assertTrue(AgentApprovalGate(tools).prepare(call("bulk_register_services", explicitBulk)) is AgentStep.Reply)
     }
-    @Test fun ordinaryCreatesHaveFixedAppOwnedIdsAndDoNotDuplicateAcrossExecutorInstances() = runBlocking {
+    @Test fun ordinaryCreatesHaveFixedAppOwnedIdsAndDoNotDuplicateAcrossExecutorInstances(): Unit = runBlocking {
         val tools = AppAgentTools(context, repo)
         for ((name, args) in listOf("add_expense" to """{"date":"1404/01/01","amount":45000,"title":"قهوه","category":"coffee"}""",
             "add_fuel" to """{"date":"1404/01/01","liters":20,"total_cost":60000}""",
@@ -133,7 +133,7 @@ class NativeOpenRouterAgentTest {
         assertEquals(1, repo.fuelsByPrefixOnce("").size); assertEquals(1, repo.maintenancesByPrefixOnce("").size); assertEquals(1, repo.insurance.allOnce().size)
         assertTrue(db.services().allOnce().isEmpty())
     }
-    @Test fun singleServiceEditDeleteAndInsuranceUseExactSnapshotsAndReadback() = runBlocking {
+    @Test fun singleServiceEditDeleteAndInsuranceUseExactSnapshotsAndReadback(): Unit = runBlocking {
         val tools = AppAgentTools(context, repo)
         val create = preview(tools, "add_service", """{"date":"1404/01/01","service_type":"night","origin":"مبارکه","destination":"اصفهان","km":60,"hours":3,"toll_count":1}""")
         assertTrue(db.services().allOnce().isEmpty()); assertTrue(tools.execute(create.call).ok)
@@ -154,7 +154,7 @@ class NativeOpenRouterAgentTest {
         repo.insurance.insert(requireNotNull(repo.insurance.byId(insurance.id)).copy(cost = 500.0))
         assertFalse(tools.execute(stale.call).ok); assertNotNull(repo.insurance.byId(insurance.id))
     }
-    @Test fun trackedMaintenanceUsesExistingCrashRecoveryJournalAndRejectsStaleSettings() = runBlocking {
+    @Test fun trackedMaintenanceUsesExistingCrashRecoveryJournalAndRejectsStaleSettings(): Unit = runBlocking {
         val tools = AppAgentTools(context, repo)
         val pending = preview(tools, "add_car_service", """{"service_type":"oil-change","date":"1404/01/01","km":1000,"amount":200000}""")
         assertTrue(pending.summary.contains("موعد همین نوع")); assertEquals(0.0, settings.current.oilCurrentKm, 0.0)
@@ -166,7 +166,7 @@ class NativeOpenRouterAgentTest {
         assertTrue(settings.pendingQuickMileage.isNullOrBlank()); assertTrue(tools.execute(fresh.call).ok)
         assertEquals(1, repo.maintenancesByPrefixOnce("").size)
     }
-    @Test fun singleServiceUsesExactlyTheRatesThatWerePricedInItsImmutablePreview() = runBlocking {
+    @Test fun singleServiceUsesExactlyTheRatesThatWerePricedInItsImmutablePreview(): Unit = runBlocking {
         val original = Rates(nightKm = 1000.0, hour = 2000.0)
         val changed = original.copy(hour = 9000.0)
         val reads = AtomicInteger()
@@ -180,7 +180,7 @@ class NativeOpenRouterAgentTest {
         assertTrue(db.services().allOnce().isEmpty()); assertEquals(1000.0, settings.current.vehicleCurrentKm, 0.0)
         assertTrue(settings.pendingQuickMileage.isNullOrBlank())
     }
-    @Test fun committedServiceWithConcurrentManualMileageIsAnHonestPartialFailureNotFullSuccess() = runBlocking {
+    @Test fun committedServiceWithConcurrentManualMileageIsAnHonestPartialFailureNotFullSuccess(): Unit = runBlocking {
         val rates = Rates(nightKm = 1000.0, hour = 2000.0)
         val reads = AtomicInteger()
         // Existing replaceable rate reader deterministically models the concurrent settings edit
@@ -202,7 +202,7 @@ class NativeOpenRouterAgentTest {
         assertEquals(1, db.services().allOnce().size); assertEquals(9000.0, settings.current.vehicleCurrentKm, 0.0)
         settings.acknowledgeQuickMileageNotice()
     }
-    @Test fun companyCountsWithUnknownMetricsRemainReadOnlyAndRawDocumentIsNeverAToolResult() = runBlocking {
+    @Test fun companyCountsWithUnknownMetricsRemainReadOnlyAndRawDocumentIsNeverAToolResult(): Unit = runBlocking {
         val tools = AppAgentTools(context, repo); val date = "1404/07/05"
         val create = preview(tools, "bulk_register_services", explicitBulk.replace("1404/01/01", date).replace("1404/12/29", date).replace("\"per_day\":1", "\"per_day\":3"))
         tools.execute(create.call)
@@ -225,7 +225,7 @@ class NativeOpenRouterAgentTest {
         assertTrue(detailed.ok); assertTrue(detailed.text.contains("تطبیق مبهم")); assertFalse(detailed.text.contains("PRIVATE ORIGINAL"))
         assertEquals(before, db.services().allOnce())
     }
-    @Test fun financialComparisonAndPriceExplanationReuseStoredIncomeAndNeverRepriceTheDatabase() = runBlocking {
+    @Test fun financialComparisonAndPriceExplanationReuseStoredIncomeAndNeverRepriceTheDatabase(): Unit = runBlocking {
         val tools = AppAgentTools(context, repo)
         val pending = preview(tools, "add_service", """{"date":"1404/01/01","service_type":"night","origin":"مبارکه","destination":"اصفهان","km":60,"hours":3}""")
         tools.execute(pending.call)
@@ -238,7 +238,7 @@ class NativeOpenRouterAgentTest {
         assertTrue(explained.ok); assertTrue(explained.text.contains("درآمدی که واقعاً ثبت شده: ${row.income}")); assertTrue(explained.text.contains("132000"))
         assertEquals(row, db.services().byId(row.id))
     }
-    @Test fun keystoreEncryptionMigrationFreshConsentAndKeyDeletionDoNotTouchRecords() = runBlocking {
+    @Test fun keystoreEncryptionMigrationFreshConsentAndKeyDeletionDoNotTouchRecords(): Unit = runBlocking {
         val prefs = context.getSharedPreferences("khodroyar_ai", Context.MODE_PRIVATE)
         prefs.edit().putString("mode", "GAPGPT_DIRECT").putBoolean("consented", true).putBoolean("openrouter_consented_v1", true).commit()
         assertEquals(AiMode.OPENROUTER, AiSettingsStore(context).load().mode); assertFalse(AiSettingsStore(context).load().consented)
@@ -341,7 +341,7 @@ class NativeOpenRouterAgentTest {
         // transition before measuring the conversation or touching a newly opened consent card.
         compose.waitUntil(10000) { chatImeBottom == 0 }
     }
-    @Test fun aColdGreetingWithoutEvaluationReceiptsMakesOneNormalPostEvenOnDuplicateSend() = runBlocking {
+    @Test fun aColdGreetingWithoutEvaluationReceiptsMakesOneNormalPostEvenOnDuplicateSend(): Unit = runBlocking {
         val posts = AtomicInteger(); val requests = java.util.Collections.synchronizedList(mutableListOf<AiHttpRequest>())
         val release = java.util.concurrent.CountDownLatch(1)
         val http = AiHttpTransport { request ->
@@ -396,13 +396,17 @@ class NativeOpenRouterAgentTest {
                 .put("passed", true).put("metadata_connection_posts", 0).put("cancelled_evaluation_posts", 0)
                 .put("separate_cost_confirmation_shown", true).toString().toByteArray())
     }
-    @Test fun providerKeysAndInstallWideUsagePersistEncryptedOrBoundedWithoutTouchingRecords() = runBlocking {
+    @Test fun providerKeysAndInstallWideUsagePersistEncryptedOrBoundedWithoutTouchingRecords(): Unit = runBlocking {
         val values = mapOf(AiMode.GEMINI to ("AIza" + "x".repeat(35)), AiMode.GROQ to ("gsk_" + "y".repeat(48)), AiMode.CLOUDFLARE to "z".repeat(40))
         values.forEach { (mode, key) -> ProviderApiKeyStore(context, mode).save(key) }
         val file = File(context.applicationInfo.dataDir, "shared_prefs/khodroyar_provider_credentials.xml").readText()
         values.forEach { (mode, key) -> assertEquals(key, ProviderApiKeyStore(context, mode).read()); assertFalse(file.contains(key)) }
         val ledger = AIUsageLedger(day = 20000, requests = 7, reservedTokens = 0, metadataRequests = 2, actualTokens = 3210)
         AndroidAIUsageStore(context).write(ledger)
+        val legacyUsage = context.getSharedPreferences("khodroyar_ai_usage", Context.MODE_PRIVATE)
+        legacyUsage.edit().putLong("tokens", Long.MAX_VALUE).commit()
+        assertEquals(0L, AndroidAIUsageStore(context).read().reservedTokens) // Old estimates never become a new allowance or displayed usage.
+        AndroidAIUsageStore(context).write(ledger); assertFalse(legacyUsage.contains("tokens"))
         AiSettingsStore(context).save(AiSettings(mode = AiMode.GROQ, modelAccountScope = "new-key-scope"))
         ConversationRepository(context).clearAll()
         assertEquals(ledger, AndroidAIUsageStore(context).read())
@@ -411,7 +415,7 @@ class NativeOpenRouterAgentTest {
         assertTrue(db.services().allOnce().isEmpty())
         values.keys.forEach { ProviderApiKeyStore(context, it).clear() }
     }
-    @Test fun rtlTextChatStreamsNativeToolsWaitsForButtonAndPreservesRealHistory() = runBlocking {
+    @Test fun rtlTextChatStreamsNativeToolsWaitsForButtonAndPreservesRealHistory(): Unit = runBlocking {
         val postCount = AtomicInteger(); val requests = mutableListOf<AiHttpRequest>()
         val http = object : AiHttpTransport, AiStreamingTransport {
             override fun execute(request: AiHttpRequest): AiHttpResponse { synchronized(requests) { requests += request }; return AiHttpResponse(200, catalog()) }
@@ -459,7 +463,7 @@ class NativeOpenRouterAgentTest {
         compose.onNodeWithText("تاریخچه").performClick()
         compose.waitUntil(5000) { vm.history.size == 1 }
         compose.onNodeWithContentDescription("حذف گفتگو").performClick()
-        compose.onNodeWithText("حذف گفتگو", useUnmergedTree = false).performClick()
+        compose.onNode(hasText("حذف گفتگو") and hasClickAction()).performClick()
         compose.waitUntil(10000) { runBlocking { ConversationRepository(context).load().isEmpty() } }
         compose.onNodeWithText("هنوز گفتگویی ذخیره نشده است.").assertIsDisplayed()
         assertEquals(1, db.insights().expensesOn("1404/01/01").size); assertEquals(2, postCount.get())
@@ -469,7 +473,7 @@ class NativeOpenRouterAgentTest {
             .put("confirm_button_clicked", true).put("history_deleted_records_preserved", true)
         publishSyntheticEvidence(context, "KhodroYar-UI-Smoke", "openrouter-agent.json", "application/json", evidence.toString().toByteArray())
     }
-    @Test fun realCreateCancelDoubleTapAndDestructiveCancelConfirmNeverRunUnapprovedQueuedWrites() = runBlocking {
+    @Test fun realCreateCancelDoubleTapAndDestructiveCancelConfirmNeverRunUnapprovedQueuedWrites(): Unit = runBlocking {
         val posts = AtomicInteger()
         val args = """{"date":"1404/01/01","service_type":"night","origin":"مبارکه","destination":"اصفهان","km":60,"hours":3,"toll_count":1}"""
         val http = AiHttpTransport { request ->
@@ -566,7 +570,7 @@ class NativeOpenRouterAgentTest {
         assertEquals(free, vm.settings.openRouterModel)
         assertTrue(vm.settings.consented)
     }
-    @Test fun realSafeModelEvaluationUsesOnlyDummyDataAndGuardrailRemovalStopsWithoutAnotherPost() = runBlocking {
+    @Test fun realSafeModelEvaluationUsesOnlyDummyDataAndGuardrailRemovalStopsWithoutAnotherPost(): Unit = runBlocking {
         val privateRecord = PersonalExpenseEntity("private-test", "1404/01/01", "coffee", "PRIVATE-USER-DATA-DO-NOT-SEND", 9876543.0, "private-note")
         repo.applyApprovedAgentRecord(null, privateRecord)
         AiSettingsStore(context).save(AiSettings(consented = true)); OpenRouterApiKeyStore(context).save(syntheticKey)
@@ -607,7 +611,7 @@ class NativeOpenRouterAgentTest {
             .put("guardrail_removal_sent_no_post", true).put("no_real_tool_execution", true)
         publishSyntheticEvidence(context, "KhodroYar-UI-Smoke", "openrouter-model-evaluation.json", "application/json", evidence.toString().toByteArray())
     }
-    @Test fun modelReplacementAfterAnApprovedWriteContinuesTranscriptWithoutReplayingTheCommittedRecord() = runBlocking {
+    @Test fun modelReplacementAfterAnApprovedWriteContinuesTranscriptWithoutReplayingTheCommittedRecord(): Unit = runBlocking {
         val alternative = "synthetic/alternative:free"
         val source = JSONObject(catalog()).apply { getJSONArray("data").put(JSONObject(getJSONArray("data").getJSONObject(1).toString()).put("id", alternative)) }.toString()
         val posts = AtomicInteger(); val bodies = mutableListOf<String>()
@@ -690,7 +694,7 @@ class NativeOpenRouterAgentTest {
         val zero = completion("متن مصنوعی").dropLast(1) + ",\"usage\":{\"cost\":0.0}}"
         assertEquals("متن مصنوعی", OpenRouterWire.completion(zero, "openrouter/free", verified).message.content)
     }
-    @Test fun historyRedactsCredentialsInTitlesMessagesAndFilesAcrossRepositoryInstances() = runBlocking {
+    @Test fun historyRedactsCredentialsInTitlesMessagesAndFilesAcrossRepositoryInstances(): Unit = runBlocking {
         val entry = ChatEntry("redaction", ChatRole.ASSISTANT, "پاسخ مصنوعی $syntheticKey پایان", 1L)
         val conversation = Conversation("redaction", "عنوان $syntheticKey", 1L, 2L, listOf(entry), AiMode.OPENROUTER)
         ConversationRepository(context).save(conversation)
@@ -713,7 +717,7 @@ class NativeOpenRouterAgentTest {
         return android.net.Uri.fromFile(source)
     }
 
-    @Test fun modernOptionsContainExactlyFiveActionsARealTaskCountAndPhysicalComposerPositions() = runBlocking {
+    @Test fun modernOptionsContainExactlyFiveActionsARealTaskCountAndPhysicalComposerPositions(): Unit = runBlocking {
         val automation = com.khodroyar.app.automation.AutomationStore.get(context)
         automation.change { (1..3).map { n -> com.khodroyar.app.automation.AutomationRule(java.util.UUID.randomUUID().toString(),
             com.khodroyar.app.automation.RuleKind.TRAFFIC, "ساختگی $n",
@@ -753,14 +757,14 @@ class NativeOpenRouterAgentTest {
         assertTrue(requests.all { it.method == "GET" })
     }
 
-    @Test fun selectedImageIsVisibleSentAsRealJpegAndRetainedUntilItsLastConversationIsDeleted() = runBlocking {
+    @Test fun selectedImageIsVisibleSentAsRealJpegAndRetainedUntilItsLastConversationIsDeleted(): Unit = runBlocking {
         val source = JSONObject(catalog()).apply { getJSONArray("data").getJSONObject(1).put("architecture", JSONObject()
             .put("input_modalities", JSONArray(listOf("text", "image"))).put("output_modalities", JSONArray(listOf("text")))) }.toString()
         val requests = java.util.Collections.synchronizedList(mutableListOf<AiHttpRequest>())
         val vm = renderChat(AiHttpTransport { q -> requests += q; AiHttpResponse(200, if (q.method == "GET") source else completion("تصویر ساختگی دریافت شد.")) },
             consented = true, modelCatalog = source)
         val uri = chatFixtureImage()
-        compose.runOnIdle { vm.attachImage(uri) }
+        compose.runOnIdle { vm.attachImage(uri); vm.newChat() } // Force import/prune overlap; the new attachment must retain ownership.
         compose.waitUntil(10000) { !vm.imageLoading && vm.draftImage != null }
         val ref = requireNotNull(vm.draftImage); val local = vm.imageStore.file(ref)
         assertTrue(local.canonicalPath.startsWith(context.noBackupFilesDir.canonicalPath))
@@ -791,6 +795,39 @@ class NativeOpenRouterAgentTest {
         publishSyntheticEvidence(context, "KhodroYar-UI-Smoke", "ai-chat-image.json", "application/json", JSONObject()
             .put("environment", "Synthetic JPEG and HTTP; actual Compose, private files and history; NOT live provider")
             .put("passed", true).put("image_posts", 1).put("jpeg_decoded", true).put("exif_removed", true).put("history_lifetime_verified", true).toString().toByteArray())
+    }
+
+    @Test fun transparentImagesAreFlattenedOnWhiteAndOnlyOwnedCameraStagingFilesAreDiscarded(): Unit = runBlocking {
+        val source = File(context.cacheDir, "synthetic-transparent.png")
+        val bitmap = android.graphics.Bitmap.createBitmap(32, 32, android.graphics.Bitmap.Config.ARGB_8888)
+        bitmap.eraseColor(android.graphics.Color.TRANSPARENT)
+        android.graphics.Canvas(bitmap).drawRect(16f, 16f, 32f, 32f, android.graphics.Paint().apply { color = android.graphics.Color.BLACK })
+        source.outputStream().use { assertTrue(bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it)) }; bitmap.recycle()
+        val store = ChatImageStore(context)
+        val ref = store.prepare(android.net.Uri.fromFile(source)); val wire = store.wire(ref)
+        val bytes = android.util.Base64.decode(wire.base64, android.util.Base64.DEFAULT)
+        val jpeg = requireNotNull(android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size))
+        assertEquals("image/jpeg", wire.mimeType)
+        assertTrue(android.graphics.Color.red(jpeg.getPixel(4, 4)) > 240)
+        assertTrue(android.graphics.Color.red(jpeg.getPixel(24, 24)) < 20); jpeg.recycle()
+        val uri = store.cameraUri(); val staged = File(context.cacheDir, "exports/${uri.lastPathSegment}")
+        staged.writeBytes(bytes); assertTrue(staged.isFile)
+        store.discardCamera(uri); assertFalse(staged.exists())
+        store.discardCamera(android.net.Uri.fromFile(source)); assertTrue(source.isFile)
+        store.discard(ref); assertFalse(store.file(ref).exists()); assertTrue(source.isFile)
+    }
+
+    @Test fun missingLocalImageCannotPretendToUploadAndRestoresTheEditableDraftWithoutAnInferencePost() {
+        val posts = AtomicInteger()
+        val vm = renderChat(AiHttpTransport { q -> if (q.method == "POST") posts.incrementAndGet(); AiHttpResponse(200, catalog()) }, consented = true)
+        compose.runOnIdle { vm.attachImage(chatFixtureImage()); vm.editDraft("تصویر محلی از دست رفته") }
+        compose.waitUntil(10000) { !vm.imageLoading && vm.draftImage != null }
+        val ref = requireNotNull(vm.draftImage)
+        compose.runOnIdle { vm.imageStore.discard(ref); vm.sendDraft() }
+        compose.waitUntil(5000) { !vm.busy && vm.failure != null }
+        assertEquals(0, posts.get()); assertEquals("تصویر محلی از دست رفته", vm.draftText); assertEquals(ref, vm.draftImage)
+        assertEquals("تصویر محلی از دست رفته", vm.messages.single().text)
+        compose.onNodeWithText("تصویر محلی موجود نیست؛ دوباره پیوست کنید.", substring = true).assertExists()
     }
 
     @Test fun unsupportedImageIsNotPretendedToBeSentAndDraftSurvives() {
@@ -828,7 +865,7 @@ class NativeOpenRouterAgentTest {
         compose.waitForIdle(); assertEquals(before, gets.get()); assertEquals(1, posts.get())
     }
 
-    @Test fun changingProviderAndKeyKeepsTranscriptAndDraftButNeverSendsOldContextToTheNewAccount() = runBlocking {
+    @Test fun changingProviderAndKeyKeepsTranscriptAndDraftButNeverSendsOldContextToTheNewAccount(): Unit = runBlocking {
         val posts = java.util.Collections.synchronizedList(mutableListOf<AiHttpRequest>())
         val http = AiHttpTransport { q ->
             if (q.method == "GET") AiHttpResponse(200, if (q.url.contains("api.openai.com")) """{"data":[{"id":"gpt-4.1","owned_by":"openai"}]}""" else catalog())
@@ -857,7 +894,7 @@ class NativeOpenRouterAgentTest {
         compose.waitUntil(10000) { runBlocking { ConversationRepository(context).load().any { it.mode == AiMode.GPT && it.contextStart == 2 && it.messages.size == 4 } } }
     }
 
-    @Test fun serviceSuggestionLongPressDeletesOnlyThatPersistedSuggestionNotAnySourceRecord() = runBlocking {
+    @Test fun serviceSuggestionLongPressDeletesOnlyThatPersistedSuggestionNotAnySourceRecord(): Unit = runBlocking {
         val tools = AppAgentTools(context, repo)
         tools.execute(preview(tools, "add_service", """{"date":"1404/01/01","service_type":"night","origin":"مبارکه","destination":"اصفهان","km":60,"hours":3}""").call)
         val before = db.services().allOnce().single()
@@ -882,7 +919,7 @@ class NativeOpenRouterAgentTest {
         repo.deleteSuggestion("km", "60"); assertTrue(db.suggestions().fieldOnce("km").isEmpty()); assertEquals(before, db.services().allOnce().single())
     }
 
-    @Test fun dailyAutoServiceMigratesLegacyJobKeepsOptInAndRealignsAtDeviceLocalSixteen() = runBlocking {
+    @Test fun dailyAutoServiceMigratesLegacyJobKeepsOptInAndRealignsAtDeviceLocalSixteen(): Unit = runBlocking {
         val scheduler = com.khodroyar.app.notifications.AutoServiceScheduler
         val manager = WorkManager.getInstance(context)
         val old = androidx.work.PeriodicWorkRequestBuilder<com.khodroyar.app.notifications.AutoServiceWorker>(1, java.util.concurrent.TimeUnit.DAYS)

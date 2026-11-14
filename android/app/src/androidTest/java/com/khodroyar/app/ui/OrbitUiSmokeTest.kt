@@ -535,6 +535,12 @@ class OrbitUiSmokeTest {
         compose.onAllNodesWithTag("quick-review").assertCountEquals(0)
         assertEquals(1,runBlocking { AppDatabase.get(context).personalExpenses().allOnce().size })
         compose.onNodeWithTag("quick-confirm").performClick()
+        // Preview preparation uses real Room IO, which is not a Compose idling resource.
+        // A second tap while disabled is correctly ignored by production; wait for the real review.
+        compose.waitUntil(15_000) {
+            compose.onAllNodesWithTag("quick-review").fetchSemanticsNodes().isNotEmpty() &&
+                compose.onAllNodes(hasTestTag("quick-confirm") and isEnabled()).fetchSemanticsNodes().isNotEmpty()
+        }
         compose.onNodeWithTag("quick-confirm").performClick()
         compose.waitUntil(15_000) { repository.quickEntries.receipt.value != null }
         assertEquals(2, runBlocking { AppDatabase.get(context).personalExpenses().allOnce().size })
@@ -554,6 +560,12 @@ class OrbitUiSmokeTest {
         }
         compose.onNodeWithTag("quick-amount").performScrollTo().performTextReplacement("80000")
         compose.onNodeWithTag("quick-confirm").performClick()
+        // Preview preparation uses real Room IO, which is not a Compose idling resource.
+        // A second tap while disabled is correctly ignored by production; wait for the real review.
+        compose.waitUntil(15_000) {
+            compose.onAllNodesWithTag("quick-review").fetchSemanticsNodes().isNotEmpty() &&
+                compose.onAllNodes(hasTestTag("quick-confirm") and isEnabled()).fetchSemanticsNodes().isNotEmpty()
+        }
         compose.onNodeWithTag("quick-confirm").performClick()
         compose.waitUntil(15_000) { repository.quickEntries.receipt.value?.draft?.amount == 80000.0 }
         assertEquals(2, runBlocking { AppDatabase.get(context).personalExpenses().allOnce().size })

@@ -55,7 +55,7 @@ class OpenRouterClient(
         checkHttp(response)
         val verified = OpenRouterFreePolicy.catalog(response.body)
         _models.value = verified
-        if (verified.isEmpty()) fail(AiErrorKind.NOT_FOUND, "هیچ مدل رایگانِ دارای ابزار و ظرفیت کافی تأیید نشد. مدل پولی استفاده نمی‌شود؛ بعداً فهرست را تازه کنید.")
+        if (verified.isEmpty()) fail(AiErrorKind.NOT_FOUND, "هیچ مدل رایگان تأیید نشد. مدل پولی استفاده نمی‌شود؛ بعداً فهرست را تازه کنید.")
         return verified
     }
     private suspend fun request(request: AiHttpRequest, onEvent: ((String) -> Unit)? = null): AiHttpResponse {
@@ -126,21 +126,20 @@ class OpenRouterClient(
 
     /** Internal legacy wire regression hook; cannot be supplied to an agent. Production uses ManagedAIProvider. */
     internal suspend fun complete(messages: List<FunctionMessage>, onText: (String) -> Unit): FunctionResult =
-        perform(messages, OpenRouterToolSchemas.tools(AIToolExposure.tools(messages, configuration().usage.toolsEnabled), compact = true), null, onText)
+        perform(messages, OpenRouterToolSchemas.tools(AIToolExposure.tools(messages, configuration().usage.toolsEnabled), compact = true), onText)
 
-    private suspend fun perform(messages: List<FunctionMessage>, schemas: JSONArray, forcedTool: String?, onText: (String) -> Unit): FunctionResult = guarded({
+    private suspend fun perform(messages: List<FunctionMessage>, schemas: JSONArray, onText: (String) -> Unit): FunctionResult = guarded({
         val (s, key) = account()
         if (!OpenRouterFreePolicy.isFreeId(s.openRouterModel)) fail(AiErrorKind.BAD_REQUEST, "فقط openrouter/free یا مدل :free تأییدشده مجاز است؛ درخواست پولی ارسال نشد.")
         require(messages.isNotEmpty() && messages.sumOf { it.content.length.toLong() + it.calls.sumOf { c -> c.arguments.length.toLong() } } <= 32L * 1024 * 1024)
         if (messages.any { OpenRouterFreePolicy.containsCredential(it.content) || it.calls.any { c -> OpenRouterFreePolicy.containsCredential(c.arguments) } }) fail(AiErrorKind.BAD_REQUEST, "متن شبیه کلید API است؛ ذخیره یا ارسال نمی‌شود. کلید را فقط در تنظیمات امن وارد کنید.")
         val catalog = fetchCatalog() // Never authorise from an old UI list, a suffix, or a remembered zero price.
         val selected = s.openRouterModel
-        if (catalog.none { it.id == selected }) fail(AiErrorKind.NOT_FOUND, "مدل انتخابی در فهرست تازهٔ رایگان/ابزار تأیید نشد. خودکار عوض نمی‌شود؛ در تنظیمات مدل رایگان دیگری انتخاب کنید.")
-        val streaming = forcedTool == null && transport is AiStreamingTransport
-        val body = JSONObject().put("tool_choice", "auto").put("model", selected).put("messages", JSONArray().apply { messages.forEach { put(OpenRouterWire.messageJson(it)) } })
-            .put("tools", schemas).put("provider", OpenRouterFreePolicy.routing()).put("stream", streaming)
-            .apply { if (forcedTool != null) put("max_tokens", 256) }
-        if (forcedTool != null) body.put("tool_choice", JSONObject().put("type", "function").put("function", JSONObject().put("name", forcedTool)))
+        if (catalog.none { it.id == selected }) fail(AiErrorKind.NOT_FOUND, "مدل انتخابی در فهرست تازهٔ رایگان تأیید نشد. خودکار عوض نمی‌شود؛ در تنظیمات مدل رایگان دیگری انتخاب کنید.")
+        val streaming = transport is AiStreamingTransport
+        val body = JSONObject().put("model", selected).put("messages", JSONArray().apply { messages.forEach { put(OpenRouterWire.messageJson(it)) } })
+            .put("provider", OpenRouterFreePolicy.routing()).put("stream", streaming)
+        if (schemas.length() > 0) body.put("tools", schemas).put("tool_choice", "auto")
         // No models array, plugins, web search, paid fallback, custom endpoint, or purchasing API exists here.
         val request = AiHttpRequest(OpenRouterFreePolicy.CHAT_URL, "POST", headers(key), body.toString())
         val context = currentCoroutineContext()

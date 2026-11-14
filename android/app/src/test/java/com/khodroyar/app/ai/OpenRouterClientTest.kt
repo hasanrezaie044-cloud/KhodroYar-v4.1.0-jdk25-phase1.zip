@@ -27,7 +27,7 @@ class OpenRouterClientTest {
         assertEquals(listOf(OpenRouterFreePolicy.MODELS_URL, OpenRouterFreePolicy.CHAT_URL), http.requests.map { it.url })
         val post = http.requests.last(); val body = JSONObject(requireNotNull(post.body))
         assertEquals("openrouter/free", body.getString("model")); assertFalse(body.has("models")); assertFalse(body.has("plugins"))
-        assertEquals(0, body.getJSONArray("tools").length()); assertFalse(body.getJSONObject("provider").getBoolean("allow_fallbacks"))
+        assertFalse(body.has("tools")); assertFalse(body.has("tool_choice")); assertFalse(body.getJSONObject("provider").getBoolean("allow_fallbacks"))
         assertEquals(0, body.getJSONObject("provider").getJSONObject("max_price").getInt("request"))
         assertEquals("Bearer ${f.key}", post.headers["Authorization"])
         assertFalse(http.requests.first().headers.containsKey("Authorization"))

@@ -96,7 +96,7 @@ def prepare(apk, verification, directory, expected_head):
     shutil.copyfile(verification, root / 'verification.json')
     (root / 'SHA256SUMS').write_text(f"{proof['sha256']}  {name}\n")
     # No credentials, keystores, private delivery keys, or test APK are copied.
-    policy_version = '۵' if proof['version_code'] >= 78 else '۴' if proof['version_code'] >= 77 else '۳' if proof['version_code'] >= 76 else '۲'
+    policy_version = '۶' if proof['version_code'] >= 79 else '۵' if proof['version_code'] >= 78 else '۴' if proof['version_code'] >= 77 else '۳' if proof['version_code'] >= 76 else '۲'
     agent_notes = """## ارتقای ۵.۶ از ۵.۵.۸: ایجنت فارسی فقط‌رایگان
 
 - اتصال مستقیم OpenRouter با کلید شخصیِ Keystore-encrypted، مدل اولیه openrouter/free و رضایت تازه؛ بدون بک‌اند اجباری. فهرست مدل/قیمت صفر پیش از هر درخواست، max_price صفر، no paid fallback و منع خرید اعتبار.
@@ -135,6 +135,20 @@ def prepare(apk, verification, directory, expected_head):
 - OpenRouter همان قیمت‌های دقیق صفر/Guardrail/endpoint تازه و سقف صفر را دارد. Groq/Gemini/Cloudflare adapter رسمی مشروط به منطقه/مدل/Free بدون billing دارند؛ Gemini ابزار سوابق ندارد و Cloudflare باید طرح Free را از API اثبات کند. Free quota تضمین صفرصورتحساب حساب paid نیست. Cerebras/HF/ایرانیِ فاقد رایگان اثبات‌شده غیرفعال‌اند.
 - آزمون سازگاری providerها با mock است، نه حساب/اعتبار/منطقه/کیفیت زنده؛ هیچ اعتبار واقعی استفاده نشده. جزئیات قبولی در گزارش‌های همان Actions run است. راهنما: docs/AI-MODEL-MANAGEMENT.fa.md و docs/AI-PROVIDERS.fa.md.
 - کلیدهای Keystore، رضایت تازه v3، سیاست۵، history-scoping و تنظیم tools/history؛ همان چت تمام‌صفحهٔ RTL، همهٔ ابزارها و تأیید صریح/تراکنش/readback/journal قبلی. بسته/امضا، Room6، سوابق، منطق و ثبت دستی آفلاین تغییر نکرده‌اند.
+
+## قابلیت‌ها و بررسی‌های غیرAI حفظ‌شده
+
+"""
+    if proof['version_code'] >= 79:
+        agent_notes = """## ارتقای ۵.۶.۳: چت جدید، تصویر واقعی و حذف سقف مصرف برنامه
+
+- تغییر بصری فقط چت و پنل گزینه‌ها: بسته‌های سازنده و ردیف نشان/نام/ظرفیت؛ پنج گزینهٔ دقیق با شمار واقعی کارها، تأیید حذف، + چپ فیزیکی و ارسال/تایپ صوتی راست.
+- هفت اتصال: دستیار آفلاین، OpenRouter، Gemini، Groq، Claude، Fireworks AI، GPT؛ پروتکل‌های بومی و تصویر واقعی در مدل سازگار. تصویر JPEG بدون EXIF/GPS، محلی و خارج از پشتیبان؛ متن/تصویر پشتیبانی‌نشده وانمود نمی‌شود ارسال شده است.
+- حذف اجرای سقف محلی مصرف درخواست/توکن/روز/نرخ و رزرو تخمینی؛ فقط سهمیه و قرارداد واقعی سرویس. بدون خرید، فعال‌سازی billing، retry سهمیه/اعتبار/کلید یا تعویض خودکار ارائه‌دهنده/مدل پولی. سلام یک POST عادی و صفر ارزیابی؛ آزمون مدل فقط دستی با هشدار مصرف جداگانه.
+- حفظ گفتگو و پیش‌نویس در خطای quota و تعویض اتصال/کلید؛ context اتصال قبلی خودکار به حساب جدید نمی‌رود. ادامهٔ batch ابزارها صریح است؛ تأیید یک‌بارمصرف، snapshot/تراکنش/journal/readback قبلی و منع replay نوشتن حفظ‌اند.
+- پیشنهادهای متنی/عددی سرویس با نگه‌داشتن و حذف، فقط از جدول پیشنهادها پاک می‌شوند، نه رکورد منبع. ثبت روزانهٔ opt-in به۱۶:۰۰ محلی منتقل، با تعطیلات/دفاع تکرار و realign تغییر منطقه/DST؛ Android ممکن است اجرا را عقب بیندازد.
+- سیاست حریم خصوصی۶ و رضایت provider v4؛ بسته/امضای اصلی، Room6، ثبت دستی، داده‌ها و منطق کسب‌وکار حفظ‌اند. تست‌ها با HTTP/SSE/تصویر/سوابق ساختگی‌اند، نه حساب زنده یا تضمین دسترسی/کیفیت/رایگان دائمی. تعداد دقیق قبولی در گزارش همان SHA/Actions است، نه نتایج نسخهٔ قبل.
+- راهنما: docs/AI-MODEL-MANAGEMENT.fa.md و docs/AI-PROVIDERS.fa.md. این artifact تحویل Actions است؛ Release عمومی/بازار/merge با این کار انجام نمی‌شود.
 
 ## قابلیت‌ها و بررسی‌های غیرAI حفظ‌شده
 

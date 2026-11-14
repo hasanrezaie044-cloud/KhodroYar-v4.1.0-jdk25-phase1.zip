@@ -175,18 +175,28 @@ class AccountModelAdapter(
     override fun invalidate() { cached = emptyList(); responseIds = emptyMap(); checked = 0; scope = "" }
 }
 
-/** Documented alias/snapshot relationships, intersected with this key's real model list, never used as request fallbacks. */
+/** Exact, published same-family response identities; NEVER request substitutions. See the source audit. */
 object OpenAIResponseIdentities {
     private val snapshots = mapOf(
-        "gpt-4o" to "gpt-4o-2024-08-06", "gpt-4o-mini" to "gpt-4o-mini-2024-07-18",
-        "gpt-4.1" to "gpt-4.1-2025-04-14", "gpt-4.1-mini" to "gpt-4.1-mini-2025-04-14", "gpt-4.1-nano" to "gpt-4.1-nano-2025-04-14",
-        "gpt-5" to "gpt-5-2025-08-07", "gpt-5-mini" to "gpt-5-mini-2025-08-07", "gpt-5-nano" to "gpt-5-nano-2025-08-07",
+        "gpt-4o" to setOf("gpt-4o-2024-08-06", "gpt-4o-2024-11-20"),
+        "gpt-4o-mini" to setOf("gpt-4o-mini-2024-07-18"),
+        "gpt-4.1" to setOf("gpt-4.1-2025-04-14"), "gpt-4.1-mini" to setOf("gpt-4.1-mini-2025-04-14"),
+        "gpt-5" to setOf("gpt-5-2025-08-07"), "gpt-5-mini" to setOf("gpt-5-mini-2025-08-07"),
+        "gpt-5-nano" to setOf("gpt-5-nano-2025-08-07"),
     )
-    // Exact IDs, not prefix guesses. New model IDs stay text-only until their capabilities are
-    // documented (or exposed by an official API). Context stays unknown when /models omits it.
-    // Evidence: official OpenAI Cookbook vision.txt, GPT-4.1 and GPT-5 prompting/tool guides;
-    // see docs/AI-PROVIDERS.fa.md for pinned source revisions and limits of this evidence.
-    val visionModels: Set<String> = snapshots.keys + snapshots.values
-    val toolModels: Set<String> = visionModels
-    fun forModel(selected: String, liveIds: Set<String>): Set<String> = setOf(selected) + listOfNotNull(snapshots[selected]).filter { it in liveIds }
+    // Capability evidence is independent of response identity. Do NOT derive either capability
+    // from this map, a prefix or an SDK enum. In particular the GPT-5-nano response identity
+    // does not prove image support. Unknown/new models remain text-only, context unknown.
+    // Pinned official Cookbook examples and OpenAPI source audit: docs/AI-PROVIDERS.fa.md.
+    val visionModels = setOf(
+        "gpt-4o", "gpt-4o-2024-08-06", "gpt-4o-2024-11-20", "gpt-4o-mini", "gpt-4o-mini-2024-07-18",
+        "gpt-4.1", "gpt-4.1-2025-04-14", "gpt-4.1-mini", "gpt-4.1-mini-2025-04-14",
+        "gpt-5", "gpt-5-2025-08-07", "gpt-5-mini", "gpt-5-mini-2025-08-07",
+    )
+    val toolModels = setOf(
+        "gpt-4o", "gpt-4o-2024-08-06", "gpt-4o-2024-11-20", "gpt-4o-mini", "gpt-4o-mini-2024-07-18",
+        "gpt-4.1", "gpt-4.1-2025-04-14", "gpt-4.1-mini", "gpt-4.1-mini-2025-04-14",
+        "gpt-5", "gpt-5-2025-08-07", "gpt-5-mini", "gpt-5-mini-2025-08-07", "gpt-5-nano", "gpt-5-nano-2025-08-07",
+    )
+    fun forModel(selected: String, liveIds: Set<String>): Set<String> = setOf(selected) + snapshots[selected].orEmpty().filter { it in liveIds }
 }

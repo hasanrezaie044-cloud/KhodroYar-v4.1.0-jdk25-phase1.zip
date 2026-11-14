@@ -64,14 +64,21 @@ class ChatImageStore(context: Context) {
             }
         }
         var transformed: Bitmap? = null
+        var flattened: Bitmap? = null
         val ref = ChatImageRef("${UUID.randomUUID()}.jpg")
         try {
             val bitmap = if (matrix.isIdentity) decoded else Bitmap.createBitmap(decoded, 0, 0, decoded.width, decoded.height, matrix, true).also { transformed = it }
-            file(ref).outputStream().use { check(bitmap.compress(Bitmap.CompressFormat.JPEG, 90, it)) }
+            // JPEG has no alpha. A white canvas preserves transparent screenshots/documents
+            // instead of silently turning their background black before model analysis.
+            val jpeg = if (!bitmap.hasAlpha()) bitmap else Bitmap.createBitmap(bitmap.width, bitmap.height, Bitmap.Config.ARGB_8888).also {
+                flattened = it
+                android.graphics.Canvas(it).apply { drawColor(android.graphics.Color.WHITE); drawBitmap(bitmap, 0f, 0f, null) }
+            }
+            file(ref).outputStream().use { check(jpeg.compress(Bitmap.CompressFormat.JPEG, 90, it)) }
             require(file(ref).length() in 1L..MAX_WIRE_BYTES)
             ref
         } catch (e: Exception) { file(ref).delete(); throw e }
-        finally { transformed?.takeIf { it !== decoded }?.recycle(); decoded.recycle() }
+        finally { flattened?.recycle(); transformed?.takeIf { it !== decoded }?.recycle(); decoded.recycle() }
         // A fresh JPEG contains no original EXIF/GPS/name or original URI.
     }
     suspend fun wire(ref: ChatImageRef): AIImage = withContext(Dispatchers.IO) {

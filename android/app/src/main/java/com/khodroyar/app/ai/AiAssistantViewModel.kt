@@ -450,8 +450,8 @@ class AiAssistantViewModel @JvmOverloads constructor(
                 if (mode != AiMode.LOCAL && step !is AgentStep.Failure) connection = ConnectionState.ONLINE
                 applyStep(step)
             } catch (e: CancellationException) { throw e }
-            catch (_: ChatImageUnavailable) { if (run == generation) failure = AiResult.Failure(AiErrorKind.BAD_REQUEST, "تصویر محلی موجود نیست؛ دوباره پیوست کنید.") }
-            catch (_: Exception) { if (run == generation) failure = AiResult.Failure(AiErrorKind.UNKNOWN, "دریافت پاسخ کامل نشد؛ عملیات تأییدنشده اجرا نمی‌شود.") }
+            catch (_: ChatImageUnavailable) { if (run == generation) applyStep(AgentStep.Failure(AiResult.Failure(AiErrorKind.BAD_REQUEST, "تصویر محلی موجود نیست؛ دوباره پیوست کنید."))) }
+            catch (_: Exception) { if (run == generation) applyStep(AgentStep.Failure(AiResult.Failure(AiErrorKind.UNKNOWN, "دریافت پاسخ کامل نشد؛ عملیات تأییدنشده اجرا نمی‌شود."))) }
             finally { if (run == generation) { busy = false; streamingText = "" } }
         }
     }

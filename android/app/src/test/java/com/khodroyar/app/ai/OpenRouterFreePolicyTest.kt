@@ -38,15 +38,15 @@ class OpenRouterFreePolicyTest {
         val json = f.catalog().replace("\"prompt\":\"0\"", "\"prompt\":1e-1000")
         assertTrue(OpenRouterFreePolicy.catalog(json).isEmpty())
     }
-    @Test fun nativeToolSupportAndEnoughContextAreMandatory() {
-        assertTrue(OpenRouterFreePolicy.catalog(f.catalog(f.row(tools = false))).isEmpty())
-        assertTrue(OpenRouterFreePolicy.catalog(f.catalog(f.row().put("context_length", 8192))).isEmpty())
-        val row = f.row(); row.remove("supported_parameters")
-        assertTrue(OpenRouterFreePolicy.catalog(f.catalog(row)).isEmpty())
+    @Test fun evenLegacyCatalogueAllowsTextOnlySmallAndUnknownContextWithoutOutputParameterRequirements() {
+        assertEquals(1, OpenRouterFreePolicy.catalog(f.catalog(f.row(tools = false))).size)
+        assertEquals(8192, OpenRouterFreePolicy.catalog(f.catalog(f.row().put("context_length", 8192))).single().contextLength)
+        val row = f.row(); row.remove("supported_parameters"); row.remove("context_length")
+        assertEquals(0, OpenRouterFreePolicy.catalog(f.catalog(row)).single().contextLength)
     }
-    @Test fun routerCannotMaskTheAbsenceOfAnyFreeToolModel() {
+    @Test fun routerCannotMaskTheAbsenceOfAnyFreeModelButToolsAreNotRequired() {
         assertTrue(OpenRouterFreePolicy.catalog(f.catalog(f.row("openrouter/free"))).isEmpty())
-        assertTrue(OpenRouterFreePolicy.catalog(f.catalog(f.row("openrouter/free"), f.row(tools = false))).isEmpty())
+        assertEquals(2, OpenRouterFreePolicy.catalog(f.catalog(f.row("openrouter/free"), f.row(tools = false))).size)
     }
     @Test fun noFallbackNoCollectionAndZeroCapsAreAlwaysPresent() {
         val route = OpenRouterFreePolicy.routing()

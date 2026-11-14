@@ -103,7 +103,7 @@ class AiSettingsStore(context: Context) {
         check(prefs.edit().putBoolean("provider_consented_v4", false).putBoolean("openrouter_consented_v2", false).putBoolean("openrouter_consented_v1", false).commit()) { "Consent revocation failed" }
     }
 
-    /** Random per-install id used only for server-side rate limiting. Not tied to the person. */
+    /** Legacy anonymous per-install identifier; retained for compatibility, never a usage allowance. */
     fun installId(): String {
         val existing = prefs.getString("install_id", null)
         if (!existing.isNullOrBlank()) return existing

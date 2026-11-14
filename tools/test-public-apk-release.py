@@ -59,6 +59,19 @@ class PublicationFixtures(unittest.TestCase):
         self.assertNotIn('جایگزینی خودکار حداکثر یک بار', notes)
         self.assertTrue((output / 'KhodroYar-5.6.2-release-signed.apk').is_file())
 
+    def test_563_notes_disclose_uncapped_usage_real_images_seven_connections_and_policy_six(self):
+        self.proof.update(version_code=79, version_name='5.6.3')
+        self.save()
+        output = self.root / 'prepared-chat'
+        with patch.object(publication, 'audit_actual_apk'):
+            publication.prepare(self.apk, self.path, output, HEAD)
+        notes = (output / 'test-summary.md').read_text()
+        for term in ('حذف سقف مصرف برنامه', 'Claude', 'Fireworks AI', 'GPT', 'تصویر واقعی', 'پیش‌نویس', '۱۶:۰۰', 'سیاست حریم خصوصی۶'):
+            self.assertIn(term, notes)
+        self.assertNotIn('بودجهٔ پایدار درخواست', notes)
+        self.assertNotIn('Cloudflare adapter', notes)
+        self.assertTrue((output / 'KhodroYar-5.6.3-release-signed.apk').is_file())
+
     def test_changed_apk_bytes_are_rejected(self):
         self.apk.write_bytes(b'different fixture bytes')
         with self.assertRaises(ValueError): self.verify()

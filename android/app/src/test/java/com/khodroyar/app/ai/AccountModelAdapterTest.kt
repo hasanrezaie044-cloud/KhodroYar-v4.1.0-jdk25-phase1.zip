@@ -143,6 +143,29 @@ class AccountModelAdapterTest {
         assertEquals(setOf("gpt-4.1", "gpt-4.1-2025-04-14"), OpenAIResponseIdentities.forModel("gpt-4.1", live))
         assertEquals(setOf("gpt-4.1"), OpenAIResponseIdentities.forModel("gpt-4.1", setOf("gpt-4.1")))
     }
+    @Test fun responseIdentityNeverInventsCapabilitiesAndUnknownPrefixesRemainTextOnly() = runBlocking {
+        assertEquals(setOf("gpt-5-nano", "gpt-5-nano-2025-08-07"), OpenAIResponseIdentities.forModel("gpt-5-nano", setOf("gpt-5-nano-2025-08-07")))
+        assertFalse("gpt-5-nano" in OpenAIResponseIdentities.visionModels)
+        assertTrue("gpt-5-nano" in OpenAIResponseIdentities.toolModels)
+        for (id in listOf("gpt-4o-synthetic-new", "gpt-4.1-2099-01-01", "gpt-5-unknown", "gpt-synthetic-new")) {
+            val http = Http { AiHttpResponse(200, catalog(AiMode.GPT, JSONObject().put("id", id))) }
+            val a = adapter(AiMode.GPT, http)
+            val model = (a.discover(true) as AIModelDiscovery.Found).models.single()
+            assertEquals(0, model.capability.contextLength); assertFalse(model.capability.imageInput); assertFalse(model.capability.toolCalling)
+            assertTrue(a.infer(model.key, query) is FunctionResult.Failed)
+            assertTrue(http.requests.all { it.method == "GET" })
+        }
+    }
+    @Test fun onlyExactAuthorisedSameFamilyResponseSnapshotsAreAcceptedWithoutAnotherPost() = runBlocking {
+        for (returned in listOf("gpt-4.1-2025-04-14", "gpt-4.1-2099-01-01", "gpt-5-2025-08-07")) {
+            val http = Http { q -> AiHttpResponse(200, if (q.method == "GET") catalog(AiMode.GPT,
+                row(AiMode.GPT), JSONObject().put("id", returned)) else JSONObject(completion(AiMode.GPT)).put("model", returned).toString()) }
+            val result = adapter(AiMode.GPT, http).infer(AIModelKey("gpt", "gpt-4.1"), query)
+            assertEquals(returned, returned == "gpt-4.1-2025-04-14", result is FunctionResult.Reply)
+            assertEquals(1, http.requests.count { it.method == "POST" })
+            assertEquals("gpt-4.1", JSONObject(http.requests.last().body!!).getString("model"))
+        }
+    }
     @Test fun modelOrAccountChangeWhileHttpIsRunningDropsTheOldReply() = runBlocking {
         var s = settings(AiMode.GPT)
         val http = Http { q -> if (q.method == "GET") AiHttpResponse(200, catalog(AiMode.GPT)) else {
