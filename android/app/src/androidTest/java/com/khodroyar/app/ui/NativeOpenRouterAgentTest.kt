@@ -1,16 +1,22 @@
 package com.khodroyar.app.ui
 
+import android.app.Activity
 import android.app.Application
+import android.content.ContextWrapper
+import android.view.WindowManager
 import android.content.Context
 import android.os.Build
 import androidx.compose.material3.Surface
-import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createComposeRule
@@ -19,6 +25,7 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.ViewModelStore
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import androidx.test.uiautomator.UiDevice
 import androidx.work.WorkManager
 import com.khodroyar.app.ai.*
 import com.khodroyar.app.core.jalali.Jalali
@@ -55,10 +62,14 @@ class NativeOpenRouterAgentTest {
     private val settings get() = SettingsStore.get(context)
     private lateinit var repo: AppRepository
     private var viewModelStore: ViewModelStore? = null
+    @Volatile private var chatImeBottom = 0
     private val syntheticKey get() = "sk-or-v1-" + "b".repeat(64)
 
     @Before fun reset() = runBlocking {
         check(Build.HARDWARE.contains("ranchu") || Build.HARDWARE.contains("goldfish")) { "Synthetic fixture must not reset a real phone" }
+        val device = UiDevice.getInstance(InstrumentationRegistry.getInstrumentation())
+        device.executeShellCommand("settings put secure show_ime_with_hard_keyboard 1")
+        assertEquals("1", device.executeShellCommand("settings get secure show_ime_with_hard_keyboard").trim())
         WorkManager.getInstance(context).cancelAllWork().result.get()
         repo = AppRepository(context); repo.quickEntries.recover()
         withContext(Dispatchers.IO) { db.clearAllTables() }
@@ -283,16 +294,43 @@ class NativeOpenRouterAgentTest {
         }
         compose.setContent { CarManagerTheme {
             val density = LocalDensity.current
+            val activity = LocalContext.current.assistantHostActivity()
+            val ime = WindowInsets.ime.getBottom(density)
+            SideEffect { chatImeBottom = ime }
+            DisposableEffect(activity) {
+                val previous = activity?.window?.attributes?.softInputMode
+                // Match MainActivity, not EmptyActivity's default adjust-pan behavior.
+                activity?.window?.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
+                onDispose { previous?.let { activity?.window?.setSoftInputMode(it) } }
+            }
             CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl, LocalDensity provides Density(density.density, 1.25f)) {
-                Surface(Modifier.width(320.dp)) { AiAssistantScreen(vm, onNavigate = {}) }
+                // Same real system/IME inset consumption as Shell; the standalone fixture must
+                // not place its send hit target under Android's three-button navigation window.
+                Surface(Modifier.width(320.dp).windowInsetsPadding(WindowInsets.systemBars.only(
+                    WindowInsetsSides.Horizontal + WindowInsetsSides.Bottom).union(WindowInsets.ime))) {
+                    AiAssistantScreen(vm, onNavigate = {})
+                }
             }
         } }
         compose.waitUntil(10000) { vm.hasOpenRouterKey }
         return vm
     }
+    private fun Context.assistantHostActivity(): Activity? = when (this) {
+        is Activity -> this
+        is ContextWrapper -> baseContext.assistantHostActivity()
+        else -> null
+    }
     private fun send(text: String) {
-        compose.onNodeWithTag("ai-message-input").performTextReplacement(text)
-        compose.onNodeWithContentDescription("ارسال").performClick()
+        compose.onNodeWithTag("ai-message-input").assertIsDisplayed().performClick().performTextReplacement(text)
+        // Observe the actual keyboard/insets before fetching the send button's touch coordinates.
+        // No direct ViewModel send, synthetic IME size, retry tap or consent bypass is used.
+        compose.waitUntil(10000) { chatImeBottom > 0 }
+        UiDevice.getInstance(InstrumentationRegistry.getInstrumentation()).waitForIdle(10000)
+        compose.waitForIdle()
+        compose.onNodeWithContentDescription("ارسال").assertIsDisplayed().assertIsEnabled().performClick()
+        // The production send callback explicitly clears focus/hides IME. Observe that real
+        // transition before measuring the conversation or touching a newly opened consent card.
+        compose.waitUntil(10000) { chatImeBottom == 0 }
     }
     @Test fun rtlTextChatStreamsNativeToolsWaitsForButtonAndPreservesRealHistory() = runBlocking {
         val postCount = AtomicInteger(); val requests = mutableListOf<AiHttpRequest>()
@@ -319,6 +357,7 @@ class NativeOpenRouterAgentTest {
         assertTrue(db.insights().expensesOn("1404/01/01").isEmpty())
         compose.onNodeWithTag("ai-message-input").assertIsNotEnabled()
         compose.onNodeWithTag("agent-confirm-action").performScrollTo().assertIsDisplayed()
+        UiDevice.getInstance(InstrumentationRegistry.getInstrumentation()).waitForIdle(10000)
         compose.mainClock.advanceTimeBy(500); compose.waitForIdle()
         val image = compose.onNodeWithTag("ai-agent-screen").captureToImage().asAndroidBitmap()
         val output = java.io.ByteArrayOutputStream(); image.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, output); image.recycle()
