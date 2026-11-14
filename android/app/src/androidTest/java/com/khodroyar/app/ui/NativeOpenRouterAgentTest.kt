@@ -730,7 +730,7 @@ class NativeOpenRouterAgentTest {
         compose.onNodeWithTag("ai-options").performClick()
         for (title in listOf("گفتگوی نو", "تاریخچه", "پاک‌سازی گفتگوها", "کارهای خودکار", "تنظیمات هوش مصنوعی و مدل‌ها"))
             compose.onNodeWithText(title).assertIsDisplayed()
-        compose.onNodeWithTag("ai-task-count").assertTextEquals("3")
+        compose.onNodeWithTag("ai-task-count", useUnmergedTree = true).assertTextEquals("3")
         compose.onNodeWithText("بخش‌های برنامه").assertDoesNotExist()
         screenshot("43-ai-options-real-task-count-320", "ai-options-menu")
         UiDevice.getInstance(InstrumentationRegistry.getInstrumentation()).pressBack(); compose.waitForIdle()
