@@ -18,7 +18,7 @@ import java.util.UUID
 class ConversationRepository(context: Context) {
 
     private val file = File(context.applicationContext.filesDir, "ai_conversations.json")
-    private val lock = Any()
+    private companion object { val lock = Any() }
 
     suspend fun load(): List<Conversation> = withContext(Dispatchers.IO) {
         synchronized(lock) { readAll() }
@@ -29,7 +29,7 @@ class ConversationRepository(context: Context) {
         synchronized(lock) {
             coroutine.ensureActive()
             val trimmedMessages = conversation.messages.takeLast(AiLimits.MAX_STORED_MESSAGES).map { it.copy(text = OpenRouterFreePolicy.redactCredentials(it.text)) }
-            val updated = conversation.copy(messages = trimmedMessages)
+            val updated = conversation.copy(title = OpenRouterFreePolicy.redactCredentials(conversation.title), messages = trimmedMessages)
             val all = readAll().filter { it.id != updated.id } + updated
             val kept = all.sortedByDescending { it.updatedAt }.take(AiLimits.MAX_STORED_CONVERSATIONS)
             writeAll(kept)
@@ -87,6 +87,6 @@ class ConversationRepository(context: Context) {
         val id = o.optString("id", "")
         if (id.isBlank()) return null
         val mode = runCatching { AiMode.valueOf(o.optString("mode", "ONLINE")) }.getOrDefault(AiMode.ONLINE)
-        return Conversation(id, o.optString("title", ""), o.optLong("createdAt", 0L), o.optLong("updatedAt", 0L), msgs, mode)
+        return Conversation(id, OpenRouterFreePolicy.redactCredentials(o.optString("title", "")), o.optLong("createdAt", 0L), o.optLong("updatedAt", 0L), msgs, mode)
     }
 }

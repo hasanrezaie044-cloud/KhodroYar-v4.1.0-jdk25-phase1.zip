@@ -83,6 +83,9 @@ class OrbitUiSmokeTest {
             acceptedTermsVersion = TermsOfUse.VERSION, remindInstallments = false, remindOilChange = false, remindBodyInsurance = false,
             remindVehicleInsurance = false, remindInspection = false, remindBackup = false, autoBackupEnabled = false) }
         AiSettingsStore(context).save(AiSettings())
+        // A preceding agent test legitimately saves chats. A navigation fixture must not
+        // accidentally reopen that conversation instead of exercising the empty screen.
+        runBlocking { ConversationRepository(context).clearAll() }
         // First-use navigation must stay free of automatic tutorial dialogs.
         context.getSharedPreferences("car_manager_onboarding", Context.MODE_PRIVATE).edit().clear().commit()
         runBlocking {
@@ -195,8 +198,8 @@ class OrbitUiSmokeTest {
         compose.onNodeWithText("تراز این ماه").assertIsDisplayed()
         shot("09-finance")
         compose.onNodeWithTag("nav-HOME").performClick()
-        compose.onNodeWithTag("dashboard-list").performScrollToNode(hasText("دستیار داخلی"))
-        compose.onNodeWithText("دستیار داخلی").performClick()
+        compose.onNodeWithTag("dashboard-list").performScrollToNode(hasText("دستیار هوشمند"))
+        compose.onNodeWithText("دستیار هوشمند").performClick()
         compose.waitUntil(15_000) { compose.onAllNodesWithText("چی برات انجام بدم؟").fetchSemanticsNodes().isNotEmpty() }
         shot("10-assistant")
         compose.onNodeWithText("کارهای خودکار · 0").performClick()
@@ -298,12 +301,15 @@ class OrbitUiSmokeTest {
         compose.runOnIdle { assertTrue(accepted) }
     }
 
-    @Test fun versionOneAcceptanceCannotBypassUpdatedPolicyEvenWithLockOff() {
+    @Test fun versionOneAcceptanceCannotBypassUpdatedPolicyEvenWithLockOff() = assertPreviousPolicy(1)
+    @Test fun versionTwoAcceptanceCannotBypassOpenRouterPolicyEvenWithLockOff() = assertPreviousPolicy(2)
+
+    private fun assertPreviousPolicy(previous: Int) {
         val settings = SettingsStore.get(context)
         val pin = com.khodroyar.app.security.PinStore(context)
         val wasLocked = pin.lockEnabled
         pin.lockEnabled = false
-        settings.update { it.copy(acceptedTermsVersion = 1) }
+        settings.update { it.copy(acceptedTermsVersion = previous) }
         try {
             render(fontScale = 1.35f) {
                 AuthGate(pin, settings) { Text("ورود مجاز", Modifier.testTag("policy-protected-content")) }
@@ -312,10 +318,10 @@ class OrbitUiSmokeTest {
             compose.onNodeWithTag("policy-protected-content").assertDoesNotExist()
             compose.onNodeWithTag("terms-continue").assertIsNotEnabled()
             compose.onNodeWithTag("terms-agree").performClick()
-            compose.runOnIdle { assertEquals(1, settings.current.acceptedTermsVersion) }
+            compose.runOnIdle { assertEquals(previous, settings.current.acceptedTermsVersion) }
             compose.onNodeWithTag("terms-continue").performClick()
             compose.onNodeWithTag("policy-protected-content").assertIsDisplayed()
-            compose.runOnIdle { assertEquals(2, settings.current.acceptedTermsVersion) }
+            compose.runOnIdle { assertEquals(TermsOfUse.VERSION, settings.current.acceptedTermsVersion) }
             compose.onNodeWithTag("terms-agree").assertDoesNotExist()
         } finally { pin.lockEnabled = wasLocked }
     }

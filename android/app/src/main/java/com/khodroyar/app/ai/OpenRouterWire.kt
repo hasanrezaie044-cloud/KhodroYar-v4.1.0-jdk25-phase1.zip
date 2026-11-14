@@ -6,8 +6,8 @@ import org.json.JSONObject
 object OpenRouterWire {
     fun completion(body: String, selected: String, catalog: List<VerifiedFreeModel>): FunctionResult.Reply {
         require(body.length <= 256 * 1024)
-        val root = JSONObject(body)
-        require(!root.has("error")); checkCost(root)
+        val root = NativeJson.objectValue(body, 256 * 1024)
+        checkError(root); checkCost(root)
         val model = root.getString("model")
         OpenRouterFreePolicy.checkReturnedModel(model, selected, catalog)
         val choices = root.getJSONArray("choices"); require(choices.length() == 1)
@@ -37,13 +37,18 @@ object OpenRouterWire {
         require(Regex("[A-Za-z0-9_-]{1,128}").matches(call.id))
         require(Regex("[A-Za-z0-9_]{1,64}").matches(call.name))
         require(call.arguments.length <= PersianAgentLimits.ARGUMENT_CHARS)
-        JSONObject(call.arguments) // Prose or an incomplete JSON object is not executable.
+        NativeJson.objectValue(call.arguments, PersianAgentLimits.ARGUMENT_CHARS) // Prose or an incomplete JSON object is not executable.
+    }
+    fun checkError(root: JSONObject) {
+        if (root.has("error")) throw OpenRouterReplyFailure(OpenRouterFreePolicy.error(root.optJSONObject("error")?.optInt("code", 500) ?: 500))
     }
     fun checkCost(root: JSONObject) {
         val usage = root.optJSONObject("usage") ?: return
         if (usage.has("cost") && !usage.isNull("cost")) require(java.math.BigDecimal(usage.get("cost").toString()).signum() == 0)
     }
 }
+
+internal class OpenRouterReplyFailure(val failure: AiResult.Failure) : IllegalStateException("OpenRouter reply failed")
 
 class OpenRouterStream(
     private val selected: String, private val catalog: List<VerifiedFreeModel>, private val onText: (String) -> Unit,
@@ -55,7 +60,7 @@ class OpenRouterStream(
     fun accept(data: String) {
         require(!done)
         if (data == "[DONE]") { done = true; return }
-        val root = JSONObject(data); require(!root.has("error")); OpenRouterWire.checkCost(root)
+        val root = NativeJson.objectValue(data, 65536); OpenRouterWire.checkError(root); OpenRouterWire.checkCost(root)
         val actual = root.optString("model", "")
         if (actual.isNotBlank()) {
             OpenRouterFreePolicy.checkReturnedModel(actual, selected, catalog)

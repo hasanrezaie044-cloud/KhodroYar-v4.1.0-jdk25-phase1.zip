@@ -69,7 +69,7 @@ class AgentActionValidatorTest {
 
     @Test fun onlyReadToolsRunWithoutConfirmation() {
         AgentToolRegistry.tools.forEach { t ->
-            val readName = t.name.startsWith("get_") || t.name.startsWith("list_") || t.name.startsWith("analyze_") || t.name == "create_financial_report" || t.name == "open_app_section" || t.name in setOf("search_services_range", "report_services_range")
+            val readName = t.name.startsWith("get_") || t.name.startsWith("list_") || t.name.startsWith("analyze_") || t.name == "create_financial_report" || t.name == "open_app_section" || t.name in setOf("search_services_range", "report_services_range", "compare_financial_periods", "compare_company_report", "find_service_duplicates", "explain_service_price")
             assertEquals(t.name, readName, t.kind == ToolKind.READ)
         }
     }

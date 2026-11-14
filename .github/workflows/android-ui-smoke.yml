@@ -98,11 +98,38 @@ jobs:
           assert data == expected, 'Native traffic compatibility assertions did not all pass'
           print('::notice title=Legacy Neshan six-route UI integration (NOT live Neshan)::' + json.dumps(data))
           PY
+      - name: Publish native OpenRouter safety evidence (mocked HTTPS/SSE, no account key)
+        if: always()
+        run: |
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          path = Path(os.environ['RUNNER_TEMP']) / 'orbit-ui-screenshots' / 'openrouter-agent.json'
+          assert path.is_file() and path.stat().st_size <= 16384, 'Missing actual native OpenRouter mock evidence'
+          data = json.loads(path.read_text())
+          expected = dict(environment='Synthetic OpenRouter HTTP and SSE; NOT live model/account', passed=True,
+              native_tool_calls=True, no_request_before_consent=True, posts=2, records_after_approval=1,
+              paid_fallback=False, sse_completed=True, rtl_width_dp=320, font_scale=1.25,
+              confirm_button_clicked=True, history_deleted_records_preserved=True)
+          assert data == expected, 'Native free-agent consent/approval/continuation did not all pass'
+          print('::notice title=Native Persian agent integration (NOT live OpenRouter)::' + json.dumps(data))
+          path = path.with_name('openrouter-approvals.json')
+          assert path.is_file() and path.stat().st_size <= 16384, 'Missing actual approval-card lifecycle evidence'
+          data = json.loads(path.read_text())
+          expected = dict(environment='Synthetic OpenRouter; real Room and approval-card taps; NOT live account', passed=True,
+              posts=7, cancelled_create_unchanged=True, cancelled_delete_unchanged=True, double_tap_created_once=True,
+              unapproved_queue_discarded=True, confirmed_delete_readback=True, mileage_restored=True)
+          assert data == expected, 'Native explicit confirmation/cancellation/replay safety assertions did not all pass'
+          print('::notice title=Real agent approval-card lifecycle (mock AI)::' + json.dumps(data))
+          PY
       - name: Publish bounded synthetic previews for visual review
         if: always() && github.event_name == 'workflow_dispatch'
         run: |
           python3 -m venv "$RUNNER_TEMP/ui-preview-env"
           "$RUNNER_TEMP/ui-preview-env/bin/pip" --disable-pip-version-check -q install Pillow==12.0.0
+      - name: Free-agent approval preview
+        if: always() && github.event_name == 'workflow_dispatch'
+        run: '"$RUNNER_TEMP/ui-preview-env/bin/python" tools/ui-previews.py "$RUNNER_TEMP/orbit-ui-screenshots" 38-openrouter-approval-320-large-font'
       - name: Home preview
         if: always() && github.event_name == 'workflow_dispatch'
         run: '"$RUNNER_TEMP/ui-preview-env/bin/python" tools/ui-previews.py "$RUNNER_TEMP/orbit-ui-screenshots" 01-home-light-fa'

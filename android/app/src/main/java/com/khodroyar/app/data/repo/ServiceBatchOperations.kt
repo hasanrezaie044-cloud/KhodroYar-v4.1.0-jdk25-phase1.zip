@@ -6,6 +6,7 @@ import com.khodroyar.app.core.holidays.WorkCalendar
 import com.khodroyar.app.core.jalali.Jalali
 import com.khodroyar.app.core.rates.IncomeCalculator
 import com.khodroyar.app.core.rates.Rates
+import com.khodroyar.app.core.rates.CarType
 import com.khodroyar.app.core.rates.ServiceType
 import com.khodroyar.app.core.text.PersianInput
 import com.khodroyar.app.data.db.AppDatabase
@@ -30,7 +31,12 @@ data class ServiceBatchPlan(
 ) {
     val created get() = changes.mapNotNull { it.after }
     fun summary(): String = buildString {
-        append(when (action) { "bulk_register_services" -> "ثبت گروهی"; "bulk_edit_services" -> "ویرایش گروهی"; else -> "حذف گروهی" })
+        val single = changes.size == 1 && template == null
+        append(when (action) {
+            "bulk_register_services" -> if (single) "ثبت سرویس" else "ثبت گروهی"
+            "bulk_edit_services" -> if (single) "ویرایش سرویس" else "ویرایش گروهی"
+            else -> if (single) "حذف سرویس" else "حذف گروهی"
+        })
         append(" · ${changes.size} سرویس\nاز $start تا $end (شامل هر دو روز)\n")
         if (template != null) append(template.summary()).append("\nتعداد هدف: $perDay سرویس در هر روز ${if (workdaysOnly) "کاری" else "تقویمی؛ حتی تعطیلات"}\n")
         if (skipped > 0) append("$skipped نوبت موجود/غیرکاری کنار گذاشته شد؛ رکورد موجود دوباره ساخته نمی‌شود.\n")
@@ -47,7 +53,7 @@ data class ServiceBatchPlan(
             append("$date: ${b.size} → ${a.size} سرویس؛ ${b.sumOf { it.km }} → ${a.sumOf { it.km }} km؛ ${b.sumOf { it.hours }} → ${a.sumOf { it.hours }} ساعت؛ عوارض ${b.sumOf { it.tollCount }} → ${a.sumOf { it.tollCount }}؛ درآمد ${b.sumOf { it.income }} → ${a.sumOf { it.income }} تومان\n")
         }
         if (changes.size <= 20) changes.forEach { change ->
-            fun row(r: ServiceEntity?) = r?.let { "${it.id} · ${it.date} · ${ServiceType.fromWire(it.type).label} · ${it.origin} ← ${it.destination} · ${it.km} km · ${it.hours} ساعت · زمان ${it.startTime.ifBlank { "نامشخص" }} تا ${it.endTime.ifBlank { "نامشخص" }} · عوارض ${it.tollCount} · غذا ${it.missionFood} / عوارض مأموریت ${it.missionToll} / جریمه ${it.missionFine} · درآمد ${it.income} تومان" } ?: "وجود ندارد"
+            fun row(r: ServiceEntity?) = r?.let { "${it.id} · ${it.date} · ${ServiceType.fromWire(it.type).label} · خودرو ${CarType.fromWire(it.carType).label} · ${it.origin} ← ${it.destination} · ${it.km} km · ${it.hours} ساعت · زمان ${it.startTime.ifBlank { "نامشخص" }} تا ${it.endTime.ifBlank { "نامشخص" }} · عوارض ${it.tollCount} · غذا ${it.missionFood} / عوارض مأموریت ${it.missionToll} / جریمه ${it.missionFine} · درآمد ${it.income} تومان" } ?: "وجود ندارد"
             append("\nقبل: ${row(change.before)}\nبعد: ${row(change.after)}\n")
         }
         if (reportAfter) append("\nپس از انجام همین عملیات، گزارش تازهٔ همین بازه از پایگاه‌داده خوانده می‌شود.\n")

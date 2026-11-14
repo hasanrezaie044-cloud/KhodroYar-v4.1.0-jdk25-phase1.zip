@@ -77,7 +77,7 @@ class OpenRouterClientTest {
     @Test fun actualTestRequiresNativeNonceProbeAndSendsNoRealDatabaseData() = runBlocking {
         val http = FakeHttp(""); http.handler = { request ->
             if (request.method == "GET") AiHttpResponse(200, f.catalog()) else {
-                val wire = JSONObject(requireNotNull(request.body)); val text = wire.getJSONArray("messages").getJSONObject(1).getString("content")
+                val wire = JSONObject(requireNotNull(request.body)); val text = wire.getJSONArray("messages").getJSONObject(0).getString("content")
                 val nonce = text.substringAfter("nonce برابر ").substringBefore(" صدا")
                 assertEquals(1, wire.getJSONArray("tools").length()); assertEquals("connection_probe", wire.getJSONObject("tool_choice").getJSONObject("function").getString("name"))
                 assertFalse(request.body.orEmpty().contains("get_monthly"))
@@ -96,4 +96,20 @@ class OpenRouterClientTest {
         val result = OpenRouterClient(f::settings, Key(f.key), http).complete(listOf(FunctionMessage("user", "این ${f.key}"))) {}
         assertTrue(result is FunctionResult.Failed); assertTrue(http.requests.isEmpty())
     }
+    @Test fun midStreamRateLimitIsSanitisedAndActivatesTheSameCooldown() = runBlocking {
+        val count = java.util.concurrent.atomic.AtomicInteger()
+        val http = object : AiHttpTransport, AiStreamingTransport {
+            override fun execute(request: AiHttpRequest): AiHttpResponse { count.incrementAndGet(); return AiHttpResponse(200, f.catalog()) }
+            override fun stream(request: AiHttpRequest, onEvent: (String) -> Unit): AiHttpResponse {
+                count.incrementAndGet()
+                onEvent("""{"model":"${f.FREE}","error":{"code":429,"message":"${f.key} RAW PRIVATE"}}""")
+                return AiHttpResponse(200, "")
+            }
+        }
+        val client = OpenRouterClient(f::settings, Key(f.key), http)
+        val failure = client.complete(messages) {} as FunctionResult.Failed
+        assertEquals(AiErrorKind.RATE_LIMITED, failure.error.kind); assertFalse(failure.error.message.contains("RAW PRIVATE"))
+        val before = count.get(); assertTrue(client.complete(messages) {} is FunctionResult.Failed); assertEquals(before, count.get())
+    }
+
 }

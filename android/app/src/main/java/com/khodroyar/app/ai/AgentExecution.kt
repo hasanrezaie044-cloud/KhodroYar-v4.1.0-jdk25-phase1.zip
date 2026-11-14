@@ -48,6 +48,7 @@ class AgentApprovalGate(private val tools: AgentToolRunner) {
         if (call.spec.kind == ToolKind.DELETE && target == null) {
             return AgentStep.Reply("رکورد پیدا نشد یا شناسه یکتا نیست. چیزی حذف نشد؛ ابتدا فهرست سوابق را بررسی کنید.")
         }
-        return AgentStep.Confirm(PendingAction(call, tools.describe(call), target, lead))
+        return AgentStep.Confirm(PendingAction(call, OpenRouterFreePolicy.redactCredentials(tools.describe(call)),
+            target?.let(OpenRouterFreePolicy::redactCredentials), OpenRouterFreePolicy.redactCredentials(lead)))
     }
 }

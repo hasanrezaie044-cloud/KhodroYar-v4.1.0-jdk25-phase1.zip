@@ -74,6 +74,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -111,6 +113,8 @@ import com.khodroyar.app.ui.theme.appAccents
 fun AiAssistantScreen(vm: AiAssistantViewModel = viewModel(), onNavigate: (AgentSection) -> Unit = {}) {
     val context = LocalContext.current
     val toast = LocalToast.current
+    val focusManager = LocalFocusManager.current
+    val keyboard = LocalSoftwareKeyboardController.current
     val settings = vm.settings
     var input by remember { mutableStateOf("") }
     var showSettings by remember { mutableStateOf(false) }
@@ -154,7 +158,7 @@ fun AiAssistantScreen(vm: AiAssistantViewModel = viewModel(), onNavigate: (Agent
                 vm.messages.isEmpty() && !vm.busy -> EmptyState(vm.connection, settings.mode, onSettings = { showSettings = true }, onExample = vm::send)
                 else -> LazyColumn(
                     state = listState,
-                    modifier = Modifier.fillMaxSize(),
+                    modifier = Modifier.fillMaxSize().testTag("ai-chat-list"),
                     contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 14.dp, vertical = 12.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
@@ -191,7 +195,11 @@ fun AiAssistantScreen(vm: AiAssistantViewModel = viewModel(), onNavigate: (Agent
             enabled = settings.enabled && (vm.pending == null || settings.mode == AiMode.LOCAL) && !vm.savingSettings,
             busy = vm.busy,
             placeholder = if (settings.mode == AiMode.LOCAL) "پیام شما…" else if (vm.pending != null) "ابتدا عملیات بالا را تأیید یا لغو کنید" else "پیام خود را بنویسید…",
-            onSend = { vm.send(input); if (settings.mode == AiMode.LOCAL || settings.consented) input = "" },
+            onSend = {
+                focusManager.clearFocus(); keyboard?.hide()
+                vm.send(input)
+                if (settings.mode == AiMode.LOCAL || settings.consented) input = ""
+            },
         )
     }
 
@@ -392,7 +400,7 @@ private fun ConfirmCard(p: PendingAction, onConfirm: () -> Unit, onCancel: () ->
                     modifier = Modifier.weight(1f).heightIn(min = 48.dp).testTag("agent-confirm-action"),
                     colors = if (danger) ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error, contentColor = MaterialTheme.colorScheme.onError) else ButtonDefaults.buttonColors(),
                 ) { Text(if (danger) "بله، حذف شود" else "تأیید و انجام") }
-                OutlinedButton(onClick = onCancel, modifier = Modifier.weight(1f)) { Text("لغو") }
+                OutlinedButton(onClick = onCancel, modifier = Modifier.weight(1f).heightIn(min = 48.dp).testTag("agent-cancel-action")) { Text("لغو") }
             }
         }
     }

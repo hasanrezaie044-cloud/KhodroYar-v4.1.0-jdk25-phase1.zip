@@ -25,8 +25,8 @@ object OpenRouterFreePolicy {
     /** Missing, negative, malformed, non-zero, or future unknown non-zero price fields reject the model. */
     fun catalog(body: String): List<VerifiedFreeModel> {
         require(body.length <= 4 * 1024 * 1024)
-        val rows = JSONObject(body).getJSONArray("data")
-        require(rows.length() in 1..10000)
+        val rows = NativeJson.objectValue(body, 4 * 1024 * 1024).getJSONArray("data")
+        require(rows.length() in 0..10000)
         val result = mutableListOf<VerifiedFreeModel>()
         val seen = mutableSetOf<String>()
         for (i in 0 until rows.length()) {
@@ -35,10 +35,11 @@ object OpenRouterFreePolicy {
             require(seen.add(id)) { "Duplicate model identity" }
             if (!isFreeId(id)) continue
             val price = row.optJSONObject("pricing") ?: continue
+            if (price.length() > 64) continue
             if (!price.has("prompt") || !price.has("completion") || price.length() == 0) continue
             if (!price.keys().asSequence().all { field ->
                 val v = price.opt(field)
-                v != null && v != JSONObject.NULL && runCatching { BigDecimal(v.toString()).signum() == 0 }.getOrDefault(false)
+                v != null && v != JSONObject.NULL && v.toString().length <= 100 && runCatching { BigDecimal(v.toString()).signum() == 0 }.getOrDefault(false)
             }) continue
             val parameters = row.optJSONArray("supported_parameters") ?: continue
             val supported = (0 until parameters.length()).map { parameters.optString(it) }.toSet()

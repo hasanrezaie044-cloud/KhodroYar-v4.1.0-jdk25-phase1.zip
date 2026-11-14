@@ -61,15 +61,18 @@ object FunctionToolSchemas {
     /** Stricter wire boundary than legacy local commands; unknown/internal snapshot fields fail closed. */
     fun validate(call: FunctionCall): ValidationResult {
         if (call.arguments.length > PersianAgentLimits.ARGUMENT_CHARS) return ValidationResult.Invalid("آرگومان ابزار بیش از حد بزرگ است.")
+        if (OpenRouterFreePolicy.containsCredential(call.arguments)) return ValidationResult.Invalid("متن شبیه کلید API در آرگومان ابزار مجاز نیست؛ چیزی اجرا یا ذخیره نمی‌شود.")
         val spec = AgentToolRegistry.find(call.name) ?: return ValidationResult.Invalid("ابزار درخواست‌شده در فهرست مجاز نیست.")
-        val args = try { JSONObject(call.arguments) } catch (_: Exception) { return ValidationResult.Invalid("آرگومان ابزار باید شیء JSON معتبر باشد.") }
+        val args = try { NativeJson.objectValue(call.arguments, PersianAgentLimits.ARGUMENT_CHARS) } catch (_: Exception) { return ValidationResult.Invalid("آرگومان ابزار باید شیء JSON معتبر باشد.") }
         if (args.keys().asSequence().any { key -> spec.params.none { it.name == key } })
             return ValidationResult.Invalid("پارامتر ناشناخته یا داخلی پذیرفته نمی‌شود.")
         for (p in spec.params) {
             if (!args.has(p.name)) continue
             val value = args.opt(p.name)
             val valid = when (p.type) {
-                ParamType.NUMBER, ParamType.INT -> value is Number
+                ParamType.NUMBER -> value is Number && value.toDouble().isFinite()
+                ParamType.INT -> value is Number && value.toDouble().isFinite() && value.toDouble() == Math.rint(value.toDouble()) &&
+                    value.toDouble() in Int.MIN_VALUE.toDouble()..Int.MAX_VALUE.toDouble()
                 else -> value is String && value.length <= (if (p.type == ParamType.TEXT) 80 else 100) && value.none { it.isISOControl() }
             }
             if (!valid) return ValidationResult.Invalid("نوع یا طول پارامتر ${p.name} با طرح ابزار تطابق ندارد؛ مقدار حدسی/بریده پذیرفته نمی‌شود.")

@@ -70,6 +70,10 @@ class OpenRouterClient(
             try { checkLimit(); work() }
             catch (e: CancellationException) { throw e }
             catch (e: SafeFailure) { failure(e.failure) }
+            catch (e: OpenRouterReplyFailure) {
+                if (e.failure.kind == AiErrorKind.RATE_LIMITED) blockedUntil = clock() + (e.failure.retryAfterSec ?: 60) * 1000L
+                failure(e.failure)
+            }
             catch (_: SocketTimeoutException) { failure(AiResult.Failure(AiErrorKind.TIMEOUT, "مهلت پاسخ OpenRouter تمام شد؛ عملیات تأییدنشده اجرا نمی‌شود.")) }
             catch (_: IOException) { failure(AiResult.Failure(AiErrorKind.OFFLINE, "اتصال امن به OpenRouter برقرار نشد. ثبت دستی و امکانات آفلاین همچنان کار می‌کنند.")) }
             catch (_: Exception) { failure(AiResult.Failure(AiErrorKind.BAD_REQUEST, "پاسخ کامل، رایگان و سازگار با ابزار تأیید نشد؛ ابزار جدیدی اجرا نمی‌شود. فهرست مدل رایگان یا اتصال را بررسی کنید.")) }

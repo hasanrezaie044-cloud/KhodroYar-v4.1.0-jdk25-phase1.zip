@@ -270,7 +270,7 @@ class AiAssistantViewModel @JvmOverloads constructor(
         runAgent(retrying = settings.mode == AiMode.OPENROUTER && agent.canResume)
     }
     private fun textCallback(run: Int): (String) -> Unit = { text ->
-        viewModelScope.launch { if (run == generation && busy) streamingText = text }
+        viewModelScope.launch { if (run == generation && busy) streamingText = OpenRouterFreePolicy.redactCredentials(text) }
     }
     private suspend fun toolResult(name: String, out: ToolOutcome) {
         streamingText = ""

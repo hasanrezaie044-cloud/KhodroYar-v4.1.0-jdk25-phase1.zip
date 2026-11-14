@@ -48,6 +48,17 @@ class LocalAgentWorkflowTest {
             .put("service_snapshot", "injected").put("expected_revision", 999).put("operation_id", "injected")) as ValidationResult.Ok
         assertFalse(v.call.has("service_snapshot")); assertFalse(v.call.has("expected_revision")); assertFalse(v.call.has("operation_id"))
     }
+    @Test fun approvalCardsNeverExposeCredentialsFromLegacyRecordTitlesOrProviderLead() = runBlocking {
+        val key = OpenRouterFixture.key
+        val port = object : AgentToolRunner {
+            override suspend fun execute(call: ValidatedCall) = error("Approval preparation cannot execute")
+            override fun describe(call: ValidatedCall) = "خلاصه $key"
+            override suspend fun describeTarget(call: ValidatedCall) = "هدف $key"
+        }
+        val call = (AgentActionValidator.validate("delete_expense", JSONObject().put("id", "abcd1234")) as ValidationResult.Ok).call
+        val pending = (AgentApprovalGate(port).prepare(call, "پیشنهاد $key") as AgentStep.Confirm).pending
+        assertFalse(pending.summary.contains(key)); assertFalse(pending.target.orEmpty().contains(key)); assertFalse(pending.lead.contains(key))
+    }
     @Test fun invalidExpenseStillCannotCrossValidation() = runBlocking {
         val p = Port(); val a = LocalAssistant(p)
         assertTrue(a.run("هر روز قهوه منفی ۵۰ هزار تومان ثبت کن") is AgentStep.Reply)
