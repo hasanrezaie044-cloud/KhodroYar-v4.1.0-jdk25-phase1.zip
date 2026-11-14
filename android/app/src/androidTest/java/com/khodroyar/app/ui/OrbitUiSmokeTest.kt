@@ -202,6 +202,10 @@ class OrbitUiSmokeTest {
         compose.onNode(hasText("دستیار هوشمند") and hasAnyAncestor(hasTestTag("dashboard-list"))).performClick()
         compose.waitUntil(15_000) { compose.onAllNodesWithText("چی برات انجام بدم؟").fetchSemanticsNodes().isNotEmpty() }
         shot("10-assistant")
+        compose.onNodeWithTag("nav-HOME").assertDoesNotExist()
+        compose.onNodeWithText("گفتگوی نو").assertDoesNotExist()
+        compose.onNodeWithText("بخش‌های برنامه").assertDoesNotExist()
+        compose.onNodeWithTag("ai-options").performClick()
         compose.onNodeWithText("کارهای خودکار · 0").performClick()
         compose.onNodeWithText("کارهای خودکار من").assertIsDisplayed()
         shot("11-automation-manager")
@@ -303,6 +307,8 @@ class OrbitUiSmokeTest {
 
     @Test fun versionOneAcceptanceCannotBypassUpdatedPolicyEvenWithLockOff() = assertPreviousPolicy(1)
     @Test fun versionTwoAcceptanceCannotBypassOpenRouterPolicyEvenWithLockOff() = assertPreviousPolicy(2)
+
+    @Test fun versionThreeAcceptanceCannotBypassAutomaticModelPolicy() = assertPreviousPolicy(3)
 
     private fun assertPreviousPolicy(previous: Int) {
         val settings = SettingsStore.get(context)

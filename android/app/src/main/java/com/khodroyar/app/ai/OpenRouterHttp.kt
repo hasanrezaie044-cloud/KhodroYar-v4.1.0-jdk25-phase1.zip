@@ -54,7 +54,10 @@ class OpenRouterHttp : AiHttpTransport, AiStreamingTransport {
 
     private fun request(request: AiHttpRequest, callback: ((String) -> Unit)?, flight: Flight): AiHttpResponse {
         require((request.url == OpenRouterFreePolicy.MODELS_URL && request.method == "GET" && request.body == null) ||
-            (request.url == OpenRouterFreePolicy.CHAT_URL && request.method == "POST" && request.body != null))
+            (request.url == OpenRouterFreePolicy.CHAT_URL && request.method == "POST" && request.body != null) ||
+            (request.method == "GET" && request.body == null && (request.url == OpenRouterModelMetadata.USER_MODELS_URL ||
+                request.url.startsWith(OpenRouterFreePolicy.MODELS_URL + "/") && request.url.endsWith("/endpoints") &&
+                    OpenRouterModelMetadata.validId(request.url.removePrefix(OpenRouterFreePolicy.MODELS_URL + "/").removeSuffix("/endpoints")))))
         flight.check()
         val c = (URL(request.url).openConnection() as HttpURLConnection)
         flight.connection = c
@@ -78,7 +81,7 @@ class OpenRouterHttp : AiHttpTransport, AiStreamingTransport {
             val body = stream.bufferedReader(Charsets.UTF_8).use { reader ->
                 if (code == 200 && callback != null && c.contentType.orEmpty().startsWith("text/event-stream", true)) {
                     SseEvents.read(reader) { event -> flight.check(); callback(event) }; ""
-                } else boundedText(reader, if (request.url == OpenRouterFreePolicy.MODELS_URL) 4 * 1024 * 1024 else 256 * 1024, flight::check)
+                } else boundedText(reader, if (request.method == "GET") 4 * 1024 * 1024 else 256 * 1024, flight::check)
             }
             flight.check()
             return AiHttpResponse(code, body, c.getHeaderField("Retry-After"))

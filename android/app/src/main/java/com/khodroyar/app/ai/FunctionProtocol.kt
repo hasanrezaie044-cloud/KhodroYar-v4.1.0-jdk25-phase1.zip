@@ -61,7 +61,7 @@ object FunctionToolSchemas {
     /** Stricter wire boundary than legacy local commands; unknown/internal snapshot fields fail closed. */
     fun validate(call: FunctionCall): ValidationResult {
         if (call.arguments.length > PersianAgentLimits.ARGUMENT_CHARS) return ValidationResult.Invalid("آرگومان ابزار بیش از حد بزرگ است.")
-        if (OpenRouterFreePolicy.containsCredential(call.arguments)) return ValidationResult.Invalid("متن شبیه کلید API در آرگومان ابزار مجاز نیست؛ چیزی اجرا یا ذخیره نمی‌شود.")
+        if (AiTextSafety.containsCredential(call.arguments)) return ValidationResult.Invalid("متن شبیه کلید API در آرگومان ابزار مجاز نیست؛ چیزی اجرا یا ذخیره نمی‌شود.")
         val spec = AgentToolRegistry.find(call.name) ?: return ValidationResult.Invalid("ابزار درخواست‌شده در فهرست مجاز نیست.")
         val args = try { NativeJson.objectValue(call.arguments, PersianAgentLimits.ARGUMENT_CHARS) } catch (_: Exception) { return ValidationResult.Invalid("آرگومان ابزار باید شیء JSON معتبر باشد.") }
         if (args.keys().asSequence().any { key -> spec.params.none { it.name == key } })

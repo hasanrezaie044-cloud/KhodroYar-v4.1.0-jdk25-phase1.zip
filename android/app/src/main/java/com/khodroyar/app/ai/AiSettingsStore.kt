@@ -25,6 +25,8 @@ data class AiSettings(
     val gapGptBaseUrl: String = GapGptDirectContract.PRIMARY_BASE_URL,
     val gapGptModel: String = GapGptDirectContract.DEFAULT_MODEL,
     val openRouterModel: String = OpenRouterFreePolicy.INITIAL_MODEL,
+    val modelSelectionMode: AISelectionMode = AISelectionMode.AUTOMATIC,
+    val modelAccountScope: String = "initial",
 ) {
     val requestedModel: String? get() = when (mode) {
         AiMode.OPENROUTER -> openRouterModel
@@ -39,20 +41,24 @@ class AiSettingsStore(context: Context) {
     fun load(): AiSettings = AiSettings(
         enabled = prefs.getBoolean("enabled", true),
         mode = runCatching { AiMode.valueOf(prefs.getString("mode", null).orEmpty()) }.getOrDefault(AiMode.OPENROUTER).let { if (it in setOf(AiMode.ONLINE, AiMode.GAPGPT_DIRECT)) AiMode.OPENROUTER else it },
-        consented = prefs.getBoolean("openrouter_consented_v1", false),
+        consented = prefs.getBoolean("openrouter_consented_v2", false),
         backendUrl = prefs.getString("backend_url", null) ?: BuildConfig.AI_BACKEND_URL,
         model = prefs.getString("model", "") ?: "",
         clientToken = prefs.getString("client_token", "") ?: "",
         gapGptBaseUrl = prefs.getString("gapgpt_base_url", null) ?: GapGptDirectContract.PRIMARY_BASE_URL,
         gapGptModel = prefs.getString("gapgpt_model", null) ?: GapGptDirectContract.DEFAULT_MODEL,
         openRouterModel = prefs.getString("openrouter_model", null) ?: OpenRouterFreePolicy.INITIAL_MODEL,
+        modelSelectionMode = runCatching { AISelectionMode.valueOf(prefs.getString("model_selection_mode", "AUTOMATIC").orEmpty()) }.getOrDefault(AISelectionMode.AUTOMATIC),
+        modelAccountScope = prefs.getString("model_account_scope", "initial") ?: "initial",
     )
 
     fun save(s: AiSettings) {
         prefs.edit()
             .putBoolean("enabled", s.enabled)
             .putString("mode", s.mode.name)
-            .putBoolean("openrouter_consented_v1", s.mode == AiMode.OPENROUTER && s.consented)
+            .putBoolean("openrouter_consented_v2", s.mode == AiMode.OPENROUTER && s.consented)
+            .putString("model_selection_mode", s.modelSelectionMode.name)
+            .putString("model_account_scope", s.modelAccountScope)
             .putString("openrouter_model", s.openRouterModel.trim())
             .putString("backend_url", AiBackendContract.normalizeRoot(s.backendUrl) ?: s.backendUrl.trim())
             .putString("model", s.model.trim())
@@ -64,7 +70,7 @@ class AiSettingsStore(context: Context) {
 
     /** Persist BEFORE changing a key in another preference file; process death cannot reuse old account consent. */
     fun revokeOpenRouterConsent() {
-        check(prefs.edit().putBoolean("openrouter_consented_v1", false).commit()) { "Consent revocation failed" }
+        check(prefs.edit().putBoolean("openrouter_consented_v2", false).putBoolean("openrouter_consented_v1", false).commit()) { "Consent revocation failed" }
     }
 
     /** Random per-install id used only for server-side rate limiting. Not tied to the person. */

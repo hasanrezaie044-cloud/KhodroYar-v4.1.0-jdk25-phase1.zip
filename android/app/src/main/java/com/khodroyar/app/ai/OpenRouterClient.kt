@@ -20,7 +20,7 @@ class OpenRouterClient(
     private val credentials: AiApiKeyReader,
     private val transport: AiHttpTransport = OpenRouterHttp(),
     private val clock: () -> Long = System::currentTimeMillis,
-) : FunctionCallingProvider {
+) {
     private val requestLock = Mutex()
     private val _models = MutableStateFlow<List<VerifiedFreeModel>>(emptyList())
     val models = _models.asStateFlow()
@@ -76,13 +76,58 @@ class OpenRouterClient(
             }
             catch (_: SocketTimeoutException) { failure(AiResult.Failure(AiErrorKind.TIMEOUT, "مهلت پاسخ OpenRouter تمام شد؛ عملیات تأییدنشده اجرا نمی‌شود.")) }
             catch (_: IOException) { failure(AiResult.Failure(AiErrorKind.OFFLINE, "اتصال امن به OpenRouter برقرار نشد. ثبت دستی و امکانات آفلاین همچنان کار می‌کنند.")) }
-            catch (_: Exception) { failure(AiResult.Failure(AiErrorKind.BAD_REQUEST, "پاسخ کامل، رایگان و سازگار با ابزار تأیید نشد؛ ابزار جدیدی اجرا نمی‌شود. فهرست مدل رایگان یا اتصال را بررسی کنید.")) }
+            catch (_: Exception) { failure(AiResult.Failure(AiErrorKind.BAD_REQUEST, "پاسخ مدل ناقص یا ناسازگار با پروتکل ابزار بود؛ چیزی از این پاسخ اجرا نمی‌شود. مدل را دوباره آزمایش کنید یا از حالت خودکار استفاده کنید.")) }
         }
     }
 
     suspend fun refreshModels(): AiResult.Failure? = guarded({ account(); fetchCatalog(); null }, { _models.value = emptyList(); it })
 
-    override suspend fun complete(messages: List<FunctionMessage>, onText: (String) -> Unit): FunctionResult =
+    /** Metadata requests never include conversation/record data. Only /models/user receives the key. */
+    internal suspend fun metadata(url: String, authenticated: Boolean): OpenRouterMetadataResult = guarded({
+        val (_, key) = account()
+        require((url == OpenRouterModelMetadata.USER_MODELS_URL) == authenticated)
+        require(url == OpenRouterFreePolicy.MODELS_URL || url == OpenRouterModelMetadata.USER_MODELS_URL ||
+            (url.startsWith(OpenRouterFreePolicy.MODELS_URL + "/") && url.endsWith("/endpoints") &&
+                OpenRouterModelMetadata.validId(url.removePrefix(OpenRouterFreePolicy.MODELS_URL + "/").removeSuffix("/endpoints"))))
+        val response = request(AiHttpRequest(url, "GET", if (authenticated) headers(key) else mapOf("Accept" to "application/json")))
+        checkHttp(response)
+        OpenRouterMetadataResult.Body(response.body)
+    }, { OpenRouterMetadataResult.Failed(it) })
+
+    /** Called only through the managed adapter, with fresh independent price, authorization and endpoint evidence. */
+    suspend fun inferApproved(model: AIModel, available: AIModelAvailability, responseIds: Set<String>,
+        query: AIModelRequest, onText: (String) -> Unit): FunctionResult = guarded({
+        val (settings, key) = account()
+        require(model.key.provider == OpenRouterModelMetadata.PROVIDER && AIRequestPolicy.eligibleMetadata(model, clock()))
+        require(available.available && AIRequestPolicy.fresh(available.checkedAt, clock(), AIRequestPolicy.METADATA_TTL_MS))
+        require(model.key.id in responseIds && responseIds.all(OpenRouterModelMetadata::validId))
+        val messages = query.messages
+        require(messages.isNotEmpty() && messages.size <= 80 && messages.sumOf { it.content.length + it.calls.sumOf { c -> c.arguments.length } } <= 160000)
+        if (messages.any { AiTextSafety.containsCredential(it.content) || it.calls.any { c -> AiTextSafety.containsCredential(c.arguments) } })
+            fail(AiErrorKind.BAD_REQUEST, "متن شبیه کلید API است؛ ارسال نمی‌شود. کلید فقط در تنظیمات امن وارد شود.")
+        require(query.maxOutputTokens in 128..PersianAgentLimits.OUTPUT_TOKENS)
+        val streaming = query.stream && transport is AiStreamingTransport
+        val body = JSONObject().put("model", model.key.id).put("messages", JSONArray().apply { messages.forEach { put(it.json()) } })
+            .put("tools", FunctionToolSchemas.tools(query.tools)).put("tool_choice", "auto").put("stream", streaming)
+            .put("max_tokens", query.maxOutputTokens).put("provider", OpenRouterFreePolicy.routing())
+        attempts.addLast(clock())
+        val context = currentCoroutineContext()
+        val decoder = OpenRouterStream(model.key.id, emptyList(), { text -> context.ensureActive(); onText(text) }, responseIds)
+        val response = request(AiHttpRequest(OpenRouterFreePolicy.CHAT_URL, "POST", headers(key), body.toString()),
+            if (streaming) ({ event -> context.ensureActive(); decoder.accept(event) }) else null)
+        checkHttp(response); context.ensureActive()
+        val current = configuration()
+        if (!current.enabled || !current.consented || current.mode != AiMode.OPENROUTER || current.modelAccountScope != settings.modelAccountScope)
+            fail(AiErrorKind.DISABLED, "حساب یا رضایت عوض شد؛ پاسخ و ابزارهای آن کنار گذاشته شدند.")
+        val reply = if (streaming && response.body.isBlank()) decoder.result()
+            else OpenRouterWire.completion(response.body, model.key.id, emptyList(), responseIds)
+        // Canonical response aliases are accepted ONLY when explicitly supplied by the official catalog.
+        // Never strip ':free', invent an ID or request the paid/canonical alias.
+        reply.copy(model = model.key.id)
+    }, { FunctionResult.Failed(it) })
+
+    /** Internal legacy wire regression hook; cannot be supplied to an agent. Production uses ManagedAIProvider. */
+    internal suspend fun complete(messages: List<FunctionMessage>, onText: (String) -> Unit): FunctionResult =
         perform(messages, FunctionToolSchemas.tools(), null, onText)
 
     private suspend fun perform(messages: List<FunctionMessage>, schemas: JSONArray, forcedTool: String?, onText: (String) -> Unit): FunctionResult = guarded({
@@ -129,4 +174,9 @@ class OpenRouterClient(
             is FunctionResult.Failed -> AiProviderStatus(false, message = result.error.message, errorKind = result.error.kind)
         }
     }
+}
+
+internal sealed interface OpenRouterMetadataResult {
+    data class Body(val value: String) : OpenRouterMetadataResult
+    data class Failed(val error: AiResult.Failure) : OpenRouterMetadataResult
 }

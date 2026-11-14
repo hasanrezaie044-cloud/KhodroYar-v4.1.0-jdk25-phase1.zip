@@ -32,7 +32,11 @@ class AiAssistantViewModel @JvmOverloads constructor(
     private val tools = toolRunner ?: AppAgentTools(app, AppRepository(app))
     private val keyStore = OpenRouterApiKeyStore(app)
     private val openRouter = OpenRouterClient(settingsStore::load, keyStore, http)
-    private val agent = PersianToolAgent(openRouter, tools)
+    private val managedModels = ManagedAIProvider(OpenRouterModelAdapter(openRouter), {
+        settingsStore.load().let { s -> AISelectionSettings(s.enabled && s.mode == AiMode.OPENROUTER, s.consented,
+            s.modelAccountScope, s.modelSelectionMode, AIModelKey(OpenRouterModelMetadata.PROVIDER, s.openRouterModel)) }
+    }, AndroidModelEvaluationStore(app))
+    private val agent = PersianToolAgent(managedModels, tools)
     private val local = LocalAssistant(tools, dialogue = LocalDialogueEngine(rules = { automationStore.rules.value }))
 
     var localContext by mutableStateOf(LocalDialogueContext())
@@ -72,7 +76,7 @@ class AiAssistantViewModel @JvmOverloads constructor(
     var settingsError by mutableStateOf<String?>(null)
         private set
 
-    var availableModels by mutableStateOf<List<VerifiedFreeModel>>(emptyList())
+    var modelState by mutableStateOf(AIModelState())
         private set
     var streamingText by mutableStateOf("")
         private set
@@ -90,11 +94,11 @@ class AiAssistantViewModel @JvmOverloads constructor(
     private var keyRevision = 0
     private var pendingFromAgent = false
 
-    val activeModel: String get() = if (settings.mode == AiMode.LOCAL) "داخلی · بدون مدل/شبکه" else "OpenRouter · ${settings.openRouterModel}"
+    val activeModel: String get() = if (settings.mode == AiMode.LOCAL) "داخلی · بدون مدل/شبکه" else modelState.active?.let { "OpenRouter · ${it.id}" } ?: "در انتظار مدلِ مجاز و ارزیابی‌شده"
 
     init {
         viewModelScope.launch { automationStore.rules.collect { automations = it } }
-        viewModelScope.launch { openRouter.models.collect { availableModels = it } }
+        viewModelScope.launch { managedModels.state.collect { modelState = it; serverModel = it.active?.id.orEmpty() } }
         viewModelScope.launch {
             val revision = keyRevision
             val storedKey = withContext(Dispatchers.IO) {
@@ -103,7 +107,7 @@ class AiAssistantViewModel @JvmOverloads constructor(
             if (revision == keyRevision) hasOpenRouterKey = storedKey
             val last = conversations.load().filter { it.mode == settings.mode }.maxByOrNull { it.updatedAt }
             if (last != null && messages.isEmpty() && !busy) openConversation(last)
-            refreshStatus()
+            refreshStatus(); AIModelCatalogScheduler.sync(app)
         }
     }
 
@@ -140,14 +144,29 @@ class AiAssistantViewModel @JvmOverloads constructor(
         }
         if (!settings.consented) { queuedTest = true; needsConsent = true; return }
         connection = ConnectionState.CHECKING
-        testMessage = "در حال بررسی قیمت صفر، پشتیبانی ابزار و اتصال واقعی مدل رایگان…"
+        testMessage = "در حال بررسی فهرست رسمی/Guardrail و آزمون‌های امن؛ فقط دادهٔ ساختگی و حداکثر دو مدل…"
         testJob = viewModelScope.launch {
             try {
-                val status = openRouter.testConnection(); applyStatus(status); testMessage = status.message
+                managedModels.refresh(runTests = true)
+                val result = managedModels.state.value
+                val ready = result.models.firstOrNull { it.model.key == result.active && it.approved }
+                connection = if (ready != null) ConnectionState.ONLINE else ConnectionState.ERROR
+                testMessage = if (ready != null) "مدل مجاز و رایگان با ۴ آزمون ساختگی قبول شد: ${ready.model.key.id}. این آزمون کیفیت همهٔ مکالمات را تضمین نمی‌کند."
+                    else result.message ?: "مدلِ مجاز و قبول‌شده آماده نیست؛ جزئیات فهرست را بررسی کنید."
             } catch (e: CancellationException) { throw e }
-            catch (_: Exception) { connection = ConnectionState.ERROR; testMessage = "آزمایش کامل نشد؛ کلید یا پیام خطای خام نمایش داده نمی‌شود." }
+            catch (_: Exception) { connection = ConnectionState.ERROR; testMessage = "بررسی کامل نشد؛ از مدل قدیمی/پولی استفاده نمی‌شود و کلید یا خطای خام نمایش داده نمی‌شود." }
         }
     }
+    fun refreshModels() {
+        if (busy || savingSettings || settings.mode != AiMode.OPENROUTER || !settings.consented || !hasOpenRouterKey) return
+        statusJob?.cancel()
+        statusJob = viewModelScope.launch {
+            try { managedModels.refresh() }
+            catch (e: CancellationException) { throw e }
+            catch (_: Exception) { testMessage = "فهرست تازه نشد؛ مدل/قیمتِ تأییدنشده استفاده نمی‌شود." }
+        }
+    }
+    fun dismissModelNotice() = managedModels.dismissNotice()
     fun clearTestMessage() { testMessage = null }
     fun clearSettingsError() { settingsError = null }
 
@@ -155,8 +174,12 @@ class AiAssistantViewModel @JvmOverloads constructor(
     fun configure(new: AiSettings, apiKey: String, forgetKey: Boolean, afterSave: () -> Unit) {
         if (busy || executingAction || savingSettings) return
         settingsError = null
-        if (new.mode !in setOf(AiMode.LOCAL, AiMode.OPENROUTER) || !OpenRouterFreePolicy.isFreeId(new.openRouterModel)) {
+        if (new.mode !in setOf(AiMode.LOCAL, AiMode.OPENROUTER)) {
             settingsError = "فقط OpenRouter رایگانِ تأییدشده یا حالت داخلی مجاز است؛ اتصال پولی/قدیمی جایگزین نمی‌شود."; return
+        }
+        if (new.mode == AiMode.OPENROUTER && new.modelSelectionMode == AISelectionMode.MANUAL &&
+            modelState.models.none { it.approved && it.model.key.id == new.openRouterModel }) {
+            settingsError = "انتخاب دستی فقط از مدل‌های مجاز، رایگان و قبول‌شدهٔ همین حساب ممکن است؛ ابتدا آزمون امن را اجرا کنید."; return
         }
         val typed = apiKey.trim()
         if (typed.isNotEmpty() && OpenRouterFreePolicy.normalizeKey(typed) == null) {
@@ -176,7 +199,8 @@ class AiAssistantViewModel @JvmOverloads constructor(
                     if (typed.isNotEmpty()) keyStore.save(typed) else if (forgetKey) keyStore.clear()
                     keyStore.read()?.let(OpenRouterFreePolicy::normalizeKey) != null
                 }
-                saveSettings(new, forceNewConsent = changed)
+                val target = if (changed) new.copy(modelAccountScope = UUID.randomUUID().toString(), modelSelectionMode = AISelectionMode.AUTOMATIC) else new
+                saveSettings(target, forceNewConsent = changed)
                 afterSave()
             } catch (e: CancellationException) { throw e }
             catch (_: Exception) { settingsError = "ذخیره/خواندن امن کلید انجام نشد. هیچ متن ساده یا ذخیرهٔ جایگزین نداریم؛ دوباره تلاش کنید." }
@@ -186,11 +210,12 @@ class AiAssistantViewModel @JvmOverloads constructor(
     fun saveSettings(new: AiSettings, forceNewConsent: Boolean = false) {
         if (executingAction) return
         if (new.mode !in setOf(AiMode.LOCAL, AiMode.OPENROUTER)) return
-        val changed = new.mode != settings.mode || new.openRouterModel != settings.openRouterModel || forceNewConsent
+        val newAccount = new.mode != settings.mode || forceNewConsent
+        val changed = newAccount || new.openRouterModel != settings.openRouterModel || new.modelSelectionMode != settings.modelSelectionMode
         if (changed) newChat() else if (!new.enabled) { stop(); pending = null; local.dialogue.reset(); localContext = local.dialogue.context }
         testJob?.cancel(); statusJob?.cancel()
-        settingsStore.save(new.copy(consented = !changed && new.consented))
-        settings = settingsStore.load()
+        settingsStore.save(new.copy(consented = !newAccount && new.consented))
+        settings = settingsStore.load(); managedModels.invalidate(); AIModelCatalogScheduler.sync(getApplication())
         needsConsent = false; queuedText = null; queuedTest = false; testMessage = null; failure = null
         refreshStatus()
     }
@@ -201,7 +226,7 @@ class AiAssistantViewModel @JvmOverloads constructor(
         val text = queuedText
         val test = queuedTest
         settingsStore.save(settings.copy(consented = true))
-        settings = settingsStore.load()
+        settings = settingsStore.load(); AIModelCatalogScheduler.sync(getApplication())
         needsConsent = false
         queuedText = null
         queuedTest = false

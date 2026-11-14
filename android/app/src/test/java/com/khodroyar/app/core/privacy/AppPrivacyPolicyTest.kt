@@ -6,7 +6,7 @@ import org.junit.Test
 class AppPrivacyPolicyTest {
     private val text = AppPrivacyPolicy.sections.joinToString("\n") { it.body }
     @Test fun materialPolicyChangeRequiresExplicitAcceptanceAgain() {
-        assertEquals(3, AppPrivacyPolicy.VERSION)
+        assertEquals(4, AppPrivacyPolicy.VERSION)
         assertTrue(AppPrivacyPolicy.INTRO.contains("پذیرش صریح"))
     }
     @Test fun policyDisclosesInternetUploadsAndNeverMakesTheRetiredOfflineOnlyClaim() {

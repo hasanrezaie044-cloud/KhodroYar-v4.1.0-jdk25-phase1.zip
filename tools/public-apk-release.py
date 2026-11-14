@@ -96,7 +96,7 @@ def prepare(apk, verification, directory, expected_head):
     shutil.copyfile(verification, root / 'verification.json')
     (root / 'SHA256SUMS').write_text(f"{proof['sha256']}  {name}\n")
     # No credentials, keystores, private delivery keys, or test APK are copied.
-    policy_version = '۳' if proof['version_code'] >= 76 else '۲'
+    policy_version = '۴' if proof['version_code'] >= 77 else '۳' if proof['version_code'] >= 76 else '۲'
     agent_notes = """## ارتقای ۵.۶ از ۵.۵.۸: ایجنت فارسی فقط‌رایگان
 
 - اتصال مستقیم OpenRouter با کلید شخصیِ Keystore-encrypted، مدل اولیه openrouter/free و رضایت تازه؛ بدون بک‌اند اجباری. فهرست مدل/قیمت صفر پیش از هر درخواست، max_price صفر، no paid fallback و منع خرید اعتبار.
@@ -108,6 +108,17 @@ def prepare(apk, verification, directory, expected_head):
 ## قابلیت‌ها و بررسی‌های قبلیِ حفظ‌شده
 
 """ if proof['version_code'] >= 76 else ''
+    if proof['version_code'] >= 77:
+        agent_notes = """## ارتقای ۵.۶.۱: مدیریت مدل مستقل و چت تمام‌صفحه
+
+- حالت خودکار پیش‌فرض/دستی، کشف دقیق از /models و /models/user، احترام به Guardrail و وضعیت endpoint. مدل ثابتِ مجاز و قبول‌شده انتخاب می‌شود، نه اتکای تصادفی به openrouter/free.
+- بررسی دقیق همهٔ قیمت‌ها، سقف صفر و no paid fallback؛ کش فراداده حداکثر۶۰ثانیه، fail-closed و بررسی مجدد فعال‌سازی. Canonical پاسخ فقط با رابطهٔ صریح همان ورودی API پذیرفته می‌شود؛ ID درخواست هرگز حدس/تغییر نمی‌کند.
+- چهار آزمون فارسی/شمسی/ابزار/حساب/تأیید با دادهٔ ساختگی؛ بدون دسترسی به دیتابیس یا اجرای واقعی ابزار. بودجهٔ محدود، رسید۷روزه وابسته به حساب/اثر انگشت مدل؛ پس‌زمینه فقط metadata هر۶ساعت است.
+- جایگزینی خودکار حداکثر یک بار در هر تکمیل، فقط از مدل‌های مجاز و قبول‌شده؛ transcript و نتیجهٔ نوشتن قبلی حفظ می‌شود. ۴۲۹/کلید/اعتبار با تعویض مدل دور زده نمی‌شوند. حالت دستی بی‌اجازه مدل دیگری نمی‌فرستد.
+- صفحهٔ گفتگو فقط نوار باریک بازگشت/عنوان/چرخ‌دنده، پیام‌ها و ورودی؛ تب‌های پایین، کارت بزرگ وضعیت و میان‌برها فقط در این صفحه پنهان‌اند. تاریخچه/گفتگوی نو/کارهای خودکار/بخش‌ها از چرخ‌دنده در دسترس‌اند.
+- راهنما: docs/AI-MODEL-MANAGEMENT.fa.md؛ تست‌های مدل، Guardrail و failover ساختگی‌اند و اثبات حساب زنده/کیفیت همهٔ فارسی نیستند. همان امضا، بسته، Room6، سوابق و امکانات قبلی حفظ‌اند.
+
+""" + agent_notes
     (root / 'test-summary.md').write_text(f"""# KhodroYar {proof['version_name']}
 
 بر پایهٔ ۵.۴.۰ بازیابی‌شده؛ بستهٔ `com.khodroyar.app`، کد {proof['version_code']}، Room 6.

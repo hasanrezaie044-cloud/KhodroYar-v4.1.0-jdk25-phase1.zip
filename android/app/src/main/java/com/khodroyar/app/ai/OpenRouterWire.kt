@@ -4,12 +4,12 @@ import org.json.JSONObject
 
 /** Bounded, complete native tool calls only. A truncated/failed stream cannot produce an action. */
 object OpenRouterWire {
-    fun completion(body: String, selected: String, catalog: List<VerifiedFreeModel>): FunctionResult.Reply {
+    fun completion(body: String, selected: String, catalog: List<VerifiedFreeModel>, responseIds: Set<String>? = null): FunctionResult.Reply {
         require(body.length <= 256 * 1024)
         val root = NativeJson.objectValue(body, 256 * 1024)
         checkError(root); checkCost(root)
         val model = root.getString("model")
-        OpenRouterFreePolicy.checkReturnedModel(model, selected, catalog)
+        checkIdentity(model, selected, catalog, responseIds)
         val choices = root.getJSONArray("choices"); require(choices.length() == 1)
         val choice = choices.getJSONObject(0)
         require(choice.getString("finish_reason") in setOf("stop", "tool_calls"))
@@ -17,6 +17,12 @@ object OpenRouterWire {
         require((message.calls.isEmpty() && choice.getString("finish_reason") == "stop") ||
             (message.calls.isNotEmpty() && choice.getString("finish_reason") == "tool_calls"))
         return FunctionResult.Reply(message, model)
+    }
+    internal fun checkIdentity(actual: String, selected: String, catalog: List<VerifiedFreeModel>, responseIds: Set<String>?) {
+        if (responseIds != null) {
+            if (actual !in responseIds) throw OpenRouterReplyFailure(AiResult.Failure(AiErrorKind.MODEL_INVALID,
+                "شناسهٔ پاسخ با مدل یا canonical رسمیِ همان ورودی فهرست تطابق ندارد؛ هیچ ابزار این پاسخ اجرا نمی‌شود."))
+        } else OpenRouterFreePolicy.checkReturnedModel(actual, selected, catalog)
     }
     fun message(json: JSONObject): FunctionMessage {
         require(json.isNull("content") || json.opt("content") is String)
@@ -52,6 +58,7 @@ internal class OpenRouterReplyFailure(val failure: AiResult.Failure) : IllegalSt
 
 class OpenRouterStream(
     private val selected: String, private val catalog: List<VerifiedFreeModel>, private val onText: (String) -> Unit,
+    private val responseIds: Set<String>? = null,
 ) {
     private val content = StringBuilder()
     private data class Partial(val id: StringBuilder = StringBuilder(), val name: StringBuilder = StringBuilder(), val args: StringBuilder = StringBuilder())
@@ -63,7 +70,7 @@ class OpenRouterStream(
         val root = NativeJson.objectValue(data, 65536); OpenRouterWire.checkError(root); OpenRouterWire.checkCost(root)
         val actual = root.optString("model", "")
         if (actual.isNotBlank()) {
-            OpenRouterFreePolicy.checkReturnedModel(actual, selected, catalog)
+            OpenRouterWire.checkIdentity(actual, selected, catalog, responseIds)
             require(model.isEmpty() || model == actual); model = actual
         }
         val choices = root.optJSONArray("choices") ?: return
@@ -96,7 +103,7 @@ class OpenRouterStream(
     }
     fun result(): FunctionResult.Reply {
         require(done && finish in setOf("stop", "tool_calls") && model.isNotEmpty())
-        OpenRouterFreePolicy.checkReturnedModel(model, selected, catalog)
+        OpenRouterWire.checkIdentity(model, selected, catalog, responseIds)
         require(calls.keys.toList() == (0 until calls.size).toList())
         val complete = calls.values.map { FunctionCall(it.id.toString(), it.name.toString(), it.args.toString()).also(OpenRouterWire::validateCall) }
         require((complete.isEmpty() && finish == "stop") || (complete.isNotEmpty() && finish == "tool_calls"))

@@ -17,8 +17,8 @@ object OpenRouterFreePolicy {
         it.length in 24..512 && it.startsWith("sk-or-") && it.all { c -> c.isLetterOrDigit() && c.code < 128 || c == '-' || c == '_' }
             && !it.contains("YOUR", true) && !it.contains("example", true)
     }
-    fun containsCredential(text: String): Boolean = Regex("(?i)sk-(?:or-|[a-z0-9]{16})").containsMatchIn(text)
-    fun redactCredentials(text: String): String = Regex("(?i)sk-(?:or-[A-Za-z0-9_-]*|[A-Za-z0-9_-]{16,})").replace(text, "[کلید پنهان شد]")
+    fun containsCredential(text: String): Boolean = AiTextSafety.containsCredential(text)
+    fun redactCredentials(text: String): String = AiTextSafety.redact(text)
     fun isFreeId(id: String): Boolean = id == INITIAL_MODEL ||
         (id.endsWith(":free") && Regex("[A-Za-z0-9._-]+/[A-Za-z0-9._:/-]+:free").matches(id) && !id.contains(".."))
 
@@ -64,7 +64,8 @@ object OpenRouterFreePolicy {
     fun error(status: Int, retryAfter: String? = null): AiResult.Failure {
         val wait = retryAfter?.toLongOrNull()?.coerceIn(1, 86400)?.toInt()
         return when (status) {
-            401, 403 -> AiResult.Failure(AiErrorKind.UNAUTHORIZED, "کلید OpenRouter نامعتبر است یا اجازهٔ استفاده ندارد؛ فقط در تنظیمات جایگزینش کنید، نه در گفتگو.")
+            401 -> AiResult.Failure(AiErrorKind.UNAUTHORIZED, "کلید OpenRouter نامعتبر است یا اجازهٔ استفاده ندارد؛ فقط در تنظیمات جایگزینش کنید، نه در گفتگو.")
+            403 -> AiResult.Failure(AiErrorKind.GUARDRAIL_REJECTED, "مدل/ارائه‌دهنده برای کلید یا Guardrail حساب مجاز نیست. برنامه محدودیت را دور نمی‌زند؛ اگر مایلید در OpenRouter اجازه بدهید و فهرست را تازه کنید."),
             402 -> AiResult.Failure(AiErrorKind.CREDIT_EXHAUSTED, "OpenRouter درخواست رایگان را نپذیرفت. برنامه به مدل پولی تغییر نمی‌کند و اعتبار نمی‌خرد؛ محدودیت حساب یا دسترسی مدل رایگان را بررسی کنید.")
             404 -> AiResult.Failure(AiErrorKind.NOT_FOUND, "مدل/مسیر رایگانِ سازگار در OpenRouter در دسترس نیست؛ فهرست مدل‌های رایگان را تازه کنید.")
             408, 504 -> AiResult.Failure(AiErrorKind.TIMEOUT, "پاسخ سرویس رایگان در مهلت تعیین‌شده نرسید؛ عملیات جدیدی اجرا نمی‌شود.")

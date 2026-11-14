@@ -66,6 +66,7 @@ class NativeOpenRouterAgentTest {
             remindOilChange = false, remindBackup = false, remindInstallments = false, remindInspection = false,
             remindBodyInsurance = false, remindVehicleInsurance = false) }
         context.getSharedPreferences("khodroyar_ai", Context.MODE_PRIVATE).edit().clear().commit()
+        context.getSharedPreferences("khodroyar_ai_models", Context.MODE_PRIVATE).edit().clear().commit()
         AiSettingsStore(context).save(AiSettings())
         OpenRouterApiKeyStore(context).clear(); ConversationRepository(context).clearAll()
         File(context.noBackupFilesDir, "work-report").deleteRecursively()
@@ -225,7 +226,7 @@ class NativeOpenRouterAgentTest {
         val aiSettings = AiSettingsStore(context)
         aiSettings.save(AiSettings(consented = true)); assertTrue(aiSettings.load().consented)
         aiSettings.revokeOpenRouterConsent(); assertFalse(aiSettings.load().consented)
-        assertFalse(prefs.getBoolean("openrouter_consented_v1", true))
+        assertFalse(prefs.getBoolean("openrouter_consented_v2", true))
         val keys = OpenRouterApiKeyStore(context); keys.save(syntheticKey); assertEquals(syntheticKey, keys.read())
         val xml = File(context.applicationInfo.dataDir, "shared_prefs/khodroyar_openrouter_credentials.xml").readText()
         assertFalse(xml.contains(syntheticKey)); assertFalse(xml.contains("api_key"))
@@ -241,15 +242,43 @@ class NativeOpenRouterAgentTest {
     private fun completion(content: String, calls: List<FunctionCall> = emptyList()): String = JSONObject().put("model", free)
         .put("choices", JSONArray().put(JSONObject().put("finish_reason", if (calls.isEmpty()) "stop" else "tool_calls")
             .put("message", FunctionMessage("assistant", content, calls).json()))).toString()
-    private fun renderChat(http: AiHttpTransport, consented: Boolean = false, toolRunner: AgentToolRunner? = null): AiAssistantViewModel {
+    private fun endpointEvidence(modelCatalog: String = catalog(), id: String = free): String {
+        val rows = JSONObject(modelCatalog).getJSONArray("data")
+        val row = (0 until rows.length()).map { rows.getJSONObject(it) }.single { it.getString("id") == id }
+        return JSONObject().put("data", JSONObject().put("id", id).put("endpoints", JSONArray().put(row
+            .put("status", 0).put("provider_name", "Synthetic provider").put("uptime_last_30m", 100)))).toString()
+    }
+    private fun screenshot(name: String, tag: String = "ai-agent-screen") {
+        compose.waitForIdle()
+        val image = compose.onNodeWithTag(tag).captureToImage().asAndroidBitmap()
+        val output = java.io.ByteArrayOutputStream()
+        image.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, output); image.recycle()
+        publishSyntheticEvidence(context, "KhodroYar-UI-Smoke", name + ".png", "image/png", output.toByteArray())
+    }
+    private fun renderChat(http: AiHttpTransport, consented: Boolean = false, toolRunner: AgentToolRunner? = null,
+        modelCatalog: String = catalog(), approvedIds: List<String> = listOf(free)): AiAssistantViewModel {
         AiSettingsStore(context).save(AiSettings(consented = consented))
+        val receipts = AndroidModelEvaluationStore(context)
+        val models = OpenRouterModelMetadata.parse(modelCatalog, modelCatalog, System.currentTimeMillis()).first
+        approvedIds.forEachIndexed { index, id ->
+            val m = models.single { it.key.id == id }
+            receipts.save("initial", AIModelEvaluation(m.key, m.fingerprint, System.currentTimeMillis(), (1..4).map { AIModelTestCase("Synthetic seeded test $it", true) }, 100 - index * 5))
+        }
+        val wrapped = object : AiHttpTransport, AiStreamingTransport {
+            override fun execute(request: AiHttpRequest): AiHttpResponse = if (request.url.endsWith("/endpoints")) {
+                val id = request.url.removePrefix(OpenRouterFreePolicy.MODELS_URL + "/").removeSuffix("/endpoints")
+                AiHttpResponse(200, endpointEvidence(modelCatalog, id))
+            } else http.execute(request)
+            override fun stream(request: AiHttpRequest, onEvent: (String) -> Unit): AiHttpResponse =
+                if (http is AiStreamingTransport) http.stream(request, onEvent) else http.execute(request)
+        }
         OpenRouterApiKeyStore(context).save(syntheticKey)
         val application = context.applicationContext as Application
         lateinit var vm: AiAssistantViewModel
         compose.runOnIdle {
             val store = ViewModelStore().also { viewModelStore = it }
             vm = ViewModelProvider(store, object : ViewModelProvider.Factory {
-                @Suppress("UNCHECKED_CAST") override fun <T : androidx.lifecycle.ViewModel> create(modelClass: Class<T>): T = AiAssistantViewModel(application, http, toolRunner) as T
+                @Suppress("UNCHECKED_CAST") override fun <T : androidx.lifecycle.ViewModel> create(modelClass: Class<T>): T = AiAssistantViewModel(application, wrapped, toolRunner) as T
             })[AiAssistantViewModel::class.java]
         }
         compose.setContent { CarManagerTheme {
@@ -300,13 +329,15 @@ class NativeOpenRouterAgentTest {
         assertEquals(1, db.insights().expensesOn("1404/01/01").size); assertEquals(2, postCount.get())
         val lastRequest = synchronized(requests) { requests.last { it.method == "POST" } }
         val body = JSONObject(requireNotNull(lastRequest.body))
-        assertEquals("openrouter/free", body.getString("model")); assertFalse(body.has("models")); assertFalse(body.has("plugins"))
+        assertEquals(free, body.getString("model")); assertFalse(body.has("models")); assertFalse(body.has("plugins"))
         assertTrue(body.getJSONArray("messages").toString().contains("\"tool_call_id\":\"expense_call\"")); assertFalse(lastRequest.body.orEmpty().contains(syntheticKey))
         compose.waitUntil(10000) { runBlocking { ConversationRepository(context).load().any { c -> c.messages.any { it.role == ChatRole.RESULT } } } }
         assertTrue(ConversationRepository(context).load().flatMap { it.messages }.any { it.text.contains("قهوه") })
+        compose.onNodeWithTag("ai-options").performClick()
         compose.onNodeWithText("گفتگوی نو").performClick()
         compose.onNodeWithText("شروع گفتگوی جدید").performClick()
         compose.waitUntil(5000) { vm.messages.isEmpty() }
+        compose.onNodeWithTag("ai-options").performClick()
         compose.onNodeWithText("تاریخچه").performClick()
         compose.waitUntil(5000) { vm.history.size == 1 }
         compose.onNodeWithContentDescription("حذف گفتگو").performClick()
@@ -390,6 +421,99 @@ class NativeOpenRouterAgentTest {
         compose.onNodeWithTag("agent-confirm-action").performScrollTo().performClick()
         compose.waitUntil(5000) { !vm.busy && vm.pending == null }
         assertEquals(1, executed.get())
+    }
+    @Test fun fullScreenChatHasOnlyCompactToolbarAndOptionsStayBehindGearWithManualApprovedSelection() {
+        val vm = renderChat(AiHttpTransport { request ->
+            check(request.method == "GET") { "Settings refresh must not infer or benchmark" }
+            AiHttpResponse(200, catalog())
+        }, consented = true)
+        compose.onNodeWithText("گفتگوی نو").assertDoesNotExist()
+        compose.onNodeWithText("بخش‌های برنامه").assertDoesNotExist()
+        compose.onNodeWithText("کارهای خودکار · 0").assertDoesNotExist()
+        compose.onNodeWithTag("ai-options").performClick()
+        compose.onNodeWithText("تنظیمات هوش مصنوعی و مدل‌ها").performClick()
+        compose.waitUntil(10000) { vm.modelState.models.any { it.approved } && !vm.modelState.checking }
+        compose.onNodeWithTag("ai-selection-MANUAL").performScrollTo().performClick()
+        compose.onNodeWithTag("ai-manual-model-picker").performScrollTo().performClick()
+        compose.onNode(hasText(free) and hasClickAction()).performClick()
+        screenshot("40-model-management-320", "ai-settings")
+        compose.onNodeWithText("ذخیره", useUnmergedTree = false).performClick()
+        compose.waitUntil(5000) { vm.settings.modelSelectionMode == AISelectionMode.MANUAL }
+        assertEquals(free, vm.settings.openRouterModel)
+        assertTrue(vm.settings.consented)
+    }
+    @Test fun realSafeModelEvaluationUsesOnlyDummyDataAndGuardrailRemovalStopsWithoutAnotherPost() = runBlocking {
+        val privateRecord = PersonalExpenseEntity("private-test", "1404/01/01", "coffee", "PRIVATE-USER-DATA-DO-NOT-SEND", 9876543.0, "private-note")
+        repo.applyApprovedAgentRecord(null, privateRecord)
+        AiSettingsStore(context).save(AiSettings(consented = true)); OpenRouterApiKeyStore(context).save(syntheticKey)
+        var authorized = true
+        val posts = AtomicInteger(); val bodies = mutableListOf<String>()
+        val http = AiHttpTransport { request ->
+            when {
+                request.url.endsWith("/endpoints") -> AiHttpResponse(200, endpointEvidence())
+                request.method == "GET" -> AiHttpResponse(200, if (request.url == OpenRouterModelMetadata.USER_MODELS_URL && !authorized) "{\"data\":[]}" else catalog())
+                else -> {
+                    posts.incrementAndGet(); val body = requireNotNull(request.body); bodies += body
+                    assertFalse(body.contains(privateRecord.title)); assertFalse(body.contains("9876543")); assertFalse(body.contains(syntheticKey))
+                    assertTrue(body.contains(SafePersianModelEvaluator.MARKER))
+                    val messages = JSONObject(body).getJSONArray("messages")
+                    val text = (0 until messages.length()).map { messages.getJSONObject(it) }.last { it.getString("role") == "user" }.getString("content")
+                    val (name, args) = when {
+                        "مرحله۱" in text -> "get_jalali_calendar" to """{"year":1404}"""
+                        "مرحله۲" in text -> "search_services_range" to """{"start_date":"1404/01/01","end_date":"1404/12/29","service_type":"night"}"""
+                        "مرحله۳" in text -> "benchmark_report" to """{"income":540000,"expense":180000,"net":360000,"count":2,"days":365,"summary":"خالص دادهٔ ساختگی محاسبه شد"}"""
+                        else -> "benchmark_refusal" to """{"decision":"needs_confirmation","summary":"بدون تأیید هیچ ثبت یا حذفی مجاز نیست"}"""
+                    }
+                    AiHttpResponse(200, completion("", listOf(FunctionCall("bench_${posts.get()}", name, args))))
+                }
+            }
+        }
+        val settingsStore = AiSettingsStore(context)
+        val adapter = OpenRouterModelAdapter(OpenRouterClient(settingsStore::load, OpenRouterApiKeyStore(context), http))
+        val manager = ManagedAIProvider(adapter, { AISelectionSettings(true, true, "initial") }, AndroidModelEvaluationStore(context))
+        manager.refresh(runTests = true)
+        assertEquals(4, posts.get()); assertEquals(free, manager.state.value.active?.id)
+        assertTrue(manager.state.value.models.single { it.model.key.id == free }.approved)
+        assertEquals(privateRecord, repo.insights.expense(privateRecord.id)); assertTrue(db.services().allOnce().isEmpty())
+        authorized = false; manager.refresh()
+        assertNull(manager.state.value.active); assertEquals(4, posts.get())
+        assertFalse(manager.state.value.models.any { it.approved })
+        val evidence = JSONObject().put("environment", "Synthetic official catalog/guardrail and four inference cases; real local Room; NOT live OpenRouter")
+            .put("passed", true).put("dummy_test_posts", 4).put("private_record_unchanged", true).put("private_data_not_sent", true)
+            .put("guardrail_removal_sent_no_post", true).put("no_real_tool_execution", true)
+        publishSyntheticEvidence(context, "KhodroYar-UI-Smoke", "openrouter-model-evaluation.json", "application/json", evidence.toString().toByteArray())
+    }
+    @Test fun modelReplacementAfterAnApprovedWriteContinuesTranscriptWithoutReplayingTheCommittedRecord() = runBlocking {
+        val alternative = "synthetic/alternative:free"
+        val source = JSONObject(catalog()).apply { getJSONArray("data").put(JSONObject(getJSONArray("data").getJSONObject(1).toString()).put("id", alternative)) }.toString()
+        val posts = AtomicInteger(); val bodies = mutableListOf<String>()
+        val http = AiHttpTransport { request ->
+            if (request.method == "GET") AiHttpResponse(200, source) else {
+                val body = requireNotNull(request.body); bodies += body
+                when (posts.incrementAndGet()) {
+                    1 -> AiHttpResponse(200, completion("پیشنهاد هزینه", listOf(FunctionCall("once_only", "add_expense", """{"date":"1404/01/01","amount":45000,"title":"آزمون جایگزینی","category":"coffee"}"""))))
+                    2 -> AiHttpResponse(503, "synthetic unavailable")
+                    3 -> AiHttpResponse(200, JSONObject(completion("نتیجهٔ ابزار تأییدشده را دریافت کردم؛ ثبت دوباره نمی‌کنم.")).put("model", alternative).toString())
+                    else -> error("Inference must not loop or replay")
+                }
+            }
+        }
+        val vm = renderChat(http, consented = true, modelCatalog = source, approvedIds = listOf(free, alternative))
+        send("یک هزینهٔ آزمایشی ۴۵ هزار تومانی ثبت کن و بعد نتیجه را بگو")
+        compose.waitUntil(10000) { vm.pending != null && !vm.busy }
+        val screenHeight = compose.onNodeWithTag("ai-agent-screen").fetchSemanticsNode().boundsInRoot.height
+        assertTrue(compose.onNodeWithTag("ai-chat-list").fetchSemanticsNode().boundsInRoot.height > screenHeight * 0.60f)
+        compose.onNodeWithTag("agent-confirm-action").performScrollTo().performClick()
+        compose.waitUntil(10000) { !vm.busy && vm.pending == null && posts.get() == 3 }
+        assertNull(vm.failure); assertEquals(alternative, vm.modelState.active?.id)
+        assertEquals(1, db.insights().expensesOn("1404/01/01").size)
+        assertTrue(bodies.last().contains("\"tool_call_id\":\"once_only\""))
+        assertEquals(free, JSONObject(bodies[0]).getString("model")); assertEquals(alternative, JSONObject(bodies[2]).getString("model"))
+        screenshot("39-ai-fullscreen-320")
+        val evidence = JSONObject().put("environment", "Synthetic OpenRouter; real Compose confirmation and Room; NOT live provider")
+            .put("passed", true).put("posts", 3).put("committed_expenses", 1).put("approved_alternative_only", true)
+            .put("tool_transcript_preserved", true).put("committed_write_not_replayed", true).put("chat_height_over_60_percent", true)
+        publishSyntheticEvidence(context, "KhodroYar-UI-Smoke", "openrouter-model-failover.json", "application/json", evidence.toString().toByteArray())
     }
     @Test fun nativeAndroidJsonCannotCoerceNonstandardSyntaxOrRoundFractionalIntegerArguments() {
         for (args in listOf("{month:1}", "{'month':1}", "{\"month\":1,}", "{\"month\":1,\"month\":2}",

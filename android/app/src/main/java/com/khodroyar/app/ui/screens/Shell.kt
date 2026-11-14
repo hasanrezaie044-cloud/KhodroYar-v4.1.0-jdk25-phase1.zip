@@ -163,6 +163,8 @@ fun CarManagerRoot(
         }
     }
 
+    val assistantOpen = overlay == null && tool == ToolDestination.AI_ASSISTANT
+
     val title = when {
         overlay != null -> overlay!!.title
         tool != null -> if (settings.language == AppSettings.LANGUAGE_EN) tool!!.englishTitle else tool!!.title
@@ -218,7 +220,7 @@ fun CarManagerRoot(
                     }
                 },
                 bottomBar = {
-                    if (!keyboardVisible && overlay == null) AppBottomBar(
+                    if (!keyboardVisible && overlay == null && !assistantOpen) AppBottomBar(
                         selected = destination,
                         toolActive = tool != null,
                         onSelect = { picked ->
@@ -241,7 +243,7 @@ fun CarManagerRoot(
                         // takes max(IME, navigation), never adds both heights.
                         .windowInsetsPadding(WindowInsets.systemBars.only(WindowInsetsSides.Horizontal + WindowInsetsSides.Bottom).union(WindowInsets.ime)),
                 ) {
-                    AppTopBar(
+                    if (!assistantOpen) AppTopBar(
                         title = title,
                         subtitle = subtitle,
                         privacyMode = settings.privacyMode,
@@ -316,7 +318,7 @@ fun CarManagerRoot(
                             ToolDestination.RATES -> RatesScreen(repository)
                             ToolDestination.INSURANCE -> InsuranceScreen(repository)
                             ToolDestination.TRAFFIC -> TrafficAssistantScreen(repository)
-                            ToolDestination.AI_ASSISTANT -> AiAssistantScreen(onNavigate = { section ->
+                            ToolDestination.AI_ASSISTANT -> AiAssistantScreen(onBack = { agentReturn = false; tool = null }, onNavigate = { section ->
                                 overlay = null
                                 quick = null
                                 agentReturn = true

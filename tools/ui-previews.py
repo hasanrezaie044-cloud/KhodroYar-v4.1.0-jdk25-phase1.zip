@@ -13,7 +13,7 @@ import sys
 from PIL import Image
 
 root = Path(sys.argv[1])
-for name in ("01-home-light-fa", "20-home-line-timeline-right", "18-dashboard-bars", "19-home-dark-320-large-text", "21-reports-annual-statistics", "22-reports-recent-services", "23-report-table-320-large-text", "25-quick-entry-320-large-text", "26-quick-entry-review", "28-quick-fuel-dark-review", "29-maintenance-forecast", "31-financial-comparison", "32-automation-health", "debug-quick-edit-state", "36-count-first-320-large-font", "35b-isfahan-full-road-catalogue", "37-traffic-legacy-response-six-routes", "38-openrouter-approval-320-large-font"):
+for name in ("01-home-light-fa", "20-home-line-timeline-right", "18-dashboard-bars", "19-home-dark-320-large-text", "21-reports-annual-statistics", "22-reports-recent-services", "23-report-table-320-large-text", "25-quick-entry-320-large-text", "26-quick-entry-review", "28-quick-fuel-dark-review", "29-maintenance-forecast", "31-financial-comparison", "32-automation-health", "debug-quick-edit-state", "36-count-first-320-large-font", "35b-isfahan-full-road-catalogue", "37-traffic-legacy-response-six-routes", "38-openrouter-approval-320-large-font", "39-ai-fullscreen-320", "40-model-management-320"):
     if len(sys.argv) > 2 and sys.argv[2] != name:
         continue
     path = next(root.rglob(f"{name}.png"), None)
@@ -23,7 +23,7 @@ for name in ("01-home-light-fa", "20-home-line-timeline-right", "18-dashboard-ba
         image = image.convert("RGB")
         image.thumbnail((480, 1000))
         encoded = ""
-        for quality in (76, 65, 50, 35):
+        for quality in (76, 65, 50, 35, 20):
             buffer = BytesIO()
             image.save(buffer, "WEBP", quality=quality, method=6)
             encoded = b64encode(buffer.getvalue()).decode("ascii")

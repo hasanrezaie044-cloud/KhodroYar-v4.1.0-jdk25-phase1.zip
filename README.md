@@ -1,11 +1,17 @@
 # مدیریت خودرو — Native Android
 
-## Current source: 5.6.0 (versionCode 76), incrementally upgraded from 5.5.8
+## Current source: 5.6.1 (versionCode 77), incrementally upgraded from 5.6.0 / 5.5.8
 
 Same `com.khodroyar.app`, Room 6, financial formulas and original signing identity:
 
 - **Persian native-tool agent**: direct, user-key OpenRouter at `https://openrouter.ai/api/v1`,
-  initially `openrouter/free`. Every request revalidates zero prices and native tools;
+  using provider-independent Automatic (default) or approved Manual model management.
+  Official public + key-scoped catalogs, exact zero pricing, live endpoints and four dummy
+  Persian/Jalali/tool/calculation/approval tests gate eligibility. No random-router lock-in;
+  bounded failover keeps committed tool results and never replays writes. Metadata cache
+  is at most 60 seconds; six-hour background work is metadata-only. See the
+  [current model-management/RTL full-screen chat guide](docs/AI-MODEL-MANAGEMENT.fa.md).
+  Each inference still enforces verified zero prices and native tools;
   zero price caps, no paid fallback and no backend requirement. Natural-language planning,
   bounded multistep calls, streaming, app-owned previews/explicit approvals and verified
   database results extend the existing chat/repositories. Offline/manual work is unchanged.
@@ -35,12 +41,15 @@ Same `com.khodroyar.app`, Room 6, financial formulas and original signing identi
   this is an estimated travel time, not point-by-point highway congestion. A native
   mocked-transport test covers all six visible statuses and manual refresh using
   the old reply shape without geometry. No personal key or live Neshan call is used.
-- **Privacy & disclaimer v3**: shared in-app and Bazaar-ready Persian text covers
+- **Privacy & disclaimer v4**: shared in-app and Bazaar-ready Persian text covers
   responsibility for inputs, incomplete/wrong OCR, unofficial outputs, optional third-party
   services and decisions based on results. Previous acceptance must be renewed explicitly; OpenRouter also needs separate provider/data consent.
 - **Cafe Bazaar updates preserved**: asynchronous entry notice and user-triggered Bazaar
   action, Settings → About manual check; no APK self-installer or developer-account access.
   Existing guarded record commands, approvals, charts, exports and IME/navigation safety remain.
+- **Full-screen assistant**: no app bottom tabs, oversized status card or workspace bars on
+  chat. New chat/history/clear/automation/sections and integrated AI/model settings live
+  behind the gear. Back and all other app navigation remain available.
 
 Guides: [FastOCR/daily counts (Persian)](docs/FASTOCR-ASSIST.md),
 [route sources and limitations](docs/TRAFFIC-ROUTES.md),

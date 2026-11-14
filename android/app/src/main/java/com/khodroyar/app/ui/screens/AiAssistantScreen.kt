@@ -44,6 +44,14 @@ import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.window.SecureFlagPolicy
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.material.icons.automirrored.outlined.ArrowBack
+import com.khodroyar.app.ai.AIModelState
+import com.khodroyar.app.ai.AISelectionMode
+import com.khodroyar.app.ai.AIModelHealthMonitor
+import kotlinx.coroutines.delay
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.khodroyar.app.ai.OpenRouterFreePolicy
 import com.khodroyar.app.ai.VerifiedFreeModel
 import com.khodroyar.app.ai.PersianAgentLimits
@@ -110,7 +118,7 @@ import com.khodroyar.app.ui.theme.appAccents
  * the app shell (RTL by default), so nothing here hard-codes a direction.
  */
 @Composable
-fun AiAssistantScreen(vm: AiAssistantViewModel = viewModel(), onNavigate: (AgentSection) -> Unit = {}) {
+fun AiAssistantScreen(vm: AiAssistantViewModel = viewModel(), onNavigate: (AgentSection) -> Unit = {}, onBack: () -> Unit = {}) {
     val context = LocalContext.current
     val toast = LocalToast.current
     val focusManager = LocalFocusManager.current
@@ -118,6 +126,7 @@ fun AiAssistantScreen(vm: AiAssistantViewModel = viewModel(), onNavigate: (Agent
     val settings = vm.settings
     var input by remember { mutableStateOf("") }
     var showSettings by remember { mutableStateOf(false) }
+    var showMenu by remember { mutableStateOf(false) }
     var showHistory by remember { mutableStateOf(false) }
     var showTasks by remember { mutableStateOf(false) }
     var showSections by remember { mutableStateOf(false) }
@@ -125,6 +134,16 @@ fun AiAssistantScreen(vm: AiAssistantViewModel = viewModel(), onNavigate: (Agent
     var confirmNew by remember { mutableStateOf(false) }
     var confirmClear by remember { mutableStateOf(false) }
     val listState = rememberLazyListState()
+
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    LaunchedEffect(Unit) {
+        while (true) {
+            delay(AIModelHealthMonitor.FOREGROUND_REFRESH_MS)
+            if (lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) vm.refreshModels()
+        }
+    }
+    LaunchedEffect(showSettings) { if (showSettings) vm.refreshModels() }
+    LaunchedEffect(vm.modelState.notice) { vm.modelState.notice?.let { toast.show(it); vm.dismissModelNotice() } }
 
     val extraRows = (if (vm.streamingText.isNotBlank()) 1 else 0) + (if (vm.pending != null) 1 else 0) + (if (vm.busy) 1 else 0) + (if (vm.failure != null) 1 else 0)
     LaunchedEffect(vm.messages.size, extraRows, vm.streamingText.length / 120) {
@@ -139,17 +158,7 @@ fun AiAssistantScreen(vm: AiAssistantViewModel = viewModel(), onNavigate: (Agent
     }
 
     Column(Modifier.fillMaxSize().imePadding().testTag("ai-agent-screen")) {
-        AssistantHeader(
-            model = vm.activeModel,
-            state = vm.connection,
-            canClear = vm.messages.isNotEmpty(),
-            onNew = { if (vm.messages.isEmpty()) vm.newChat() else confirmNew = true },
-            onHistory = { vm.loadHistory(); showHistory = true },
-            onClear = { confirmClear = true },
-            onSettings = { showSettings = true },
-        )
-        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-        AgentWorkspaceBar(vm.automations.count { it.enabled }, onTasks = { showTasks = true }, onSections = { showSections = true })
+        CompactAssistantBar(onBack = onBack, onSettings = { showMenu = true })
         if (settings.mode == AiMode.LOCAL) AgentDraftBar(vm.localContext, onCancel = { if (vm.pending != null) vm.cancelPending() else vm.send("لغو") })
 
         Box(Modifier.weight(1f).fillMaxWidth()) {
@@ -170,14 +179,14 @@ fun AiAssistantScreen(vm: AiAssistantViewModel = viewModel(), onNavigate: (Agent
                         Column { StatusPill("در حال دریافت · متن مدل، نه تأیید ثبت", color = MaterialTheme.colorScheme.tertiary)
                             Bubble(ChatEntry("stream", ChatRole.ASSISTANT, vm.streamingText, 0L), onCopy = {}) }
                     }
-                    if (vm.busy) item(key = "busy") { TypingBubble(canStop = !vm.executingAction, onStop = vm::stop) }
+                    if (vm.busy) item(key = "busy") { TypingBubble(canStop = !vm.executingAction, status = if (vm.modelState.checking) vm.modelState.message else null, onStop = vm::stop) }
                     vm.failure?.let { f ->
                         item(key = "failure") {
                             ErrorCard(
                                 f.message,
                                 retryable = f.kind !in setOf(AiErrorKind.NOT_CONFIGURED, AiErrorKind.NOT_FOUND),
                                 onRetry = vm::retry, onSettings = { showSettings = true },
-                                onLocal = if (settings.mode != AiMode.LOCAL) vm::useLocalMode else null,
+                                onLocal = null,
                                 onDirect = null,
                             )
                         }
@@ -203,6 +212,20 @@ fun AiAssistantScreen(vm: AiAssistantViewModel = viewModel(), onNavigate: (Agent
         )
     }
 
+    if (showMenu) {
+        AlertDialog(onDismissRequest = { showMenu = false }, title = { Text("گزینه‌های گفتگو") },
+            text = { Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).testTag("ai-options-menu")) {
+                TextButton(onClick = { showMenu = false; showSettings = true }, modifier = Modifier.fillMaxWidth()) { Text("تنظیمات هوش مصنوعی و مدل‌ها") }
+                TextButton(onClick = { showMenu = false; if (vm.messages.isEmpty()) vm.newChat() else confirmNew = true }, enabled = !vm.executingAction, modifier = Modifier.fillMaxWidth()) { Text("گفتگوی نو") }
+                TextButton(onClick = { showMenu = false; vm.loadHistory(); showHistory = true }, enabled = !vm.executingAction, modifier = Modifier.fillMaxWidth()) { Text("تاریخچه") }
+                TextButton(onClick = { showMenu = false; confirmClear = true }, enabled = !vm.executingAction, modifier = Modifier.fillMaxWidth()) { Text("پاک‌سازی گفتگوها") }
+                HorizontalDivider()
+                TextButton(onClick = { showMenu = false; showTasks = true }, modifier = Modifier.fillMaxWidth()) { Text("کارهای خودکار · ${vm.automations.count { it.enabled }}") }
+                TextButton(onClick = { showMenu = false; showSections = true }, modifier = Modifier.fillMaxWidth()) { Text("بخش‌های برنامه") }
+                Text(vm.activeModel, style = MaterialTheme.typography.labelSmall.copy(textDirection = TextDirection.Content))
+            } }, confirmButton = { TextButton(onClick = { showMenu = false }) { Text("بستن") } })
+    }
+
     if (showTasks) AutomationManagerSheet(vm.automations, vm.automationStorageError,
         onToggle = { showTasks = false; vm.setAutomation(it.id, !it.enabled) },
         onEdit = { showTasks = false; vm.editAutomation(it.id) },
@@ -222,8 +245,9 @@ fun AiAssistantScreen(vm: AiAssistantViewModel = viewModel(), onNavigate: (Agent
             current = settings,
             testMessage = vm.testMessage,
             hasOpenRouterKey = vm.hasOpenRouterKey,
-            models = vm.availableModels,
-            saving = vm.savingSettings,
+            models = vm.modelState,
+            onRefresh = vm::refreshModels,
+            saving = vm.savingSettings || vm.busy,
             settingsError = vm.settingsError,
             onTest = { new, key, forget -> vm.configure(new, key, forget) { vm.testConnection() } },
             onSave = { new, key, forget -> vm.configure(new, key, forget) {
@@ -264,36 +288,12 @@ fun AiAssistantScreen(vm: AiAssistantViewModel = viewModel(), onNavigate: (Agent
 /* -------------------------------------------------------------------- header */
 
 @Composable
-private fun AssistantHeader(
-    model: String,
-    state: ConnectionState,
-    canClear: Boolean,
-    onNew: () -> Unit,
-    onHistory: () -> Unit,
-    onClear: () -> Unit,
-    onSettings: () -> Unit,
-) {
-    SurfaceCard(modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp), contentPadding = 12.dp) {
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            IconBadge(Icons.Outlined.AutoAwesome)
-            Column(Modifier.weight(1f)) {
-                val (label, color) = connectionLook(state)
-                Text(label, color = color, style = MaterialTheme.typography.labelMedium, maxLines = 2)
-                Text(model.ifBlank { "دستیار خودرویار" }, style = MaterialTheme.typography.labelSmall.copy(textDirection = TextDirection.Content),
-                    color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
-            }
-            IconButton(onClick = onSettings) { Icon(Icons.Outlined.Settings, "تنظیمات دستیار") }
-        }
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-            TextButton(onClick = onNew, modifier = Modifier.weight(1f)) {
-                Icon(Icons.Outlined.Add, null, Modifier.size(17.dp)); Spacer(Modifier.width(4.dp)); Text("گفتگوی نو", style = MaterialTheme.typography.labelSmall)
-            }
-            TextButton(onClick = onHistory, modifier = Modifier.weight(1f)) {
-                Icon(Icons.Outlined.History, null, Modifier.size(17.dp)); Spacer(Modifier.width(4.dp)); Text("تاریخچه", style = MaterialTheme.typography.labelSmall)
-            }
-            TextButton(onClick = onClear, enabled = canClear, modifier = Modifier.weight(1f)) {
-                Icon(Icons.Outlined.DeleteSweep, null, Modifier.size(17.dp)); Spacer(Modifier.width(4.dp)); Text("پاک‌سازی", style = MaterialTheme.typography.labelSmall)
-            }
+private fun CompactAssistantBar(onBack: () -> Unit, onSettings: () -> Unit) {
+    Surface(color = MaterialTheme.colorScheme.background, modifier = Modifier.testTag("ai-chat-toolbar")) {
+        Row(Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 8.dp, vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = onBack, modifier = Modifier.testTag("ai-back")) { Icon(Icons.AutoMirrored.Outlined.ArrowBack, "بازگشت") }
+            Text("دستیار هوشمند", Modifier.weight(1f), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            IconButton(onClick = onSettings, modifier = Modifier.testTag("ai-options")) { Icon(Icons.Outlined.Settings, "تنظیمات دستیار") }
         }
     }
 }
@@ -308,7 +308,7 @@ private fun connectionLook(s: ConnectionState): Pair<String, Color> = when (s) {
     ConnectionState.OFFLINE -> "قطع (اینترنت یا سرور)" to MaterialTheme.colorScheme.error
     ConnectionState.NOT_CONFIGURED -> "اتصال یا کلید تنظیم نشده" to MaterialTheme.colorScheme.onSurfaceVariant
     ConnectionState.DISABLED -> "غیرفعال" to MaterialTheme.colorScheme.onSurfaceVariant
-    ConnectionState.ERROR -> "سرور آماده نیست" to MaterialTheme.colorScheme.error
+    ConnectionState.ERROR -> "هوش مصنوعی موقتاً در دسترس نیست" to MaterialTheme.colorScheme.error
 }
 
 /* ------------------------------------------------------------------- bubbles */
@@ -355,13 +355,13 @@ private fun Bubble(entry: ChatEntry, onCopy: (String) -> Unit) {
 }
 
 @Composable
-private fun TypingBubble(canStop: Boolean, onStop: () -> Unit) {
+private fun TypingBubble(canStop: Boolean, status: String? = null, onStop: () -> Unit) {
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Absolute.Left) {
         Surface(shape = RoundedCornerShape(18.dp), color = MaterialTheme.colorScheme.surfaceContainerHigh) {
             Row(Modifier.padding(horizontal = 14.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
                 CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
                 Spacer(Modifier.width(10.dp))
-                Text(if (canStop) "دستیار در حال پاسخ دادن است…" else "در حال انجام عملیات تأییدشده…", style = MaterialTheme.typography.bodyMedium)
+                Text(status ?: if (canStop) "دستیار در حال پاسخ دادن است…" else "در حال انجام عملیات تأییدشده…", modifier = Modifier.weight(1f), maxLines = 3, style = MaterialTheme.typography.bodyMedium)
                 if (canStop) TextButton(onClick = onStop) { Text("توقف") }
             }
         }
@@ -525,8 +525,8 @@ private fun ConsentDialog( onAccept: () -> Unit, onDecline: () -> Unit) {
         text = { Text(
             "در حالت ایجنت آنلاین، پیام شما، حداکثر ۱۰ پیام اخیر و فقط خلاصهٔ لازمِ نتایج ابزار (مثل تاریخ، تعداد و مبلغ مرتبط) به OpenRouter و ارائه‌دهندهٔ مدل رایگان ارسال می‌شود. کل دیتابیس، اصل سند، عکس/PDF، شماره بیمه‌نامه، اطلاعات پرسنل، موقعیت، مخاطبین و فایل‌های دیگر ارسال نمی‌شوند. اطلاعات حساس را در پیام ننویسید.\n\n" +
             "فقط قیمت صفر و پشتیبانی ابزار از فهرست تازهٔ سرویس پذیرفته می‌شود؛ سقف قیمت صفر و منع fallback پولی اعمال می‌شود. دسترسی/محدودیت روزانه و سیاست پردازش داده را OpenRouter و ارائه‌دهنده کنترل می‌کنند؛ برنامه سهمیه یا کیفیت پاسخ را تضمین نمی‌کند. مسیرهایی که طبق فرادادهٔ سرویس جمع‌آوری داده دارند مجاز نیستند، اما این جایگزین مطالعهٔ سیاست سرویس نیست.\n\n" +
-            "آزمایش اتصال یک پیام مصنوعی کوتاه و فراخوانی ابزار بی‌خطر می‌فرستد، نه دادهٔ مالی؛ از سهمیهٔ رایگان استفاده می‌کند. کلید فقط در هدر HTTPS همان سرویس است. پرداخت، خرید اعتبار و مدل پولی خودکار وجود ندارد.\n\n" +
-            "تمام ثبت/ویرایش/حذف‌ها پیش‌نمایش و دکمهٔ تأیید جدا دارند. گفتگو روی گوشی ذخیره می‌شود و قابل پاک‌کردن است. تغییر مدل/حساب رضایت دوباره می‌خواهد؛ امکانات دستی و حالت داخلی آفلاین مستقل می‌مانند.",
+            "مدیریت خودکار می‌تواند میان مدل‌های مشخصِ مجاز، قیمت‌صفر و قبول‌شده جابه‌جا شود و این تغییر را اعلام می‌کند. فهرست عمومی و فهرست مجازِ کلید/Guardrail تازه می‌شوند؛ تنظیم Guardrail تغییر نمی‌کند. آزمون‌های فارسی/شمسی/مالی/ابزار فقط دادهٔ ساختگی دارند و هرگز ابزار واقعی را اجرا نمی‌کنند. سقف خودکار ۸ و سقف کل آزمون ۱۶ درخواست در روز است؛ از سهمیهٔ رایگان استفاده می‌کند. در پس‌زمینه فقط فراداده هر ۶ ساعت بررسی می‌شود، نه inference. کلید فقط در هدر HTTPS همان سرویس است. پرداخت، خرید اعتبار و مدل پولی خودکار وجود ندارد.\n\n" +
+            "تمام ثبت/ویرایش/حذف‌ها پیش‌نمایش و دکمهٔ تأیید جدا دارند. گفتگو روی گوشی ذخیره می‌شود و قابل پاک‌کردن است. تعویض کلید/ارائه‌دهنده رضایت تازه می‌خواهد؛ جایگزینی خودکار فقط داخل فهرست مجاز و آزموده‌شده است. امکانات دستی و حالت داخلی آفلاین مستقل می‌مانند.",
             modifier = Modifier.verticalScroll(rememberScrollState()).testTag("openrouter-consent")) },
         confirmButton = { Button(onClick = onAccept) { Text("موافقم و ادامه") } },
         dismissButton = { TextButton(onClick = onDecline) { Text("انصراف") } },
@@ -538,7 +538,8 @@ private fun SettingsDialog(
     current: AiSettings,
     testMessage: String?,
     hasOpenRouterKey: Boolean,
-    models: List<VerifiedFreeModel>,
+    models: AIModelState,
+    onRefresh: () -> Unit,
     saving: Boolean,
     settingsError: String?,
     onTest: (AiSettings, String, Boolean) -> Unit,
@@ -548,14 +549,14 @@ private fun SettingsDialog(
     var enabled by remember { mutableStateOf(current.enabled) }
     var mode by remember { mutableStateOf(if (current.mode == AiMode.LOCAL) AiMode.LOCAL else AiMode.OPENROUTER) }
     var model by remember { mutableStateOf(current.openRouterModel) }
-    var chooseModel by remember { mutableStateOf(false) }
+    var selection by remember { mutableStateOf(current.modelSelectionMode) }
     // Never rememberSaveable: credentials must not enter saved-instance state.
     var apiKey by remember { mutableStateOf("") }
     var showKey by remember { mutableStateOf(false) }
     var forgetKey by remember { mutableStateOf(false) }
     val ltr = LocalTextStyle.current.copy(textDirection = TextDirection.Ltr)
     val valid = apiKey.isBlank() || OpenRouterFreePolicy.normalizeKey(apiKey) != null
-    fun candidate() = current.copy(enabled = enabled, mode = mode, openRouterModel = model)
+    fun candidate() = current.copy(enabled = enabled, mode = mode, openRouterModel = model, modelSelectionMode = selection)
     AlertDialog(
         onDismissRequest = { if (!saving) onDismiss() },
         properties = DialogProperties(securePolicy = SecureFlagPolicy.SecureOn),
@@ -587,22 +588,14 @@ private fun SettingsDialog(
                         shape = FieldShape, colors = fieldColors(), textStyle = ltr, modifier = Modifier.fillMaxWidth().testTag("openrouter-key"),
                     )
                     if (hasOpenRouterKey && !forgetKey) TextButton(onClick = { forgetKey = true; apiKey = "" }, enabled = !saving) { Text("حذف کلید با ذخیرهٔ تنظیمات") }
-                    Text("مدل انتخابی: $model", style = MaterialTheme.typography.bodyMedium.copy(textDirection = TextDirection.Content), modifier = Modifier.testTag("openrouter-model"))
-                    Text(if (models.any { it.id == model }) "قیمت صفر و پشتیبانی ابزار در آخرین بررسی تأیید شد؛ پیش از هر درخواست دوباره بررسی می‌شود." else "هنوز در فهرست تازه تأیید نشده؛ ابتدا ذخیره و آزمایش اتصال را بزنید.", style = MaterialTheme.typography.labelSmall)
-                    Box {
-                        OutlinedButton(onClick = { chooseModel = true }, enabled = !saving && models.isNotEmpty()) { Text("انتخاب از مدل‌های رایگان تأییدشده") }
-                        DropdownMenu(expanded = chooseModel, onDismissRequest = { chooseModel = false }) {
-                            models.forEach { choice -> DropdownMenuItem(text = { Text(choice.id, style = MaterialTheme.typography.bodySmall.copy(textDirection = TextDirection.Ltr)) },
-                                onClick = { model = choice.id; chooseModel = false }) }
-                        }
-                    }
-                    Text("فقط openrouter/free یا :free با قیمت واقعاً صفر و ابزار مجاز است. مدل پولی، خرید اعتبار، تغییر خودکار مدل و fallback به اتصال قدیمی نداریم. سهمیه و دسترسی روزانه دست OpenRouter است؛ ممکن است مدل رایگانِ سازگار موجود نباشد.", style = MaterialTheme.typography.labelMedium)
+                    AIModelSettingsPanel(models, selection, model, enabled = !saving,
+                        onSelection = { selection = it }, onModel = { model = it }, onRefresh = onRefresh)
                     Text("پیام و خلاصهٔ لازم به OpenRouter/ارائه‌دهندهٔ مدل می‌رود؛ اصل دیتابیس/سند ارسال نمی‌شود. کلید در APK، بکاپ، تاریخچه و متن ساده ذخیره نمی‌شود. محافظت اسکرین‌شات برای همین پنجره فعال است.", style = MaterialTheme.typography.labelSmall)
                 } else Text("قابلیت‌های داخلی و ثبت دستی آفلاین حفظ‌اند. این حالت مدل زبانی عمومی نیست و چیزی دانلود نمی‌کند. برای درک آزاد فارسی از ایجنت OpenRouter استفاده کنید.")
                 OutlinedButton(onClick = {
                     onTest(candidate(), apiKey, forgetKey); apiKey = ""; showKey = false; forgetKey = false
-                }, enabled = valid && !saving && enabled && !(forgetKey && apiKey.isBlank()), modifier = Modifier.testTag("openrouter-test")) {
-                    Text(if (mode == AiMode.LOCAL) "ذخیره و بررسی داخلی" else "ذخیره و تست اتصال/ابزار رایگان")
+                }, enabled = valid && !saving && !models.checking && enabled && !(forgetKey && apiKey.isBlank()), modifier = Modifier.testTag("openrouter-test")) {
+                    Text(if (mode == AiMode.LOCAL) "ذخیره و بررسی داخلی" else "ذخیره و اجرای آزمون امن مدل‌ها")
                 }
                 if (saving) Text("در حال ذخیرهٔ امن…")
                 settingsError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
