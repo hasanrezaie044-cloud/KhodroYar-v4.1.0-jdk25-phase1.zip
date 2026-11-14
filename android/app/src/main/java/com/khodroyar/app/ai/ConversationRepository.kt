@@ -59,7 +59,7 @@ class ConversationRepository(context: Context) {
         val arr = JSONArray()
         list.forEach { c ->
             arr.put(JSONObject().apply {
-                put("mode", c.mode.name); put("accountScope", c.accountScope)
+                put("mode", c.mode.name); put("accountScope", c.accountScope); put("contextStart", c.contextStart.coerceIn(0, c.messages.size))
                 put("id", c.id); put("title", c.title); put("createdAt", c.createdAt); put("updatedAt", c.updatedAt)
                 put("messages", JSONArray().also { ma ->
                     c.messages.forEach { m ->
@@ -90,6 +90,6 @@ class ConversationRepository(context: Context) {
         val id = o.optString("id", "")
         if (id.isBlank()) return null
         val mode = runCatching { AiMode.valueOf(o.optString("mode", "ONLINE")) }.getOrDefault(AiMode.ONLINE)
-        return Conversation(id, AiTextSafety.redact(o.optString("title", "")), o.optLong("createdAt", 0L), o.optLong("updatedAt", 0L), msgs, mode, o.optString("accountScope", ""))
+        return Conversation(id, AiTextSafety.redact(o.optString("title", "")), o.optLong("createdAt", 0L), o.optLong("updatedAt", 0L), msgs, mode, o.optString("accountScope", ""), o.optInt("contextStart", 0).coerceIn(0, msgs.size))
     }
 }

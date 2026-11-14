@@ -45,9 +45,9 @@ class OpenRouterWireTest {
         val s = stream(); s.accept(chunk(JSONObject().put("content", "بخشی از پاسخ")))
         assertTrue(runCatching { s.accept("""{"error":{"message":"PRIVATE RAW DETAIL"}}""") }.isFailure)
     }
-    @Test fun duplicateIdsTooManyCallsAndMalformedArgumentsAreRejected() {
+    @Test fun duplicateIdsAndMalformedArgumentsAreRejectedButBatchSizeIsNotAnAppUsageQuota() {
         assertTrue(runCatching { parse(f.completion("", listOf(f.call("a"), f.call("b")))) }.isFailure)
-        assertTrue(runCatching { parse(f.completion("", (0..4).map { f.call("a", id = "id$it") })) }.isFailure)
+        assertEquals(12, parse(f.completion("", (0..11).map { f.call("a", id = "id$it") })).message.calls.size)
         assertTrue(runCatching { parse(f.completion("", listOf(f.call("add_expense", "[]")))) }.isFailure)
     }
     @Test fun unknownModelOrNonzeroSseCostIsRejectedBeforeFinalResult() {

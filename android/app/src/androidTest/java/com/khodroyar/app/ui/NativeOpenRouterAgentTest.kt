@@ -356,7 +356,7 @@ class NativeOpenRouterAgentTest {
         compose.waitUntil(10000) { !vm.busy && vm.messages.any { it.role == ChatRole.ASSISTANT } }
         assertNull(vm.failure); assertEquals(1, posts.get())
         val post = requests.single { it.method == "POST" }; val body = JSONObject(requireNotNull(post.body))
-        assertFalse(body.has("tools")); assertEquals(512, body.getInt("max_tokens"))
+        assertFalse(body.has("tools")); assertFalse(body.has("max_tokens"))
         assertFalse(post.body.orEmpty().contains(SafePersianModelEvaluator.MARKER)); assertTrue(post.body.orEmpty().toByteArray().size < 2000)
         assertTrue(AndroidModelEvaluationStore(context).load("initial").isEmpty())
         assertEquals(1, vm.usageLedger.requests); assertEquals(49, vm.diagnostics.single { !it.metadata && it.dispatched }.actual?.total)
@@ -393,7 +393,7 @@ class NativeOpenRouterAgentTest {
         values.forEach { (mode, key) -> ProviderApiKeyStore(context, mode).save(key) }
         val file = File(context.applicationInfo.dataDir, "shared_prefs/khodroyar_provider_credentials.xml").readText()
         values.forEach { (mode, key) -> assertEquals(key, ProviderApiKeyStore(context, mode).read()); assertFalse(file.contains(key)) }
-        val ledger = AIUsageLedger(day = 20000, requests = 7, reservedTokens = 3210, metadataRequests = 2)
+        val ledger = AIUsageLedger(day = 20000, requests = 7, reservedTokens = 0, metadataRequests = 2, actualTokens = 3210)
         AndroidAIUsageStore(context).write(ledger)
         AiSettingsStore(context).save(AiSettings(mode = AiMode.GROQ, modelAccountScope = "new-key-scope"))
         ConversationRepository(context).clearAll()
@@ -451,6 +451,7 @@ class NativeOpenRouterAgentTest {
         compose.onNodeWithText("تاریخچه").performClick()
         compose.waitUntil(5000) { vm.history.size == 1 }
         compose.onNodeWithContentDescription("حذف گفتگو").performClick()
+        compose.onNodeWithText("حذف گفتگو", useUnmergedTree = false).performClick()
         compose.waitUntil(10000) { runBlocking { ConversationRepository(context).load().isEmpty() } }
         compose.onNodeWithText("هنوز گفتگویی ذخیره نشده است.").assertIsDisplayed()
         assertEquals(1, db.insights().expensesOn("1404/01/01").size); assertEquals(2, postCount.get())
@@ -492,6 +493,9 @@ class NativeOpenRouterAgentTest {
         assertEquals(1060.0, settings.current.vehicleCurrentKm, 0.0)
         assertTrue(db.insights().expensesOn(Jalali.todayString()).isEmpty())
         send("همین سرویس اول فروردین رو پیدا کن و حذفش رو پیشنهاد بده")
+        compose.waitUntil(10000) { vm.canContinue && !vm.busy }
+        assertEquals(4, posts.get())
+        compose.onNodeWithTag("ai-continue").performScrollTo().performClick()
         compose.waitUntil(10000) { vm.pending?.destructive == true && !vm.busy }
         compose.onNodeWithText("تأیید حذف (غیرقابل بازگشت)").assertExists()
         assertEquals(saved, db.services().byId(saved.id))
@@ -547,7 +551,7 @@ class NativeOpenRouterAgentTest {
         // The refreshed evidence arrives AFTER the dialog-open clock; the option must be ready
         // immediately, without waiting for a ten-second freshness tick or weakening TTL checks.
         compose.onNodeWithTag("ai-manual-model-picker").performScrollTo().assertIsEnabled().performClick()
-        compose.onNodeWithTag("ai-manual-option-$free").assertIsDisplayed().performClick()
+        compose.onNodeWithTag("ai-manual-option-$free").performScrollTo().assertIsDisplayed().performClick()
         screenshot("40-model-management-320", "ai-settings")
         compose.onNodeWithText("ذخیره", useUnmergedTree = false).performClick()
         compose.waitUntil(5000) { vm.settings.modelSelectionMode == AISelectionMode.MANUAL }
@@ -641,7 +645,7 @@ class NativeOpenRouterAgentTest {
             .put("partial_stream_cleared", true)
         publishSyntheticEvidence(context, "KhodroYar-UI-Smoke", "openrouter-model-failover.json", "application/json", evidence.toString().toByteArray())
     }
-    @Test fun modelReceiptsAndDailyBudgetPersistAcrossInstancesButNeverAcrossAccountScopes() {
+    @Test fun modelReceiptsAreScopedAndRetiredDailyEvaluationAllowanceIsNotEnforced() {
         val settings = AiSettingsStore(context); settings.save(AiSettings(consented = true))
         val now = 1_800_000_000_000L
         val store = AndroidModelEvaluationStore(context)
@@ -651,8 +655,8 @@ class NativeOpenRouterAgentTest {
         assertFalse(store.reserve("initial", now, automatic = true))
         assertFalse(AndroidModelEvaluationStore(context).reserve("initial", now, automatic = true))
         repeat(16) { assertTrue(AndroidModelEvaluationStore(context).reserve("initial", now, automatic = false)) }
-        assertFalse(store.reserve("initial", now, automatic = false))
-        assertFalse(store.reserve("initial", now - 86_400_000L, automatic = false))
+        assertTrue(store.reserve("initial", now, automatic = false))
+        assertTrue(store.reserve("initial", now - 86_400_000L, automatic = false))
         assertFalse(store.reserve("initial", now + 86_400_000L, automatic = true))
         assertTrue(store.reserve("initial", now + 86_400_000L, automatic = false))
         val restarted = AndroidModelEvaluationStore(context)

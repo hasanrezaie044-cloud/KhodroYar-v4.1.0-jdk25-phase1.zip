@@ -36,6 +36,7 @@ object AutoServiceScheduler {
     }
 
     fun schedule(context: Context) {
+        WorkManager.getInstance(context).cancelUniqueWork(LEGACY_WORK_NAME)
         WorkManager.getInstance(context).enqueueUniquePeriodicWork(WORK_NAME, ExistingPeriodicWorkPolicy.KEEP, request())
     }
     /** Only after a run or a system time/zone change, never on ordinary app opens. UPDATE does not cancel a running DB phase. */

@@ -43,11 +43,15 @@ class PersianToolAgentTest {
             reply(f.call("report_services_range", """{"start_date":"1404/01/01","end_date":"1404/12/29","service_type":"night"}""", "c4")),
             reply(text = "گزارش طبق نتیجهٔ ابزار آماده است."))
         val tools = Tools(); val agent = PersianToolAgent(script, tools); val seen = mutableListOf<String>()
-        val preview = agent.start(history(), onResult = { name, _ -> seen += name }) as AgentStep.Confirm
+        assertTrue(agent.start(history(), onResult = { name, _ -> seen += name }) is AgentStep.Continue)
+        assertEquals(1, script.transcripts.size)
+        assertTrue(agent.retry(onResult = { name, _ -> seen += name }) is AgentStep.Continue)
+        val preview = agent.retry(onResult = { name, _ -> seen += name }) as AgentStep.Confirm
         assertEquals(listOf("get_jalali_calendar", "get_service_catalog"), seen)
         assertEquals(0, tools.executed.count { it.spec.kind != ToolKind.READ })
         assertTrue(preview.pending.summary.contains("bulk_register_services"))
-        val final = agent.confirm(preview.pending, onResult = { name, _ -> seen += name }) as AgentStep.Reply
+        assertTrue(agent.confirm(preview.pending, onResult = { name, _ -> seen += name }) is AgentStep.Continue)
+        val final = agent.retry(onResult = { name, _ -> seen += name }) as AgentStep.Reply
         assertEquals(1, tools.executed.count { it.spec.kind != ToolKind.READ })
         assertEquals(listOf("get_jalali_calendar", "get_service_catalog", "bulk_register_services", "report_services_range"), seen)
         assertTrue(final.text.contains("1 عملیات"))
@@ -101,7 +105,7 @@ class PersianToolAgentTest {
             reply(f.call("add_expense", """{"amount":100}""", "b")))
         val agent = PersianToolAgent(script, tools); val preview = agent.start(history()) as AgentStep.Confirm
         val final = agent.confirm(preview.pending) as AgentStep.Reply
-        assertTrue(final.text.contains("تکراری")); assertEquals(1, tools.executed.size)
+        assertTrue(final.text.contains("قبلاً")); assertEquals(1, tools.executed.size)
     }
     @Test fun cancellationInvalidatesPreviewAndAllUnapprovedQueuedCalls() = runBlocking {
         val tools = Tools(); val agent = PersianToolAgent(Script(reply(f.call("add_expense", """{"amount":100}"""))), tools)
@@ -114,7 +118,9 @@ class PersianToolAgentTest {
             f.call("add_expense", """{"amount":100,"created_record":{}}"""), f.call("add_expense", """{"amount":"100"}"""),
             f.call("add_expense", """{"amount":100,"date":"1404/12/30"}"""))) {
             val tools = Tools(); val script = Script(reply(call), reply(text = "اطلاعات را روشن کنید"))
-            PersianToolAgent(script, tools).start(history())
+            val agent = PersianToolAgent(script, tools)
+            assertTrue(agent.start(history()) is AgentStep.Continue)
+            agent.retry()
             assertTrue(tools.executed.isEmpty()); assertTrue(tools.prepared.isEmpty())
             assertFalse(JSONObject(script.transcripts.last().last().content).getBoolean("ok"))
         }
@@ -127,13 +133,19 @@ class PersianToolAgentTest {
         val final = agent.confirm(preview.pending) as AgentStep.Reply
         assertTrue(final.text.contains("متوقف")); assertEquals(1, tools.executed.size); assertFalse(agent.canResume)
     }
-    @Test fun loopsDuplicateIdsAndExcessRoundsAreBounded() = runBlocking {
+    @Test fun repeatedReadsCannotLoopButDistinctOwnerContinuedStepsHaveNoLocalRoundQuota() = runBlocking {
         val tools = Tools(); val looping = (0..3).map { reply(f.call("get_today_expenses", id = "read$it")) }.toTypedArray()
-        val final = PersianToolAgent(Script(*looping), tools).start(history()) as AgentStep.Reply
-        assertTrue(final.text.contains("حلقه")); assertEquals(2, tools.executed.size)
-        val bounded = Tools(); val unique = (0..8).map { reply(f.call("get_yearly_report", """{"year":${1400 + it}}""", "r$it")) }.toTypedArray()
-        val end = PersianToolAgent(Script(*unique), bounded).start(history()) as AgentStep.Reply
-        assertTrue(end.text.contains("5 مرحله")); assertEquals(5, bounded.executed.size)
+        val script = Script(*looping); val agent = PersianToolAgent(script, tools)
+        assertTrue(agent.start(history()) is AgentStep.Continue)
+        assertEquals(1, script.transcripts.size)
+        val final = agent.retry() as AgentStep.Reply
+        assertTrue(final.text.contains("حلقه")); assertEquals(1, tools.executed.size)
+        val distinct = Tools(); val unique = (0..11).map { reply(f.call("get_yearly_report", """{"year":${1390 + it}}""", "r$it")) }.toTypedArray()
+        val continuedScript = Script(*unique); val continued = PersianToolAgent(continuedScript, distinct)
+        assertTrue(continued.start(history()) is AgentStep.Continue)
+        repeat(11) { assertTrue(continued.retry() is AgentStep.Continue) }
+        assertEquals(12, distinct.executed.size); assertEquals(12, continuedScript.transcripts.size)
+        continued.reset(); assertFalse(continued.canResume)
     }
     @Test fun incompletePersianCanBeClarifiedWithNoToolAndPriorContextIsIncluded() = runBlocking {
         val script = Script(reply(text = "هر روز چند سرویس و چه مسیر و مقدار کیلومتر/ساعت؟")); val tools = Tools()
@@ -141,9 +153,11 @@ class PersianToolAgentTest {
         val result = PersianToolAgent(script, tools).start(context) as AgentStep.Reply
         assertTrue(result.text.contains("چند سرویس")); assertEquals(4, script.transcripts.single().size); assertTrue(tools.executed.isEmpty())
     }
-    @Test fun longInputAndCredentialsNeverGetSilentlyTruncatedIntoADifferentOperation() = runBlocking {
-        val script = Script(); val tools = Tools(); val agent = PersianToolAgent(script, tools)
-        agent.start(history("الف".repeat(6001))); agent.start(history("کلید: ${f.key}"))
-        assertTrue(script.transcripts.isEmpty()); assertTrue(tools.executed.isEmpty())
+    @Test fun longInputIsSentUnchangedWhileCredentialsAreBlockedBeforeAnyNetworkOrTool() = runBlocking {
+        val script = Script(reply(text = "پاسخ ساختگی")); val tools = Tools(); val agent = PersianToolAgent(script, tools)
+        val long = "الف".repeat(20000)
+        agent.start(history(long)); agent.start(history("کلید: ${f.key}"))
+        assertEquals(1, script.transcripts.size); assertEquals(long, script.transcripts.single().last().content)
+        assertTrue(tools.executed.isEmpty())
     }
 }

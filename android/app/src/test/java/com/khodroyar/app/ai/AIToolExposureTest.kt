@@ -60,7 +60,7 @@ class AIToolExposureTest {
             agent.retry(); assertEquals(1, requests)
         }
     }
-    @Test fun zeroHistoryAndGreetingNeverSendOldPrivateMessagesAndTurnIdentityIsNotSerialized() = runBlocking {
+    @Test fun retiredHistoryAllowanceDoesNotTruncateChatButGreetingStillOmitsPrivateContext() = runBlocking {
         val transcripts = mutableListOf<List<FunctionMessage>>()
         val provider = object : FunctionCallingProvider {
             override suspend fun complete(messages: List<FunctionMessage>, onText: (String) -> Unit): FunctionResult {
@@ -71,7 +71,9 @@ class AIToolExposureTest {
         val agent = PersianToolAgent(provider, runner, { AIUsageLimits(historyMessages = 0) })
         agent.start(old + ChatEntry("new", ChatRole.USER, "پیام جدید", 3))
         agent.start(old + ChatEntry("greet", ChatRole.USER, "سلام", 4))
-        assertTrue(transcripts.all { it.size == 2 && it.none { m -> "PRIVATE-OLD" in m.content } })
+        assertEquals(4, transcripts.first().size)
+        assertTrue(transcripts.first().any { "PRIVATE-OLD-MESSAGE" in it.content })
+        assertEquals(2, transcripts.last().size); assertTrue(transcripts.last().none { "PRIVATE-OLD" in it.content })
         val id = requireNotNull(transcripts.last().first().turnId)
         assertFalse(OpenRouterWire.messageJson(transcripts.last().first()).toString().contains(id))
         assertTrue(transcripts.last().first().content.toByteArray().size < 500)

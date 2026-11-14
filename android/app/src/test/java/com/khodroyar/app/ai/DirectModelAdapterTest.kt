@@ -67,25 +67,15 @@ class DirectModelAdapterTest {
         assertTrue(a.infer(m.key, AIModelRequest(withData, emptyList(), 256, false)) is FunctionResult.Failed)
         assertEquals(1, http.requests.count { it.method == "POST" }); assertFalse(http.requests.any { it.body.orEmpty().contains("PRIVATE-REAL") })
     }
-    @Test fun cloudflareRequiresPositiveFreePlanEvidenceAndUsesModelNameNotOpaqueModelUuid() = runBlocking {
-        val http = Http { q -> AiHttpResponse(200, when { q.url.endsWith("subscriptions") -> subscriptions(); q.method == "GET" -> metadata(AiMode.CLOUDFLARE)
-            else -> OpenRouterFixture.completion(model = cfModel) }) }
-        val a = adapter(AiMode.CLOUDFLARE, http); val m = (a.discover(true) as AIModelDiscovery.Found).models.single()
-        assertEquals(cfModel, m.key.id); assertEquals(24000, m.capability.contextLength)
-        assertTrue(a.infer(m.key, AIModelRequest(messages, emptyList(), 128, false)) is FunctionResult.Reply)
-        assertEquals("https://api.cloudflare.com/client/v4/accounts/$account/ai/v1/chat/completions", http.requests.last().url)
-        assertEquals(1, http.requests.count { it.method == "POST" })
-    }
-    @Test fun cloudflarePaidUnknownMissingOrUnreadableSubscriptionsNeverDispatchInference() = runBlocking {
-        for (plans in listOf(subscriptions("Workers Paid"), "{\"success\":true,\"result\":[]}", "{\"success\":false}", subscriptions("unrecognised"), subscriptions(state = "Cancelled"), subscriptions(price = 5))) {
-            val http = Http { AiHttpResponse(200, plans) }; val a = adapter(AiMode.CLOUDFLARE, http)
-            assertTrue(a.discover(true) is AIModelDiscovery.Failed)
-            assertTrue(a.infer(AIModelKey("cloudflare", cfModel), AIModelRequest(messages, emptyList())) is FunctionResult.Failed)
-            assertTrue(http.requests.all { it.method == "GET" })
-        }
+    @Test fun retiredCloudflareCannotMakeMetadataOrInferenceRequestsEvenWithALegacyFreePlan() = runBlocking {
+        val http = Http { error("Retired connection must never dispatch") }
+        val a = adapter(AiMode.CLOUDFLARE, http)
+        assertTrue(a.discover(true) is AIModelDiscovery.Failed)
+        assertTrue(a.infer(AIModelKey("cloudflare", cfModel), AIModelRequest(messages, emptyList())) is FunctionResult.Failed)
+        assertTrue(http.requests.isEmpty())
     }
     @Test fun noConsentUnconfirmedFreePlanUnknownRegionIranAndExpiredPolicySendNothing() = runBlocking {
-        for (mode in listOf(AiMode.GROQ, AiMode.GEMINI, AiMode.CLOUDFLARE)) {
+        for (mode in listOf(AiMode.GROQ, AiMode.GEMINI)) {
             val valid = settings(mode)
             for (s in listOf(valid.copy(consented = false), valid.copy(enabled = false), valid.copy(useRegion = AIUseRegion.UNKNOWN),
                 valid.copy(useRegion = AIUseRegion.IRAN), valid.copy(freeAccountConfirmed = emptySet()), valid.copy(mode = AiMode.LOCAL))) {
@@ -108,7 +98,6 @@ class DirectModelAdapterTest {
             val a = adapter(AiMode.GROQ, http); val m = (a.discover(true) as AIModelDiscovery.Found).models.single()
             val failed = a.infer(m.key, AIModelRequest(messages, emptyList(), 256, false)) as FunctionResult.Failed
             assertEquals(ProviderFailurePolicy.http(code).kind, failed.error.kind); assertFalse(failed.error.message.contains("PRIVATE"))
-            assertTrue(a.infer(m.key, AIModelRequest(messages, emptyList(), 256, false)) is FunctionResult.Failed)
             assertEquals(1, http.requests.count { it.method == "POST" }); assertTrue(http.requests.all { it.url.startsWith("https://api.groq.com/") })
         }
     }
@@ -161,7 +150,7 @@ class DirectModelAdapterTest {
         assertFalse(AIProviderRegistry.permittedEndpoint(AiHttpRequest("https://api.groq.com/openai/v1/models", "POST", emptyMap(), body = "{}")))
     }
     @Test fun allImplementedDirectProvidersParseUsageAndTextFromTheirDocumentedStreamFormats() = runBlocking {
-        for (mode in listOf(AiMode.GROQ, AiMode.GEMINI, AiMode.CLOUDFLARE)) {
+        for (mode in listOf(AiMode.GROQ, AiMode.GEMINI)) {
             val id = settings(mode).modelFor(); val posts = java.util.concurrent.atomic.AtomicInteger()
             val http = object : AiHttpTransport, AiStreamingTransport {
                 override fun execute(q: AiHttpRequest) = AiHttpResponse(200, if (q.url.endsWith("subscriptions")) subscriptions() else metadata(mode))
@@ -187,8 +176,8 @@ class DirectModelAdapterTest {
             assertEquals(12, rt.diagnostics.value.last().actual?.total)
         }
     }
-    @Test fun groqAndCloudflareNativeChangesStillRequireAppOwnedApprovalAndContinueFromToolResults() = runBlocking {
-        for (mode in listOf(AiMode.GROQ, AiMode.CLOUDFLARE)) {
+    @Test fun groqNativeChangesStillRequireAppOwnedApprovalAndContinueFromToolResults() = runBlocking {
+        for (mode in listOf(AiMode.GROQ)) {
             val s = settings(mode); var posts = 0; var writes = 0; val bodies = mutableListOf<String>()
             val http = Http { q -> if (q.method == "GET") AiHttpResponse(200, if (q.url.endsWith("subscriptions")) subscriptions() else metadata(mode)) else {
                 posts++; bodies += requireNotNull(q.body)
@@ -213,12 +202,6 @@ class DirectModelAdapterTest {
             assertTrue(bodies.last().contains("\"tool_call_id\":\"expense_once\""))
             agent.confirm(pending.pending); assertEquals(1, writes); assertEquals(2, posts)
         }
-    }
-    @Test fun aPrefixlessStoredCloudflareKeyIsBlockedIfItAppearsInMessageData() = runBlocking {
-        val http = Http { q -> AiHttpResponse(200, if (q.url.endsWith("subscriptions")) subscriptions() else metadata(AiMode.CLOUDFLARE)) }
-        val a = adapter(AiMode.CLOUDFLARE, http); val m = (a.discover(true) as AIModelDiscovery.Found).models.single()
-        assertTrue(a.infer(m.key, AIModelRequest(listOf(FunctionMessage("user", key(AiMode.CLOUDFLARE))), emptyList())) is FunctionResult.Failed)
-        assertTrue(http.requests.all { it.method == "GET" })
     }
     @Test fun paymentRequiredAndUnverifiedProvidersStayVisibleButHaveNoActiveAdapter() {
         for (mode in listOf(AiMode.CEREBRAS, AiMode.HUGGING_FACE, AiMode.AVALAI)) {

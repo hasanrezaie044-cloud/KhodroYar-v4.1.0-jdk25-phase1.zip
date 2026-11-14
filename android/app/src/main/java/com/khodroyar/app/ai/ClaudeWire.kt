@@ -50,7 +50,9 @@ object ClaudeWire {
                 else -> error("Unknown content block")
             }
         }
-        require(root.getString("stop_reason") in setOf("end_turn", "tool_use", "stop_sequence"))
+        val stop = root.getString("stop_reason")
+        require(stop in setOf("end_turn", "tool_use", "stop_sequence"))
+        require((calls.isNotEmpty()) == (stop == "tool_use"))
         require(calls.map { it.id }.distinct().size == calls.size)
         require(text.isNotBlank() || calls.isNotEmpty())
         return FunctionResult.Reply(FunctionMessage("assistant", text.toString(), calls), selected)
@@ -60,12 +62,16 @@ object ClaudeWire {
 class ClaudeStream(private val selected: String, private val onText: (String) -> Unit) {
     private data class Block(val type: String, val id: String = "", val name: String = "", val initial: String = "{}", val data: StringBuilder = StringBuilder(), var closed: Boolean = false)
     private val blocks = sortedMapOf<Int, Block>(); private val text = StringBuilder()
-    private var identity = ""; private var finish = ""; private var done = false
+    private var identity = ""; private var finish = ""; private var done = false; private var received = 0L
     fun accept(event: String) {
+        received += event.length.toLong()
+        require(received <= PersianAgentLimits.OUTPUT_CHARS) // Parser/heap safety, not output tokens.
         val root = NativeJson.objectValue(event, 1024 * 1024)
         if (root.optString("type") == "ping") return
         require(!done)
-        when (root.getString("type")) {
+        val type = root.getString("type")
+        if (type !in setOf("message_start", "error")) require(identity == selected)
+        when (type) {
             "message_start" -> { require(identity.isBlank()); identity = root.getJSONObject("message").getString("model"); require(identity == selected) }
             "content_block_start" -> {
                 val i = root.getInt("index"); require(i >= 0 && !blocks.containsKey(i))
@@ -95,6 +101,7 @@ class ClaudeStream(private val selected: String, private val onText: (String) ->
         require(done && identity == selected)
         val calls = blocks.values.filter { it.type == "tool_use" }.map { b -> FunctionCall(b.id, b.name, b.data.toString().ifBlank { b.initial }).also(OpenRouterWire::validateCall) }
         require(calls.map { it.id }.distinct().size == calls.size)
+        require((calls.isNotEmpty()) == (finish == "tool_use"))
         require(text.isNotBlank() || calls.isNotEmpty())
         return FunctionResult.Reply(FunctionMessage("assistant", text.toString(), calls), selected)
     }

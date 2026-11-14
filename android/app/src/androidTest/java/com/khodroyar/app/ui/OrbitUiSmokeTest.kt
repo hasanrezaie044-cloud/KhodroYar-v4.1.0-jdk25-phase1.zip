@@ -206,7 +206,7 @@ class OrbitUiSmokeTest {
         compose.onNodeWithText("گفتگوی نو").assertDoesNotExist()
         compose.onNodeWithText("بخش‌های برنامه").assertDoesNotExist()
         compose.onNodeWithTag("ai-options").performClick()
-        compose.onNodeWithText("کارهای خودکار · 0").performClick()
+        compose.onNodeWithText("کارهای خودکار").performClick()
         compose.onNodeWithText("کارهای خودکار من").assertIsDisplayed()
         shot("11-automation-manager")
     }

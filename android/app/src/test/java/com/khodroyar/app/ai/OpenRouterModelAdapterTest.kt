@@ -62,9 +62,11 @@ class OpenRouterModelAdapterTest {
         val tiny = catalog(row()).replace("\"prompt\":\"0\"", "\"prompt\":1e-1000")
         assertFalse(OpenRouterModelMetadata.parse(tiny, tiny, now).first.single().pricing.verifiedFree)
     }
-    @Test fun toolsContextTextOutputDeprecationAndProviderStatusAreIndependentGates() {
-        for (changed in listOf(row().put("supported_parameters", JSONArray(listOf("max_tokens"))), row().put("context_length", 8192),
-            row().put("deprecated", true), row().put("expiration_date", "2000-01-01"),
+    @Test fun textOnlyAndSmallContextModelsAreAllowedButDeprecationTextOutputAndProviderStatusStillMatter() {
+        for (changed in listOf(row().put("supported_parameters", JSONArray(listOf("max_tokens"))), row().put("context_length", 8192))) {
+            assertTrue(AIRequestPolicy.eligibleMetadata(OpenRouterModelMetadata.parse(catalog(changed), catalog(changed), now).first.single(), now))
+        }
+        for (changed in listOf(row().put("deprecated", true), row().put("expiration_date", "2000-01-01"),
             row().put("architecture", JSONObject().put("output_modalities", JSONArray(listOf("image")))))) {
             assertFalse(AIRequestPolicy.eligibleMetadata(OpenRouterModelMetadata.parse(catalog(changed), catalog(changed), now).first.single(), now))
         }
@@ -86,20 +88,17 @@ class OpenRouterModelAdapterTest {
         assertFalse(body.getJSONObject("provider").getBoolean("allow_fallbacks"))
         assertEquals(0, body.getJSONObject("provider").getJSONObject("max_price").getInt("prompt"))
     }
-    @Test fun aLargerRequestedOutputCannotRaiseTheOwnersDefaultCeilingOrDispatchInference() = runBlocking {
+    @Test fun retiredOutputAllowanceCannotRejectOrLowerAnExplicitRequestedMaximum() = runBlocking {
         val http = Http()
-        val failure = adapter(http).infer(AIModelKey("openrouter", f.FREE), query.copy(maxOutputTokens = 1536)) as FunctionResult.Failed
-        assertEquals(AiErrorKind.BAD_REQUEST, failure.error.kind)
-        assertTrue(http.requests.none { it.method == "POST" })
+        assertTrue(adapter(http).infer(AIModelKey("openrouter", f.FREE), query.copy(maxOutputTokens = 1536)) is FunctionResult.Reply)
+        assertEquals(1536, JSONObject(requireNotNull(http.requests.last().body)).getInt("max_tokens"))
     }
-    @Test fun modelContextIsCheckedAgainstTheConservativeInputAndOutputBeforeDispatch() = runBlocking {
-        // Keep metadata eligible (OpenRouter requires >=32768); exercise the request/context guard,
-        // rather than accidentally failing the independent account/model authorization gate first.
+    @Test fun providerOwnsTokenizationAndContextRejectionNotACharactersAsTokensLocalGuess() = runBlocking {
         val http = Http(); http.public = catalog(row().put("context_length", 32768)); http.user = http.public
-        val longQuery = query.copy(messages = listOf(FunctionMessage("user", "a".repeat(32768))))
-        val failure = adapter(http).infer(AIModelKey("openrouter", f.FREE), longQuery) as FunctionResult.Failed
-        assertEquals(AiErrorKind.BAD_REQUEST, failure.error.kind)
-        assertTrue(http.requests.none { it.method == "POST" })
+        val longQuery = query.copy(messages = listOf(FunctionMessage("user", "a".repeat(40000))), maxOutputTokens = null)
+        assertTrue(adapter(http).infer(AIModelKey("openrouter", f.FREE), longQuery) is FunctionResult.Reply)
+        val body = JSONObject(requireNotNull(http.requests.last().body))
+        assertFalse(body.has("max_tokens")); assertEquals(40000, body.getJSONArray("messages").getJSONObject(0).getString("content").length)
     }
     @Test fun minuteCacheExpiresAndAPriceChangeStopsAllFurtherPostsIncludingFormerlyApprovedModel() = runBlocking {
         val http = Http(); val adapter = adapter(http); val key = AIModelKey("openrouter", f.FREE)
@@ -151,12 +150,13 @@ class OpenRouterModelAdapterTest {
         assertTrue(a.infer(key, query) is FunctionResult.Failed)
         assertEquals(1, http.requests.count { it.method == "POST" })
     }
-    @Test fun userScopedCapabilitiesAndContextCannotBeInferredFromThePublicCatalogAlone() {
-        for (user in listOf(row().put("context_length", 8192), row().put("supported_parameters", JSONArray(listOf("tools"))),
-            row().put("architecture", JSONObject().put("output_modalities", JSONArray(listOf("image")))))) {
-            val model = OpenRouterModelMetadata.parse(catalog(row()), catalog(user), now).first.single()
-            assertEquals(AIModelAuthorization.NOT_AUTHORIZED, model.authorization)
-        }
+    @Test fun userScopedCapabilitiesAndContextAreReadWithoutImposingAMinimumOrToolsRequirement() {
+        val small = OpenRouterModelMetadata.parse(catalog(row()), catalog(row().put("context_length", 8192)), now).first.single()
+        assertEquals(AIModelAuthorization.AUTHORIZED, small.authorization); assertEquals(8192, small.capability.contextLength)
+        val textOnly = OpenRouterModelMetadata.parse(catalog(row()), catalog(row().put("supported_parameters", JSONArray(listOf("max_tokens")))), now).first.single()
+        assertEquals(AIModelAuthorization.AUTHORIZED, textOnly.authorization); assertFalse(textOnly.capability.toolCalling)
+        val noText = row().put("architecture", JSONObject().put("output_modalities", JSONArray(listOf("image"))))
+        assertEquals(AIModelAuthorization.NOT_AUTHORIZED, OpenRouterModelMetadata.parse(catalog(row()), catalog(noText), now).first.single().authorization)
     }
     @Test fun cachedPermissionsNeverTransferToANewAccountEvenInsideTheMinuteTtl() = runBlocking {
         var settings = f.settings(); val http = Http(); val a = adapter(http) { settings }

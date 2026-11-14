@@ -19,7 +19,6 @@ class AIModelManagementTest {
         override fun load(scope: String) = values[scope]?.toList().orEmpty()
         override fun save(scope: String, result: AIModelEvaluation) { values.getOrPut(scope) { mutableListOf() }.apply { removeAll { it.key == result.key }; add(result) } }
         override fun reserve(scope: String, now: Long, automatic: Boolean): Boolean {
-            if (total >= 16 || automatic && auto >= 8) return false
             total++; if (automatic) auto++; return true
         }
     }
@@ -160,13 +159,13 @@ class AIModelManagementTest {
         preference = preference.copy(consented = false)
         provider.refresh(true); provider.complete(chat); assertEquals(1, adapter.discoveries); assertTrue(adapter.requests.isEmpty())
     }
-    @Test fun manualEvaluationIsOneModelFourRequestsAndDeferredRetestPreservesReceipts() = runBlocking {
+    @Test fun manualEvaluationIsOneModelFourRequestsPerExplicitRunWithoutADailyAllowance() = runBlocking {
         val adapter = Adapter(); val store = Store(); val provider = managed(adapter, store)
         provider.complete(chat); assertEquals(0, store.auto); assertEquals(0, store.total)
         repeat(4) { provider.refresh(true) }; assertEquals(16, store.total)
-        provider.refresh(true); assertEquals(16, store.total)
+        provider.refresh(true); assertEquals(20, store.total)
         assertEquals(0, store.auto); assertTrue(store.load(preference.scope).all { it.passed })
-        assertEquals(16, adapter.requests.count { isEvaluation(it.second) }); assertEquals(1, adapter.requests.count { !isEvaluation(it.second) })
+        assertEquals(20, adapter.requests.count { isEvaluation(it.second) }); assertEquals(1, adapter.requests.count { !isEvaluation(it.second) })
         assertTrue(adapter.requests.filter { isEvaluation(it.second) }.all { it.second.maxOutputTokens == 384 && !it.second.stream })
     }
     @Test fun aRateLimitDuringExplicitBenchmarkStopsAllRemainingCasesWithoutUserPrompt() = runBlocking {
@@ -238,7 +237,10 @@ class AIModelManagementTest {
             FunctionCall("bad_one", "invented_tool", "{}"), FunctionCall("bad_two", "get_monthly_report", "{\"month\":true}"))), key.id)
             else FunctionResult.Reply(FunctionMessage("assistant", "برای ادامه سؤال روشن‌تری بپرسید؛ چیزی تغییر نکرد."), key.id) }
         val provider = managed(adapter, store)
-        val result = PersianToolAgent(provider, runner).start(listOf(ChatEntry("user", ChatRole.USER, "سؤال ساختگی", now)))
+        val agent = PersianToolAgent(provider, runner)
+        assertTrue(agent.start(listOf(ChatEntry("user", ChatRole.USER, "سؤال ساختگی", now))) is AgentStep.Continue)
+        assertEquals(listOf(keyA), adapter.requests.map { it.first })
+        val result = agent.retry()
         assertTrue(result is AgentStep.Reply); assertEquals(0, executions)
         assertEquals(listOf(keyA, keyB), adapter.requests.map { it.first }); assertEquals(keyB, provider.state.value.active)
         assertFalse(store.load(preference.scope).single { it.key == keyA }.passed)
@@ -255,7 +257,9 @@ class AIModelManagementTest {
             override fun describe(call: ValidatedCall) = ""
             override suspend fun describeTarget(call: ValidatedCall): String? = null
         }
-        val result = PersianToolAgent(managed(adapter, store), runner).start(listOf(ChatEntry("user", ChatRole.USER, "سؤال ساختگی", now)))
+        val agent = PersianToolAgent(managed(adapter, store), runner)
+        assertTrue(agent.start(listOf(ChatEntry("user", ChatRole.USER, "سؤال ساختگی", now))) is AgentStep.Continue)
+        val result = agent.retry()
         assertTrue(result is AgentStep.Failure); assertEquals(listOf(keyA), adapter.requests.map { it.first })
     }
     @Test fun aFailedAutomaticModelDoesNotSilentlyChangeOnTheNextTurnWithoutPermission() = runBlocking {
@@ -264,14 +268,14 @@ class AIModelManagementTest {
         assertTrue(provider.complete(listOf(FunctionMessage("user", "سلام", turnId = "turn-one"))) is FunctionResult.Failed)
         assertEquals(listOf(keyA), adapter.requests.map { it.first })
         assertTrue(provider.complete(listOf(FunctionMessage("user", "سلام دوباره", turnId = "turn-two"))) is FunctionResult.Failed)
-        assertEquals(listOf(keyA), adapter.requests.map { it.first })
-        provider.refresh(); assertNull(provider.state.value.active)
+        assertEquals(listOf(keyA, keyA), adapter.requests.map { it.first })
+        provider.refresh(); assertEquals(keyA, provider.state.value.active)
     }
-    @Test fun turnBudgetAlsoCapsExplicitInferenceFailover() = runBlocking {
+    @Test fun retiredTurnAllowanceCannotOverrideAnExplicitSameProviderFallbackPermission() = runBlocking {
         preference = preference.copy(allowModelFallback = true, usage = AIUsageLimits(requestsPerTurn = 1))
         val adapter = Adapter(); adapter.handler = { _, _ -> FunctionResult.Failed(AiResult.Failure(AiErrorKind.SERVER, "synthetic")) }
         assertTrue(managed(adapter).complete(listOf(FunctionMessage("user", "متن", turnId = "same-turn"))) is FunctionResult.Failed)
-        assertEquals(1, adapter.requests.size)
+        assertEquals(listOf(keyA, keyB), adapter.requests.map { it.first })
     }
     @Test fun manualProviderWithoutModelCanPopulatePickerUsingOnlyMetadata() = runBlocking {
         preference = preference.copy(mode = AISelectionMode.MANUAL, manual = AIModelKey("future-provider", ""))
@@ -300,13 +304,14 @@ class AIModelManagementTest {
             assertTrue(adapter.requests.isEmpty())
         }
     }
-    @Test fun optionalEvaluationCannotRaiseAnOwnersLowerOutputLimit() = runBlocking {
+    @Test fun retiredOutputPreferenceDoesNotBlockOptionalEvaluationOrCapOrdinaryChat() = runBlocking {
         preference = preference.copy(usage = AIUsageLimits(outputTokens = 128))
         val adapter = Adapter(); val provider = managed(adapter)
-        provider.refresh(runTests = true); assertTrue(adapter.requests.isEmpty())
-        assertTrue(provider.state.value.message.orEmpty().contains("۳۸۴"))
+        provider.refresh(runTests = true)
+        assertEquals(4, adapter.requests.count { isEvaluation(it.second) })
+        assertTrue(adapter.requests.all { it.second.maxOutputTokens == 384 }) // disclosed synthetic fixture maximum only.
         assertTrue(provider.complete(chat) is FunctionResult.Reply)
-        assertEquals(128, adapter.requests.single().second.maxOutputTokens)
+        assertNull(adapter.requests.last().second.maxOutputTokens)
     }
     @Test fun healthMonitorUsesOnlyBoundedViolationsAndCanBeResetAfterASuccessfulEvaluation() {
         val health = AIModelHealthMonitor()

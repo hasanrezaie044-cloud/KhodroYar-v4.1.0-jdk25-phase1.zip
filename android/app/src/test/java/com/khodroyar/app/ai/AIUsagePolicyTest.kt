@@ -4,18 +4,18 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.runBlocking
+import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.*
 import org.junit.Test
 import java.io.IOException
 import java.net.SocketTimeoutException
 
-/** No account/key/network: deterministic request reservations and failure/usage fixtures only. */
+/** Mock transport only: accounting must never turn back into an app quota or implicit retry engine. */
 class AIUsagePolicyTest {
     private var now = 1_794_268_800_000L
-    private val post = "https://api.groq.com/openai/v1/chat/completions"
-    private fun request(text: String = "سلام", output: Int = 128) = AiHttpRequest(post, "POST", emptyMap(), JSONObject()
-        .put("model", "openai/gpt-oss-20b").put("messages", org.json.JSONArray().put(JSONObject().put("role", "user").put("content", text)))
+    private fun request(text: String = "سلام", output: Int? = null) = AiHttpRequest("https://api.groq.com/openai/v1/chat/completions", "POST", emptyMap(), JSONObject()
+        .put("model", "openai/gpt-oss-20b").put("messages", JSONArray().put(JSONObject().put("role", "user").put("content", text)))
         .put("max_completion_tokens", output).toString())
     private class Http : AiHttpTransport {
         var calls = 0; var status = 200; var body = "{}"; var problem: Exception? = null
@@ -26,138 +26,129 @@ class AIUsagePolicyTest {
     }
     private fun runtime(http: AiHttpTransport, store: AIUsageStore = MemoryAIUsageStore(), limits: AIUsageLimits = AIUsageLimits(), scope: () -> String = { "account" }) =
         AIRequestRuntime(http, { limits }, scope, store, { now })
-    private suspend fun rejected(runtime: AIRequestRuntime, request: AiHttpRequest = request()): AiResult.Failure {
-        try { runtime.send("groq", request); fail("Dispatch must be rejected") } catch (e: AIRequestRejected) { return e.failure }
-        error("Unreachable")
-    }
 
-    @Test fun reservesBeforeDispatchAndRecordsEstimateActualUsageLatencyAndBoundedHeaders() = runBlocking {
+    @Test fun recordsBytesActualTokensLatencyAndOnlyAllowlistedQuotaHeadersWithoutReservingTokens() = runBlocking {
         val http = Http().apply { body = """{"usage":{"prompt_tokens":25,"completion_tokens":7,"total_tokens":32}}""" }
-        val store = MemoryAIUsageStore(); val rt = runtime(http, store); val q = request()
+        val store = MemoryAIUsageStore(); val rt = runtime(http, store); val q = request(output = 128)
         rt.send("groq", q)
-        val expected = requireNotNull(q.body).toByteArray(Charsets.UTF_8).size + 128
-        assertEquals(1, store.read().requests); assertEquals((expected + 128).toLong(), store.read().reservedTokens)
+        assertEquals(1, store.read().requests); assertEquals(0L, store.read().reservedTokens); assertEquals(32L, store.read().actualTokens)
         val d = rt.diagnostics.value.single()
-        assertEquals(expected, d.estimatedInput); assertEquals(128, d.outputLimit); assertEquals(AIUsage(25, 7, 32), d.actual)
+        assertEquals(requireNotNull(q.body).toByteArray().size, d.estimatedInput); assertEquals(128, d.outputLimit); assertEquals(AIUsage(25, 7, 32), d.actual)
         assertEquals(19, d.remainingRequests); assertEquals(7000, d.remainingTokens); assertTrue(d.dispatched); assertEquals(200, d.httpStatus)
         assertEquals("openai/gpt-oss-20b", d.model); assertFalse(d.metadata); assertEquals(0L, d.elapsedMs)
     }
-    @Test fun inputAndOutputCeilingsRejectBeforeDispatchOrReservation() = runBlocking {
-        val http = Http(); val rt = runtime(http, limits = AIUsageLimits(inputTokens = 1000, outputTokens = 128))
-        assertEquals(AiErrorKind.BAD_REQUEST, rejected(rt, request("الف".repeat(600))).kind)
-        assertEquals(AiErrorKind.BAD_REQUEST, rejected(rt, request(output = 129)).kind)
-        assertEquals(0, http.calls); assertEquals(0, rt.ledger().requests)
-        assertTrue(rt.diagnostics.value.all { !it.dispatched })
+    @Test fun retiredInputAndOutputPreferencesCannotRejectOrTruncateARequest() = runBlocking {
+        val http = Http(); val rt = runtime(http, limits = AIUsageLimits(inputTokens = 1, outputTokens = 1))
+        rt.send("groq", request("الف".repeat(20_000), 65536))
+        rt.send("groq", request("پیام بعدی"))
+        assertEquals(2, http.calls); assertTrue(rt.diagnostics.value.all { it.dispatched })
+        assertEquals(0, rt.diagnostics.value.last().outputLimit)
     }
-    @Test fun dailyRequestBudgetSurvivesRuntimeRestartAndProviderAccountChange() = runBlocking {
-        val store = MemoryAIUsageStore(); val http = Http(); val limits = AIUsageLimits(requestsPerDay = 1)
-        runtime(http, store, limits).send("groq", request())
-        val restarted = runtime(http, store, limits, { "a-different-owner-selected-account" })
-        assertEquals(AiErrorKind.RATE_LIMITED, rejected(restarted).kind)
-        assertEquals(1, http.calls); assertEquals(1, store.read().requests)
+    @Test fun dailyRequestAndMinuteGatesDoNotReappearAcrossRestartsOrAccounts() = runBlocking {
+        val store = MemoryAIUsageStore(); val http = Http(); val limits = AIUsageLimits(requestsPerDay = 1, requestsPerTurn = 1)
+        repeat(45) { runtime(http, store, limits, { "owner-$it" }).send("groq", request()) }
+        assertEquals(45, http.calls); assertEquals(45, store.read().requests)
     }
-    @Test fun conservativeDailyTokensAreChargedForFailuresAndNeverRefunded() = runBlocking {
+    @Test fun failedRequestsAreCountedButNeverCreateAnArtificialTokenBalance() = runBlocking {
         val store = MemoryAIUsageStore(); val http = Http().apply { status = 503 }
-        val rt = runtime(http, store, AIUsageLimits(tokensPerDay = 1000))
-        rt.send("groq", request("a".repeat(500)))
-        assertTrue(store.read().reservedTokens > 700)
-        assertEquals(AiErrorKind.RATE_LIMITED, rejected(rt).kind); assertEquals(1, http.calls)
+        val rt = runtime(http, store, AIUsageLimits(tokensPerDay = 1))
+        repeat(3) { assertEquals(503, rt.send("groq", request("a".repeat(5000))).status) }
+        assertEquals(3, http.calls); assertEquals(0L, store.read().reservedTokens); assertEquals(0L, store.read().actualTokens)
     }
-    @Test fun httpAuthenticationBillingQuotaAndRegionFailuresBlockMoreHttpWithoutRetries() = runBlocking {
+    @Test fun hardProviderFailuresMakeExactlyOneAttemptAndDoNotCreateAnAppRateLimitForNewExplicitActions() = runBlocking {
         for ((code, kind) in listOf(401 to AiErrorKind.UNAUTHORIZED, 402 to AiErrorKind.CREDIT_EXHAUSTED,
             403 to AiErrorKind.GUARDRAIL_REJECTED, 451 to AiErrorKind.GUARDRAIL_REJECTED, 429 to AiErrorKind.RATE_LIMITED)) {
             val store = MemoryAIUsageStore(); val http = Http().apply { status = code }; val rt = runtime(http, store)
-            rt.send("groq", request()); assertEquals(kind, rt.diagnostics.value.single().error)
-            assertEquals(kind, rejected(runtime(http, store)).kind)
-            val metadata = AiHttpRequest("https://api.groq.com/openai/v1/models", "GET", emptyMap())
-            assertEquals(kind, rejected(rt, metadata).kind); assertEquals(1, http.calls)
+            rt.send("groq", request()); assertEquals(1, http.calls); assertEquals(kind, rt.diagnostics.value.single().error)
+            assertFalse(rt.ledger().permitsBackgroundMetadata("account"))
+            http.status = 200
+            runtime(http, store).send("groq", request("درخواست صریح تازه"))
+            assertEquals(2, http.calls)
         }
     }
-    @Test fun periodicMetadataCannotRetryAHardFailureEvenAfterCooldownDayRolloverAndRestart() = runBlocking {
+    @Test fun periodicMetadataCannotRetryAHardFailureAfterClockRolloverOrRestart() = runBlocking {
         for (code in listOf(401, 402, 403, 451, 429)) {
             val store = MemoryAIUsageStore(); val http = Http().apply { status = code }
-            runtime(http, store).send("groq", request())
-            now += 86400000
-            val restarted = runtime(http, store)
-            assertFalse(restarted.ledger().permitsBackgroundMetadata("account"))
-            assertTrue(restarted.ledger().permitsBackgroundMetadata("explicitly-reconfigured-account"))
-            if (restarted.ledger().permitsBackgroundMetadata("account"))
-                restarted.send("groq", AiHttpRequest("https://api.groq.com/openai/v1/models", "GET", emptyMap()))
-            assertEquals(1, http.calls)
+            runtime(http, store).send("groq", request()); now += 86400000
+            assertFalse(runtime(http, store).ledger().permitsBackgroundMetadata("account"))
+            assertTrue(store.read().permitsBackgroundMetadata("explicit-new-account")); assertEquals(1, http.calls)
         }
-        assertTrue(AIUsageLedger().permitsBackgroundMetadata("account"))
     }
-    @Test fun retryAfterDoesNotScheduleARetryButAllowsLaterExplicitUserRequest() = runBlocking {
-        val store = MemoryAIUsageStore(); val http = Http().apply { status = 429 }; val rt = runtime(http, store)
-        rt.send("groq", request()); now += 119000
-        rejected(rt); assertEquals(1, http.calls)
-        now += 1000; http.status = 200; rt.send("groq", request()); assertEquals(2, http.calls)
+    @Test fun retryAfterIsProviderEvidenceNotAnAppTimerOrAutomaticRetry() = runBlocking {
+        val http = Http().apply { status = 429 }; val rt = runtime(http)
+        rt.send("groq", request()); assertEquals(1, http.calls)
+        assertEquals(120, ProviderFailurePolicy.http(429, "120").retryAfterSec)
+        now += 86400000; assertEquals(1, http.calls)
+        http.status = 200; rt.send("groq", request()); assertEquals(2, http.calls)
     }
-    @Test fun transportFailuresConsumeOneReservationAndAreNeverRetried() = runBlocking {
-        for (error in listOf(IOException("do not expose raw private content"), SocketTimeoutException("private"))) {
+    @Test fun transportFailuresNeverRetryOrLeakRawExceptions() = runBlocking {
+        for (error in listOf(IOException("RAW PRIVATE DATA"), SocketTimeoutException("RAW PRIVATE DATA"))) {
             val http = Http().apply { problem = error }; val rt = runtime(http)
             try { rt.send("groq", request()); fail("Must fail") } catch (_: IOException) { }
             assertEquals(1, http.calls); assertEquals(1, rt.ledger().requests)
             assertEquals(if (error is SocketTimeoutException) AiErrorKind.TIMEOUT else AiErrorKind.OFFLINE, rt.diagnostics.value.single().error)
-            assertFalse(rt.diagnostics.value.toString().contains("private"))
+            assertFalse(rt.diagnostics.value.toString().contains("PRIVATE"))
         }
     }
-    @Test fun metadataNeverConsumesInferenceTokenBudgetButHasItsOwnHttpCountAndRateCap() = runBlocking {
+    @Test fun metadataAndInferenceHaveNoLocalHttpRateCap() = runBlocking {
         val http = Http(); val rt = runtime(http)
-        repeat(12) { rt.send("groq", AiHttpRequest("https://api.groq.com/openai/v1/models", "GET", emptyMap())) }
-        assertEquals(0, rt.ledger().requests); assertEquals(0L, rt.ledger().reservedTokens); assertEquals(12, rt.ledger().metadataRequests)
-        assertEquals(AiErrorKind.RATE_LIMITED, rejected(rt).kind); assertEquals(12, http.calls)
-        now += 60000; rt.send("groq", request()); assertEquals(13, http.calls)
+        repeat(40) { rt.send("groq", AiHttpRequest("https://api.groq.com/openai/v1/models", "GET", emptyMap())) }
+        rt.send("groq", request())
+        assertEquals(41, http.calls); assertEquals(40, rt.ledger().metadataRequests); assertEquals(1, rt.ledger().requests)
     }
-    @Test fun backwardsClockCannotResetBudgetsAndNextUtcDayDoesResetDailyCounts() = runBlocking {
-        val store = MemoryAIUsageStore(); val http = Http(); val rt = runtime(http, store, AIUsageLimits(requestsPerDay = 1))
-        rt.send("groq", request()); now -= 86400000
-        assertEquals(AiErrorKind.RATE_LIMITED, rejected(rt).kind); assertEquals(1, http.calls)
-        now += 2 * 86400000; rt.send("groq", request()); assertEquals(1, store.read().requests); assertEquals(2, http.calls)
+    @Test fun backwardsClockDoesNotBlockNewMessagesAndCountersAreLabelledByUtcDay() = runBlocking {
+        val http = Http(); val rt = runtime(http, limits = AIUsageLimits(requestsPerDay = 1))
+        rt.send("groq", request()); now -= 86400000; rt.send("groq", request())
+        now += 2 * 86400000; rt.send("groq", request())
+        assertEquals(3, http.calls); assertEquals(1, rt.ledger().requests)
     }
-    @Test fun concurrentRuntimesCannotRaceInstallWideReservations() = runBlocking {
+    @Test fun concurrentExplicitRuntimesAreAccountedWithoutAHiddenSharedAllowance() = runBlocking {
         val store = MemoryAIUsageStore(); val calls = java.util.concurrent.atomic.AtomicInteger()
         val http = AiHttpTransport { calls.incrementAndGet(); AiHttpResponse(200, "{}") }
-        val limit = AIUsageLimits(requestsPerDay = 1)
-        coroutineScope { (1..12).map { async { try { runtime(http, store, limit).send("groq", request()); true } catch (_: AIRequestRejected) { false } } }.awaitAll() }
-        assertEquals(1, calls.get()); assertEquals(1, store.read().requests)
+        coroutineScope { (1..20).map { async { runtime(http, store, AIUsageLimits(requestsPerDay = 1)).send("groq", request()) } }.awaitAll() }
+        assertEquals(20, calls.get()); assertEquals(20, store.read().requests)
     }
-    @Test fun streamQuotaErrorIsDurablyBlockedAndFinalUsageCanBeReadWithoutTextRetention() = runBlocking {
+    @Test fun streamQuotaErrorStopsThatFlightSuppressesBackgroundAndKeepsNoRawData() = runBlocking {
         val calls = java.util.concurrent.atomic.AtomicInteger()
         val http = object : AiHttpTransport, AiStreamingTransport {
             override fun execute(request: AiHttpRequest) = error("Only stream expected")
             override fun stream(request: AiHttpRequest, onEvent: (String) -> Unit): AiHttpResponse {
-                calls.incrementAndGet(); onEvent("""{"error":{"code":429,"message":"RAW-PRIVATE-ERROR"}}""")
+                calls.incrementAndGet(); onEvent("""{"error":{"code":429,"message":"RAW PRIVATE DATA"}}""")
                 return AiHttpResponse(200, "")
             }
         }
-        val store = MemoryAIUsageStore(); val rt = runtime(http, store)
-        try { rt.send("groq", request()) { }; fail("Stream must stop") } catch (e: OpenRouterReplyFailure) { assertEquals(AiErrorKind.RATE_LIMITED, e.failure.kind) }
-        assertEquals(AiErrorKind.RATE_LIMITED, rt.diagnostics.value.single().error)
-        rejected(runtime(http, store)); assertEquals(1, calls.get()); assertFalse(rt.diagnostics.value.toString().contains("PRIVATE"))
+        val rt = runtime(http)
+        try { rt.send("groq", request()) { }; fail("Must stop") } catch (e: OpenRouterReplyFailure) { assertEquals(AiErrorKind.RATE_LIMITED, e.failure.kind) }
+        assertEquals(1, calls.get()); assertFalse(rt.ledger().permitsBackgroundMetadata("account"))
+        assertFalse(rt.diagnostics.value.toString().contains("PRIVATE"))
     }
-    @Test fun actualUsageSupportsGeminiAndGroqButNeverInventsFractionalNegativeOrMissingUsage() {
+    @Test fun usageSupportsGeminiGroqAndAnthropicWithoutInventingMissingOrMalformedNumbers() {
         assertEquals(AIUsage(20, 3, 24), AIUsage.from(JSONObject("""{"usageMetadata":{"promptTokenCount":20,"candidatesTokenCount":3,"totalTokenCount":24}}""")))
         assertEquals(AIUsage(2, 5, 7), AIUsage.from(JSONObject("""{"x_groq":{"usage":{"prompt_tokens":2,"completion_tokens":5}}}""")))
+        assertEquals(AIUsage(20, 0, 20), AIUsage.from(JSONObject("""{"message":{"usage":{"input_tokens":20,"output_tokens":0}}}""")))
         assertNull(AIUsage.from(JSONObject("{}")))
         assertNull(AIUsage.from(JSONObject("""{"usage":{"prompt_tokens":-1,"completion_tokens":0.5,"total_tokens":1000000000}}""")))
     }
-    @Test fun providerReportedOverrunStopsFurtherRequestsAndIsNeverRefusedFromDiagnostics() = runBlocking {
+    @Test fun actualProviderUsageAboveRetiredOutputPreferencesIsRecordedNotRejected() = runBlocking {
         val http = Http().apply { body = """{"usage":{"prompt_tokens":300,"completion_tokens":1000,"total_tokens":1300}}""" }
-        val rt = runtime(http)
-        try { rt.send("groq", request()); fail("Overrun cannot produce an executable reply") }
-        catch (e: OpenRouterReplyFailure) { assertEquals(AiErrorKind.GUARDRAIL_REJECTED, e.failure.kind) }
-        assertTrue(rt.ledger().reservedTokens >= 1300)
-        assertEquals(AiErrorKind.GUARDRAIL_REJECTED, rt.diagnostics.value.single().error)
-        assertEquals(1300, rt.diagnostics.value.single().actual?.total)
-        assertEquals(AiErrorKind.GUARDRAIL_REJECTED, rejected(rt).kind); assertEquals(1, http.calls)
+        val rt = runtime(http, limits = AIUsageLimits(outputTokens = 128, tokensPerDay = 1))
+        repeat(2) { assertEquals(200, rt.send("groq", request()).status) }
+        assertEquals(2600L, rt.ledger().actualTokens); assertTrue(rt.diagnostics.value.all { it.error == null && it.actual?.total == 1300 })
     }
-    @Test fun diagnosticsAreBoundedAndWireErrorsCanBeAnnotatedWithoutRecordingBodies() = runBlocking {
-        val rt = runtime(Http(), limits = AIUsageLimits(requestsPerDay = 100, tokensPerDay = 200000))
-        repeat(35) { now += 60000; rt.send("groq", request()) }
+    @Test fun diagnosticsAreMemoryBoundedAndContainNoMessagesImagesOrCredentials() = runBlocking {
+        val rt = runtime(Http())
+        repeat(35) { rt.send("groq", request("PRIVATE USER MESSAGE")) }
         assertEquals(30, rt.diagnostics.value.size)
         rt.annotateFailure("groq", AiErrorKind.MODEL_INVALID)
         assertEquals(AiErrorKind.MODEL_INVALID, rt.diagnostics.value.last().error)
-        assertFalse(rt.diagnostics.value.toString().contains("سلام"))
+        assertFalse(rt.diagnostics.value.toString().contains("PRIVATE"))
+    }
+    @Test fun nativeProviderCreditCodesAreHardFailuresEvenWhenHttpUses400Or429() {
+        for ((code, body) in listOf(400 to """{"error":{"type":"invalid_request_error","message":"Your credit balance is too low. RAW PRIVATE"}}""",
+            429 to """{"error":{"code":"insufficient_quota","message":"RAW PRIVATE"}}""")) {
+            val error = ProviderFailurePolicy.response(AiHttpResponse(code, body))
+            assertEquals(AiErrorKind.CREDIT_EXHAUSTED, error.kind); assertTrue(error.kind in ProviderFailurePolicy.NEVER_RETRY)
+            assertFalse(error.message.contains("PRIVATE"))
+        }
     }
 }

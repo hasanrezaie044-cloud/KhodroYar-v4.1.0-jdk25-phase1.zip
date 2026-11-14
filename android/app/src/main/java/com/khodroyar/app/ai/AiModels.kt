@@ -62,6 +62,8 @@ data class Conversation(
     val mode: AiMode = AiMode.ONLINE,
     /** Legacy histories without a scope are view-only, never silently reused with a new key. */
     val accountScope: String = "",
+    /** Earlier visible messages belong to a different connection/key and are never sent implicitly. */
+    val contextStart: Int = 0,
 )
 
 object AiLimits {

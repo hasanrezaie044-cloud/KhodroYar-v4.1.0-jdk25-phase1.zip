@@ -18,6 +18,8 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import java.util.UUID
 import kotlin.coroutines.coroutineContext
 
@@ -112,7 +114,9 @@ class AiAssistantViewModel @JvmOverloads constructor(
     private var queuedText: String? = null
     private var queuedTest = false
     private var queuedManualTest = false
-    private var foreignHistory = false
+    private var contextStart = 0
+    /** Serializes image creation/ownership, saves and pruning: no newly imported image can be pruned in flight. */
+    private val storageLock = Mutex()
     private var job: Job? = null
     private var historySave: Job? = null
     private var historySaveConversationId: String? = null
@@ -136,7 +140,7 @@ class AiAssistantViewModel @JvmOverloads constructor(
         if (busy || savingSettings || imageLoading || executingAction) { if (fromCamera) imageStore.discardCamera(uri); return }
         imageLoading = true
         viewModelScope.launch {
-            try { val image = imageStore.prepare(uri); draftImage = image; pruneImages() }
+            try { storageLock.withLock { draftImage = imageStore.prepare(uri) }; pruneImages() }
             catch (e: CancellationException) { throw e }
             catch (_: Exception) { failure = AiResult.Failure(AiErrorKind.BAD_REQUEST, "تصویر باز نشد؛ JPG، PNG یا WebP انتخاب کنید.") }
             finally { if (fromCamera) imageStore.discardCamera(uri); imageLoading = false }
@@ -150,9 +154,11 @@ class AiAssistantViewModel @JvmOverloads constructor(
     }
     private fun pruneImages() {
         viewModelScope.launch {
-            val saved = conversations.load().flatMap { it.messages }.mapNotNull { it.image }
-            val retained = (saved + messages.mapNotNull { it.image } + listOfNotNull(draftImage)).toSet()
-            withContext(Dispatchers.IO) { imageStore.prune(retained) }
+            storageLock.withLock {
+                val saved = conversations.load().flatMap { it.messages }.mapNotNull { it.image }
+                val retained = (saved + messages.mapNotNull { it.image } + listOfNotNull(draftImage)).toSet()
+                withContext(Dispatchers.IO) { imageStore.prune(retained) }
+            }
         }
     }
     fun selectChatProvider(mode: AiMode, afterSave: () -> Unit = {}) {
@@ -274,7 +280,7 @@ class AiAssistantViewModel @JvmOverloads constructor(
         keyRevision++
         statusJob?.cancel(); testJob?.cancel(); stop()
         if (changed) {
-            settingsStore.save(settings.copy(consented = false)); settings = settingsStore.load(); newChat()
+            settingsStore.save(settings.copy(consented = false)); settings = settingsStore.load()
         }
         savingSettings = true
         viewModelScope.launch {
@@ -300,10 +306,13 @@ class AiAssistantViewModel @JvmOverloads constructor(
         val newAccount = new.mode != settings.mode || forceNewConsent || new.cloudflareAccountId != settings.cloudflareAccountId
         val changed = newAccount || new.modelFor() != settings.modelFor() || new.modelSelectionMode != settings.modelSelectionMode || new.usage != settings.usage
         if (!new.usage.saveHistory) historySave?.cancel()
-        if (newAccount) newChat() else if (changed || !new.enabled) { stop(); pending = null; local.dialogue.reset(); localContext = local.dialogue.context }
+        if (newAccount || changed || !new.enabled) { stop(); pending = null; local.dialogue.reset(); localContext = local.dialogue.context }
+        // Keep the local transcript and both drafts. Only context permission is reset, not the conversation.
+        if (newAccount) contextStart = messages.size
         testJob?.cancel(); statusJob?.cancel()
         settingsStore.save(new.copy(consented = !newAccount && new.consented, modelAccountScope = if (newAccount && !forceNewConsent) UUID.randomUUID().toString() else new.modelAccountScope))
         settings = settingsStore.load(); managedModels.invalidate(); AIModelCatalogScheduler.sync(getApplication())
+        if (newAccount) persist()
         needsConsent = false; queuedText = null; queuedTest = false; queuedManualTest = false; testMessage = null; failure = null
         refreshStatus()
     }
@@ -374,7 +383,6 @@ class AiAssistantViewModel @JvmOverloads constructor(
         if (draftImage != null && modelState.models.firstOrNull { it.model.key.id == (modelState.active?.id ?: settings.modelFor()) }?.model?.capability?.imageInput == false) {
             failure = AiResult.Failure(AiErrorKind.MODEL_INVALID, "این مدل تصویر نمی‌پذیرد؛ مدل تصویری انتخاب کنید."); return false
         }
-        if (foreignHistory) { newChat(); foreignHistory = false }
         if (settings.mode != AiMode.LOCAL && !settings.consented) {
             queuedTest = false; queuedManualTest = false
             queuedText = text
@@ -413,6 +421,11 @@ class AiAssistantViewModel @JvmOverloads constructor(
             is AgentStep.Confirm -> { pendingFromAgent = settings.mode != AiMode.LOCAL; if (step.pending.lead.isNotBlank()) add(ChatRole.ASSISTANT, step.pending.lead); pending = step.pending }
             is AgentStep.Failure -> {
                 failure = step.error
+                // A failed provider send is still visible in chat; keep its editable draft as well.
+                messages.lastOrNull { it.role == ChatRole.USER }?.let { last ->
+                    if (draftText.isBlank()) draftText = last.text
+                    if (draftImage == null) draftImage = last.image
+                }
                 connection = when (step.error.kind) {
                     AiErrorKind.OFFLINE, AiErrorKind.TIMEOUT -> ConnectionState.OFFLINE
                     AiErrorKind.NOT_CONFIGURED -> ConnectionState.NOT_CONFIGURED
@@ -424,7 +437,7 @@ class AiAssistantViewModel @JvmOverloads constructor(
     }
     private fun runAgent(retrying: Boolean = false) {
         busy = true; streamingText = ""; canContinue = false
-        val run = ++generation; val mode = settings.mode; val snapshot = messages.toList()
+        val run = ++generation; val mode = settings.mode; val snapshot = messages.drop(contextStart.coerceIn(0, messages.size))
         job = viewModelScope.launch {
             try {
                 val step = if (mode == AiMode.LOCAL) local.run(snapshot.last().text)
@@ -494,10 +507,9 @@ class AiAssistantViewModel @JvmOverloads constructor(
     private fun persist() {
         if (messages.isEmpty() || !settings.usage.saveHistory) return
         val title = messages.firstOrNull { it.role == ChatRole.USER }?.text?.take(40)?.ifBlank { "تصویر" } ?: "گفتگو"
-        val convo = Conversation(conversationId, title, createdAt, System.currentTimeMillis(), messages.toList(), settings.mode, settings.modelAccountScope)
-        historySave?.cancel()
+        val convo = Conversation(conversationId, title, createdAt, System.currentTimeMillis(), messages.toList(), settings.mode, settings.modelAccountScope, contextStart)
         historySaveConversationId = convo.id
-        historySave = viewModelScope.launch { conversations.save(convo) }
+        historySave = viewModelScope.launch { storageLock.withLock { if (settings.usage.saveHistory) conversations.save(convo) } }
     }
 
     fun newChat() {
@@ -509,9 +521,10 @@ class AiAssistantViewModel @JvmOverloads constructor(
         pending = null
         failure = null
         declineConsent()
-        messages.clear(); foreignHistory = false
+        messages.clear(); contextStart = 0
         conversationId = UUID.randomUUID().toString()
         createdAt = System.currentTimeMillis()
+        pruneImages()
     }
 
     /** Device-local management UI: no model/network round-trip, still uses the approval gate. */
@@ -551,20 +564,23 @@ class AiAssistantViewModel @JvmOverloads constructor(
         if (executingAction) return
         newChat()
         messages.addAll(c.messages.map { it.copy(text = safeText(it.text)) })
+        conversationId = c.id; createdAt = c.createdAt
+        contextStart = c.contextStart.coerceIn(0, messages.size)
         if (c.mode != settings.mode || c.accountScope != settings.modelAccountScope) {
-            foreignHistory = true
+            contextStart = messages.size
             settingsStore.save(settings.copy(consented = false)); settings = settingsStore.load(); refreshStatus()
-            // Viewing old history never changes providers or authorises a request. New sends fork it.
-        } else { conversationId = c.id; createdAt = c.createdAt }
+            // Foreign history remains visible but is not automatically sent to a new connection/key.
+        }
     }
 
     fun deleteConversation(c: Conversation) {
         if (executingAction) return
-        if (c.id == historySaveConversationId) historySave?.cancel()
+        if (c.id == conversationId) newChat()
         viewModelScope.launch {
-            conversations.delete(c.id)
-            if (c.id == conversationId) newChat()
-            history = conversations.load().sortedByDescending { it.updatedAt }
+            storageLock.withLock {
+                conversations.delete(c.id)
+                history = conversations.load().sortedByDescending { it.updatedAt }
+            }
             pruneImages()
         }
     }
@@ -572,12 +588,10 @@ class AiAssistantViewModel @JvmOverloads constructor(
     /** Wipes chat history only; never financial/vehicle records. */
     fun clearAllHistory() {
         if (executingAction) return
-        historySave?.cancel()
         newChat()
         viewModelScope.launch {
-            conversations.clearAll()
-            history = emptyList()
-            newChat(); pruneImages()
+            storageLock.withLock { conversations.clearAll(); history = emptyList() }
+            pruneImages()
         }
     }
 }

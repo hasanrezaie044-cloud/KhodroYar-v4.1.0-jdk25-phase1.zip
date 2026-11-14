@@ -89,7 +89,7 @@ fun AiAssistantScreen(vm: AiAssistantViewModel = viewModel(), onNavigate: (Agent
             if (lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) vm.refreshModels(explicit = false)
         }
     }
-    LaunchedEffect(showSettings) { if (showSettings) vm.refreshModels() }
+    LaunchedEffect(showSettings) { if (showSettings) vm.refreshModels(explicit = false) }
     LaunchedEffect(vm.modelState.notice) { vm.modelState.notice?.let { toast.show(it); vm.dismissModelNotice() } }
     val extraRows = (if (vm.streamingText.isNotBlank()) 1 else 0) + (if (vm.pending != null) 1 else 0) + (if (vm.busy) 1 else 0) + (if (vm.canContinue) 1 else 0)
     LaunchedEffect(vm.messages.size, extraRows, vm.streamingText.length / 120) {
@@ -103,7 +103,7 @@ fun AiAssistantScreen(vm: AiAssistantViewModel = viewModel(), onNavigate: (Agent
     fun settingsFromPanel() { showModels = false; showMenu = false; showSettings = true }
 
     Column(Modifier.fillMaxSize().imePadding().testTag("ai-agent-screen")) {
-        CompactAssistantBar(vm, onBack, onModels = { showModels = true; vm.refreshModels() }, onOptions = { showMenu = true })
+        CompactAssistantBar(vm, onBack, onModels = { showModels = true; vm.refreshModels(explicit = false) }, onOptions = { showMenu = true })
         if (settings.mode == AiMode.LOCAL) AgentDraftBar(vm.localContext, onCancel = { if (vm.pending != null) vm.cancelPending() else vm.send("لغو") })
         Box(Modifier.weight(1f).fillMaxWidth()) {
             when {
@@ -129,7 +129,7 @@ fun AiAssistantScreen(vm: AiAssistantViewModel = viewModel(), onNavigate: (Agent
         }
         vm.failure?.let { f ->
             ChatFailureNotice(settings.mode, f, !vm.networkBusy, vm::retry,
-                onModel = { showModels = true; vm.refreshModels() }, onDismiss = vm::dismissFailure)
+                onModel = { showModels = true; vm.refreshModels(explicit = false) }, onDismiss = vm::dismissFailure)
         }
         if (settings.mode == AiMode.LOCAL) AgentSuggestions(vm.localContext.suggestions,
             enabled = settings.enabled && !vm.busy && !vm.savingSettings, onPick = vm::send)

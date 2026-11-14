@@ -46,7 +46,7 @@ class OpenRouterClient(
     }
     private fun checkHttp(response: AiHttpResponse) {
         if (response.status == 200) return
-        val failure = OpenRouterFreePolicy.error(response.status, response.retryAfter)
+        val failure = ProviderFailurePolicy.response(response)
         throw SafeFailure(failure)
     }
     private fun headers(key: String) = mapOf("Authorization" to "Bearer $key", "Content-Type" to "application/json", "Accept" to "application/json, text/event-stream")

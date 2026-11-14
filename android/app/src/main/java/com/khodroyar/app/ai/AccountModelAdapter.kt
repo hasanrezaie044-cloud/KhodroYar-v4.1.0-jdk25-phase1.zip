@@ -105,12 +105,25 @@ class AccountModelAdapter(
                 row.optString("state") != "READY" || row.optJSONObject("conversationConfig") == null)) return null
         val context = row.optInt("max_input_tokens", row.optInt("contextLength", row.optInt("context_length", 0))).coerceAtLeast(0)
         val maxOutput = row.optInt("max_tokens", 0).takeIf { it > 0 }
-        val vision = row.optJSONObject("capabilities")?.optJSONObject("image_input")?.optBoolean("supported", false) == true ||
-            row.optBoolean("supportsImageInput", false) ||
-            mode == AiMode.GPT && listOf("gpt-4o", "gpt-4.1", "gpt-5").any { id.startsWith(it) }
-        val tools = mode != AiMode.FIREWORKS || row.optBoolean("supportsTools", false)
+        val vision = when (mode) {
+            AiMode.CLAUDE -> row.optJSONObject("capabilities")?.optJSONObject("image_input")?.optBoolean("supported", false) == true
+            AiMode.FIREWORKS -> row.optBoolean("supportsImageInput", false)
+            else -> id in OpenAIResponseIdentities.visionModels
+        }
+        // Anthropic's native Messages tool protocol covers its active catalogue; server_tools is
+        // NOT used as evidence for local tools. OpenAI capabilities use exact documented IDs.
+        val tools = when (mode) {
+            AiMode.CLAUDE -> true
+            AiMode.FIREWORKS -> row.optBoolean("supportsTools", false)
+            else -> id in OpenAIResponseIdentities.toolModels
+        }
+        val deprecated = if (mode == AiMode.FIREWORKS && row.has("deprecationDate") && !row.isNull("deprecationDate")) {
+            val d = row.optJSONObject("deprecationDate") ?: return null
+            val date = runCatching { java.time.LocalDate.of(d.getInt("year"), d.getInt("month"), d.getInt("day")) }.getOrNull() ?: return null
+            !date.isAfter(java.time.Instant.ofEpochMilli(now).atZone(java.time.ZoneOffset.UTC).toLocalDate())
+        } else false
         val capability = AIModelCapability(tools, context, imageInput = vision, maxOutputTokens = maxOutput)
-        val fingerprint = MessageDigest.getInstance("SHA-256").digest("$providerId|$id|$capability".toByteArray())
+        val fingerprint = MessageDigest.getInstance("SHA-256").digest("$providerId|$id|$capability|$deprecated".toByteArray())
             .joinToString("") { "%02x".format(it) }
         val publisher = when (mode) {
             AiMode.CLAUDE -> "Anthropic"
@@ -119,7 +132,7 @@ class AccountModelAdapter(
         }
         return AIModel(AIModelKey(providerId, id), AiTextSafety.redact(row.optString("display_name", row.optString("displayName", id))).take(150),
             AIProviderRegistry.get(mode).title, publisher, AIModelPricing(null, null, false), capability,
-            AIModelAuthorization.AUTHORIZED, now, fingerprint, costEvidence = AICostEvidence.ACCOUNT_QUOTA)
+            AIModelAuthorization.AUTHORIZED, now, fingerprint, deprecated = deprecated, costEvidence = AICostEvidence.ACCOUNT_QUOTA)
     }
     override suspend fun availability(model: AIModel, force: Boolean): AIModelAvailability = when (val found = discover(force)) {
         is AIModelDiscovery.Failed -> AIModelAvailability(false, clock(), explanation = found.error.message, errorKind = found.error.kind)
@@ -168,8 +181,12 @@ object OpenAIResponseIdentities {
         "gpt-4o" to "gpt-4o-2024-08-06", "gpt-4o-mini" to "gpt-4o-mini-2024-07-18",
         "gpt-4.1" to "gpt-4.1-2025-04-14", "gpt-4.1-mini" to "gpt-4.1-mini-2025-04-14", "gpt-4.1-nano" to "gpt-4.1-nano-2025-04-14",
         "gpt-5" to "gpt-5-2025-08-07", "gpt-5-mini" to "gpt-5-mini-2025-08-07", "gpt-5-nano" to "gpt-5-nano-2025-08-07",
-        "gpt-5.1" to "gpt-5.1-2025-11-13", "gpt-5.2" to "gpt-5.2-2025-12-11",
-        "gpt-5.4-mini" to "gpt-5.4-mini-2026-03-17", "gpt-5.4-nano" to "gpt-5.4-nano-2026-03-17", "gpt-5.5" to "gpt-5.5-2026-04-23",
     )
+    // Exact IDs, not prefix guesses. New model IDs stay text-only until their capabilities are
+    // documented (or exposed by an official API). Context stays unknown when /models omits it.
+    // Evidence: official OpenAI Cookbook vision.txt, GPT-4.1 and GPT-5 prompting/tool guides;
+    // see docs/AI-PROVIDERS.fa.md for pinned source revisions and limits of this evidence.
+    val visionModels: Set<String> = snapshots.keys + snapshots.values
+    val toolModels: Set<String> = visionModels
     fun forModel(selected: String, liveIds: Set<String>): Set<String> = setOf(selected) + listOfNotNull(snapshots[selected]).filter { it in liveIds }
 }
