@@ -66,15 +66,5 @@ data class Conversation(
     val contextStart: Int = 0,
 )
 
-object AiLimits {
-    /** Longest message the user can send (the backend enforces its own, larger limit). */
-    const val MAX_USER_CHARS = 1000
-    /** Recent chat entries sent as context; older ones are dropped, never the whole history. */
-    const val MAX_HISTORY_ENTRIES = 10
-    const val MAX_HISTORY_CHARS = 6000
-    const val MAX_TOOL_RESULT_CHARS = 3000
-    const val MAX_AGENT_STEPS = 5
-    const val MAX_STORED_CONVERSATIONS = 50
-    const val MAX_STORED_MESSAGES = 200
-    const val MAX_OUTPUT_TOKENS = 700
-}
+/** Record-summary minimisation only, never a chat/input/output/token usage allowance. */
+object AiLimits { const val MAX_TOOL_RESULT_CHARS = 3000 }

@@ -130,7 +130,7 @@ class OpenRouterModelAdapterTest {
         val http = Http(); http.postCode = 403; http.completion = "secret ${f.key} raw upstream body"
         val failure = adapter(http).infer(AIModelKey("openrouter", f.FREE), query) as FunctionResult.Failed
         assertEquals(AiErrorKind.GUARDRAIL_REJECTED, failure.error.kind)
-        assertTrue(failure.error.message.contains("Guardrail")); assertFalse(failure.error.message.contains(f.key)); assertFalse(failure.error.message.contains("raw upstream"))
+        assertTrue(failure.error.message.contains("حساب")); assertFalse(failure.error.message.contains(f.key)); assertFalse(failure.error.message.contains("raw upstream"))
     }
     @Test fun canonicalResponseAliasMustBeExplicitlyProvenByTheSameOfficialEntryNeverGuessedByStrippingFree() = runBlocking {
         val canonical = "synthetic/persian-checkpoint"

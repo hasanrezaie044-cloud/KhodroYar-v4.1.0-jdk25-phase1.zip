@@ -17,6 +17,11 @@ import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.rememberCoroutineScope
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.first
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createComposeRule
@@ -81,6 +86,9 @@ class NativeOpenRouterAgentTest {
         context.getSharedPreferences("khodroyar_ai_usage", Context.MODE_PRIVATE).edit().clear().commit()
         AiSettingsStore(context).save(AiSettings())
         OpenRouterApiKeyStore(context).clear(); ConversationRepository(context).clearAll()
+        com.khodroyar.app.automation.AutomationStore.get(context).change { emptyList() }
+        AIProviderRegistry.supportedModes.filter { it != AiMode.LOCAL }.forEach { ProviderApiKeyStore(context, it).clear() }
+        File(context.noBackupFilesDir, "ai-chat-images").deleteRecursively()
         File(context.noBackupFilesDir, "work-report").deleteRecursively()
         repo.saveRatesForYear(1404, Rates(nightKm = 1000.0, hour = 2000.0, toll = 5000.0))
     }
@@ -693,4 +701,207 @@ class NativeOpenRouterAgentTest {
         ConversationRepository(context).clearAll(); assertTrue(ConversationRepository(context).load().isEmpty())
         assertFalse(file.exists())
     }
+    private fun chatFixtureImage(): android.net.Uri {
+        val source = File(context.cacheDir, "fixture-chat-source.jpg")
+        val bitmap = android.graphics.Bitmap.createBitmap(640, 360, android.graphics.Bitmap.Config.ARGB_8888)
+        bitmap.eraseColor(android.graphics.Color.rgb(28, 112, 140))
+        source.outputStream().use { bitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 90, it) }; bitmap.recycle()
+        androidx.exifinterface.media.ExifInterface(source).apply {
+            setAttribute(androidx.exifinterface.media.ExifInterface.TAG_ARTIST, "SYNTHETIC PRIVATE METADATA")
+            setLatLong(59.3, 18.0); saveAttributes()
+        }
+        return android.net.Uri.fromFile(source)
+    }
+
+    @Test fun modernOptionsContainExactlyFiveActionsARealTaskCountAndPhysicalComposerPositions() = runBlocking {
+        val automation = com.khodroyar.app.automation.AutomationStore.get(context)
+        automation.change { (1..3).map { n -> com.khodroyar.app.automation.AutomationRule(java.util.UUID.randomUUID().toString(),
+            com.khodroyar.app.automation.RuleKind.TRAFFIC, "ساختگی $n",
+            com.khodroyar.app.automation.RepeatSchedule(com.khodroyar.app.automation.RepeatFrequency.DAILY, "1404/01/01"), enabled = false) } }
+        val vm = renderChat(AiHttpTransport { error("Options, attachments and draft editing must be local") })
+        compose.waitUntil(5000) { vm.automations.size == 3 }
+        val add = compose.onNodeWithTag("ai-attach").fetchSemanticsNode().boundsInRoot
+        val voice = compose.onNodeWithTag("ai-voice").fetchSemanticsNode().boundsInRoot
+        assertTrue(add.center.x < voice.center.x)
+        compose.onNodeWithTag("ai-options").performClick()
+        for (title in listOf("گفتگوی نو", "تاریخچه", "پاک‌سازی گفتگوها", "کارهای خودکار", "تنظیمات هوش مصنوعی و مدل‌ها"))
+            compose.onNodeWithText(title).assertIsDisplayed()
+        compose.onNodeWithTag("ai-task-count").assertTextEquals("3")
+        compose.onNodeWithText("بخش‌های برنامه").assertDoesNotExist()
+        screenshot("43-ai-options-real-task-count-320", "ai-options-menu")
+        UiDevice.getInstance(InstrumentationRegistry.getInstrumentation()).pressBack(); compose.waitForIdle()
+        compose.onNodeWithTag("ai-attach").performClick()
+        for (action in listOf("camera", "gallery", "file")) compose.onNodeWithTag("ai-attachment-$action").assertIsDisplayed()
+        compose.onNodeWithText("دوربین").assertIsDisplayed(); compose.onNodeWithText("گالری").assertIsDisplayed(); compose.onNodeWithText("فایل").assertIsDisplayed()
+    }
+
+    @Test fun manufacturerPacksHaveOnlyBrandNameAndRealCapacityAndNeverRunInference() {
+        val source = JSONObject(catalog()).apply {
+            val rows = getJSONArray("data"); val template = rows.getJSONObject(1).toString()
+            for ((id, name) in listOf("nvidia/synthetic-vision:free" to "NVIDIA Vision", "google/synthetic-flash:free" to "Gemini Flash", "anthropic/synthetic-claude:free" to "Claude"))
+                rows.put(JSONObject(template).put("id", id).put("name", name))
+        }.toString()
+        val requests = java.util.Collections.synchronizedList(mutableListOf<AiHttpRequest>())
+        val vm = renderChat(AiHttpTransport { q -> requests += q; assertEquals("GET", q.method); AiHttpResponse(200, source) }, consented = true, modelCatalog = source)
+        compose.onNodeWithTag("ai-chat-model-picker").performClick()
+        compose.waitUntil(10000) { !vm.networkBusy && vm.modelState.models.size >= 4 }
+        compose.onNodeWithText("NVIDIA").performScrollTo().performClick()
+        compose.onNodeWithTag("ai-chat-model-nvidia/synthetic-vision:free").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("NVIDIA Vision").assertIsDisplayed()
+        compose.onNode(hasText("128k") and hasAnyAncestor(hasTestTag("ai-chat-model-nvidia/synthetic-vision:free")), useUnmergedTree = true).assertExists()
+        screenshot("44-ai-manufacturer-packs-320", "ai-model-sheet")
+        assertTrue(requests.all { it.method == "GET" })
+    }
+
+    @Test fun selectedImageIsVisibleSentAsRealJpegAndRetainedUntilItsLastConversationIsDeleted() = runBlocking {
+        val source = JSONObject(catalog()).apply { getJSONArray("data").getJSONObject(1).put("architecture", JSONObject()
+            .put("input_modalities", JSONArray(listOf("text", "image"))).put("output_modalities", JSONArray(listOf("text")))) }.toString()
+        val requests = java.util.Collections.synchronizedList(mutableListOf<AiHttpRequest>())
+        val vm = renderChat(AiHttpTransport { q -> requests += q; AiHttpResponse(200, if (q.method == "GET") source else completion("تصویر ساختگی دریافت شد.")) },
+            consented = true, modelCatalog = source)
+        val uri = chatFixtureImage()
+        compose.runOnIdle { vm.attachImage(uri) }
+        compose.waitUntil(10000) { !vm.imageLoading && vm.draftImage != null }
+        val ref = requireNotNull(vm.draftImage); val local = vm.imageStore.file(ref)
+        assertTrue(local.canonicalPath.startsWith(context.noBackupFilesDir.canonicalPath))
+        assertNull(androidx.exifinterface.media.ExifInterface(local).getAttribute(androidx.exifinterface.media.ExifInterface.TAG_ARTIST))
+        assertNull(androidx.exifinterface.media.ExifInterface(local).latLong)
+        compose.onNodeWithTag("ai-draft-image").assertIsDisplayed()
+        send("تصویر انتخابی را توضیح بده")
+        compose.waitUntil(10000) { !vm.busy && vm.messages.any { it.role == ChatRole.ASSISTANT } }
+        assertNull(vm.failure)
+        val post = requests.single { it.method == "POST" }; val body = JSONObject(requireNotNull(post.body))
+        val user = body.getJSONArray("messages").getJSONObject(body.getJSONArray("messages").length() - 1)
+        val url = user.getJSONArray("content").getJSONObject(1).getJSONObject("image_url").getString("url")
+        assertTrue(url.startsWith("data:image/jpeg;base64,"))
+        val bytes = android.util.Base64.decode(url.substringAfter(','), android.util.Base64.DEFAULT)
+        val bitmap = requireNotNull(android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size)); assertEquals(640, bitmap.width); bitmap.recycle()
+        assertFalse(post.body.orEmpty().contains("SYNTHETIC PRIVATE METADATA")); assertFalse(post.body.orEmpty().contains(uri.toString()))
+        assertFalse(body.has("max_tokens")); assertEquals(ref, vm.messages.first().image)
+        screenshot("45-ai-real-image-message-320")
+        compose.waitUntil(10000) { runBlocking { ConversationRepository(context).load().singleOrNull()?.messages?.any { it.image == ref } == true } }
+        val conversation = ConversationRepository(context).load().single()
+        compose.runOnIdle { vm.newChat() }; compose.waitForIdle(); assertTrue(local.isFile)
+        compose.runOnIdle { vm.openConversation(conversation) }; assertEquals(ref, vm.messages.first().image)
+        assertFalse(repo.exportBackupJson().contains(ref.fileName))
+        compose.runOnIdle { vm.deleteConversation(conversation) }
+        compose.waitUntil(10000) { !local.exists() }
+        assertTrue(File(uri.path!!).isFile) // Never deletes the user's chosen original.
+        assertTrue(db.services().allOnce().isEmpty())
+        publishSyntheticEvidence(context, "KhodroYar-UI-Smoke", "ai-chat-image.json", "application/json", JSONObject()
+            .put("environment", "Synthetic JPEG and HTTP; actual Compose, private files and history; NOT live provider")
+            .put("passed", true).put("image_posts", 1).put("jpeg_decoded", true).put("exif_removed", true).put("history_lifetime_verified", true).toString().toByteArray())
+    }
+
+    @Test fun unsupportedImageIsNotPretendedToBeSentAndDraftSurvives() {
+        val posts = AtomicInteger()
+        val vm = renderChat(AiHttpTransport { q -> if (q.method == "POST") posts.incrementAndGet(); AiHttpResponse(200, catalog()) }, consented = true)
+        compose.runOnIdle { vm.refreshModels() }
+        compose.waitUntil(10000) { !vm.networkBusy && vm.modelState.active != null }
+        val uri = chatFixtureImage()
+        compose.runOnIdle { vm.attachImage(uri); vm.editDraft("این تصویر را بررسی کن") }
+        compose.waitUntil(10000) { !vm.imageLoading && vm.draftImage != null }
+        val ref = vm.draftImage
+        compose.onNodeWithTag("ai-send").performClick()
+        compose.waitForIdle()
+        assertEquals(0, posts.get()); assertEquals(ref, vm.draftImage); assertEquals("این تصویر را بررسی کن", vm.draftText)
+        assertEquals(AiErrorKind.MODEL_INVALID, vm.failure?.kind); assertTrue(vm.messages.isEmpty())
+        compose.onNodeWithTag("ai-draft-image").assertIsDisplayed()
+    }
+
+    @Test fun providerQuotaPreservesChatAndDraftAndOpeningSheetsCannotAutomaticallyRetry() {
+        val posts = AtomicInteger(); val gets = AtomicInteger()
+        val vm = renderChat(AiHttpTransport { q -> if (q.method == "GET") { gets.incrementAndGet(); AiHttpResponse(200, catalog()) }
+            else { posts.incrementAndGet(); AiHttpResponse(429, "RAW PRIVATE ERROR", "30") } }, consented = true)
+        val text = "یک پرسش ساختگی بدون تغییر سوابق"
+        send(text)
+        compose.waitUntil(10000) { !vm.busy && vm.failure?.kind == AiErrorKind.RATE_LIMITED }
+        assertEquals(text, vm.draftText); assertEquals(text, vm.messages.single().text); assertEquals(1, posts.get())
+        val before = gets.get()
+        compose.runOnIdle { vm.retry() }; assertEquals(1, posts.get())
+        screenshot("46-ai-provider-quota-320")
+        compose.onNodeWithTag("ai-options").performClick()
+        compose.onNodeWithText("تنظیمات هوش مصنوعی و مدل‌ها").performClick()
+        compose.waitForIdle(); assertEquals(before, gets.get()); assertEquals(1, posts.get())
+        compose.onNodeWithText("بستن").performClick()
+        compose.onNodeWithTag("ai-chat-model-picker").performClick()
+        compose.waitForIdle(); assertEquals(before, gets.get()); assertEquals(1, posts.get())
+    }
+
+    @Test fun changingProviderAndKeyKeepsTranscriptAndDraftButNeverSendsOldContextToTheNewAccount() = runBlocking {
+        val posts = java.util.Collections.synchronizedList(mutableListOf<AiHttpRequest>())
+        val http = AiHttpTransport { q ->
+            if (q.method == "GET") AiHttpResponse(200, if (q.url.contains("api.openai.com")) """{"data":[{"id":"gpt-4.1","owned_by":"openai"}]}""" else catalog())
+            else { posts += q; AiHttpResponse(200, if (q.url.contains("api.openai.com")) JSONObject(completion("پاسخ تازه")).put("model", "gpt-4.1").toString() else completion("پاسخ قبلی")) }
+        }
+        val vm = renderChat(http, consented = true)
+        send("PRIVATE PREVIOUS CONTEXT")
+        compose.waitUntil(10000) { !vm.busy && vm.messages.size == 2 }
+        val before = vm.messages.toList()
+        compose.runOnIdle { vm.editDraft("PRIVATE NEW ACCOUNT DRAFT"); vm.selectChatProvider(AiMode.GPT) }
+        compose.waitUntil(10000) { !vm.savingSettings && vm.settings.mode == AiMode.GPT }
+        assertEquals(before, vm.messages.toList()); assertEquals("PRIVATE NEW ACCOUNT DRAFT", vm.draftText)
+        val scope = vm.settings.modelAccountScope
+        compose.runOnIdle { vm.configure(vm.settings.withModel(AiMode.GPT, "gpt-4.1").copy(useRegion = AIUseRegion.SUPPORTED_ELSEWHERE,
+            accountTermsConfirmed = setOf("gpt"), modelSelectionMode = AISelectionMode.MANUAL), "sk-proj-" + "q".repeat(45), false) { } }
+        compose.waitUntil(10000) { !vm.savingSettings && vm.hasOpenRouterKey && vm.settings.modelAccountScope != scope }
+        assertFalse(vm.settings.consented); assertEquals(before, vm.messages.toList()); assertEquals("PRIVATE NEW ACCOUNT DRAFT", vm.draftText)
+        assertEquals(1, posts.size)
+        compose.onNodeWithTag("ai-send").performClick()
+        compose.waitUntil(5000) { vm.needsConsent }; assertEquals(1, posts.size)
+        compose.onNodeWithText("موافقم و ادامه").performClick()
+        compose.waitUntil(10000) { !vm.busy && vm.messages.size == 4 }
+        assertNull(vm.failure); assertEquals(2, posts.size)
+        assertTrue(posts.last().body.orEmpty().contains("PRIVATE NEW ACCOUNT DRAFT")); assertFalse(posts.last().body.orEmpty().contains("PRIVATE PREVIOUS CONTEXT"))
+        assertEquals(before, vm.messages.take(2))
+        compose.waitUntil(10000) { runBlocking { ConversationRepository(context).load().any { it.mode == AiMode.GPT && it.contextStart == 2 && it.messages.size == 4 } } }
+    }
+
+    @Test fun serviceSuggestionLongPressDeletesOnlyThatPersistedSuggestionNotAnySourceRecord() = runBlocking {
+        val tools = AppAgentTools(context, repo)
+        tools.execute(preview(tools, "add_service", """{"date":"1404/01/01","service_type":"night","origin":"مبارکه","destination":"اصفهان","km":60,"hours":3}""").call)
+        val before = db.services().allOnce().single()
+        db.suggestions().upsertAll(listOf(SuggestionEntity("origin", "مبارکه", 1), SuggestionEntity("destination", "مبارکه", 1), SuggestionEntity("origin", "تهران", 2), SuggestionEntity("km", "60", 1)))
+        compose.setContent { CarManagerTheme {
+            val values by repo.suggestions("origin").collectAsState(initial = emptyList())
+            val scope = rememberCoroutineScope()
+            CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) {
+                Surface(Modifier.width(320.dp).padding(16.dp)) {
+                    com.khodroyar.app.ui.components.SuggestField("مبدأ", "", {}, values,
+                        onDeleteSuggestion = { value -> scope.launch { repo.deleteSuggestion("origin", value) } })
+                }
+            }
+        } }
+        compose.waitUntil(5000) { compose.onAllNodesWithText("مبارکه").fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithText("مبارکه").performTouchInput { longClick() }
+        compose.onNodeWithText("حذف پیشنهاد").performClick()
+        compose.waitUntil(5000) { runBlocking { "مبارکه" !in db.suggestions().fieldOnce("origin") } }
+        assertEquals(listOf("تهران"), AppRepository(context).suggestions("origin").first())
+        assertEquals(listOf("مبارکه"), db.suggestions().fieldOnce("destination")); assertEquals(listOf("60"), db.suggestions().fieldOnce("km"))
+        assertEquals(before, db.services().allOnce().single())
+        repo.deleteSuggestion("km", "60"); assertTrue(db.suggestions().fieldOnce("km").isEmpty()); assertEquals(before, db.services().allOnce().single())
+    }
+
+    @Test fun dailyAutoServiceMigratesLegacyJobKeepsOptInAndRealignsAtDeviceLocalSixteen() = runBlocking {
+        val scheduler = com.khodroyar.app.notifications.AutoServiceScheduler
+        val manager = WorkManager.getInstance(context)
+        val old = androidx.work.PeriodicWorkRequestBuilder<com.khodroyar.app.notifications.AutoServiceWorker>(1, java.util.concurrent.TimeUnit.DAYS)
+            .setInitialDelay(3, java.util.concurrent.TimeUnit.DAYS).build()
+        manager.enqueueUniquePeriodicWork("car_manager_auto_service", androidx.work.ExistingPeriodicWorkPolicy.KEEP, old).result.get()
+        settings.update { it.copy(autoServiceEnabled = true) }
+        scheduler.sync(context)
+        compose.waitUntil(5000) { manager.getWorkInfosForUniqueWork(scheduler.WORK_NAME).get().any { !it.state.isFinished } }
+        val scheduled = manager.getWorkInfosForUniqueWork(scheduler.WORK_NAME).get().single { !it.state.isFinished }
+        assertTrue(manager.getWorkInfosForUniqueWork("car_manager_auto_service").get().all { it.state.isFinished })
+        val target = java.time.Instant.ofEpochMilli(scheduled.nextScheduleTimeMillis).atZone(java.time.ZoneId.systemDefault())
+        assertEquals(16, target.hour); assertEquals(0, target.minute)
+        scheduler.sync(context)
+        com.khodroyar.app.notifications.AutoServiceTimeReceiver().onReceive(context, android.content.Intent(android.content.Intent.ACTION_TIMEZONE_CHANGED))
+        assertEquals(scheduled.id, manager.getWorkInfosForUniqueWork(scheduler.WORK_NAME).get().single { !it.state.isFinished }.id)
+        assertTrue(settings.current.autoServiceEnabled); assertTrue(db.services().allOnce().isEmpty())
+        settings.update { it.copy(autoServiceEnabled = false) }; scheduler.sync(context)
+        compose.waitUntil(5000) { manager.getWorkInfosForUniqueWork(scheduler.WORK_NAME).get().all { it.state.isFinished } }
+        assertFalse(settings.current.autoServiceEnabled)
+    }
+
 }

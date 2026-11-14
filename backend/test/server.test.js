@@ -65,7 +65,7 @@ test('chat happy path forwards key upstream only, never leaks it', async () => {
   assert.equal(r.status, 200);
   assert.equal(JSON.parse(text).content, 'سلام');
   assert.equal(t.mock.calls[0].auth, `Bearer ${SECRET}`);
-  assert.equal(t.mock.calls[0].body.max_tokens, 800);
+  assert.ok(!Object.hasOwn(t.mock.calls[0].body, 'max_tokens'));
   assert.ok(!text.includes(SECRET));
   assert.ok(!t.logs.join('').includes(SECRET));
   assert.ok(!t.logs.join('').includes('سلام'));
@@ -80,10 +80,10 @@ test('health never exposes key', async () => {
   await t.close();
 });
 
-test('validation: 400 for bad payloads, long message, bad model', async () => {
+test('validation rejects bad protocol and model but does not impose a user-message character allowance', async () => {
   const t = await boot({}, ok);
   assert.equal((await post(t.base, { messages: [] })).status, 400);
-  assert.equal((await post(t.base, { messages: [{ role: 'user', content: 'x'.repeat(201) }] })).status, 400);
+  assert.equal((await post(t.base, { messages: [{ role: 'user', content: 'x'.repeat(20000) }] })).status, 200);
   assert.equal((await post(t.base, { ...msg, model: 'evil-model' })).status, 400);
   assert.equal((await post(t.base, { messages: [{ role: 'tool', content: 'x' }] })).status, 400);
   const r = await fetch(`${t.base}/v1/chat`, { method: 'POST', body: '{bad' });
@@ -91,10 +91,10 @@ test('validation: 400 for bad payloads, long message, bad model', async () => {
   await t.close();
 });
 
-test('max_tokens is capped to server limit', async () => {
+test('retired server output preference cannot lower an explicitly requested maximum', async () => {
   const t = await boot({ MAX_OUTPUT_TOKENS: '100' }, ok);
   await post(t.base, { ...msg, max_tokens: 99999 });
-  assert.equal(t.mock.calls[0].body.max_tokens, 100);
+  assert.equal(t.mock.calls[0].body.max_tokens, 99999);
   await t.close();
 });
 
@@ -110,10 +110,10 @@ for (const [up, expected, code] of [[404, 502, 'upstream_not_found'], [401, 502,
   });
 }
 
-test('retry on 503 then succeed; no retry on 4xx', async () => {
+test('one provider attempt only, including 503 and 4xx; no hidden JSON-format retry', async () => {
   const t = await boot({}, (q, res, n) => (n === 1 ? (res.writeHead(503), res.end('x')) : ok(q, res)));
-  assert.equal((await post(t.base, msg)).status, 200);
-  assert.equal(t.mock.calls.length, 2);
+  assert.equal((await post(t.base, msg)).status, 500);
+  assert.equal(t.mock.calls.length, 1);
   await t.close();
   const t2 = await boot({}, (q, res) => { res.writeHead(400); res.end('x'); });
   await post(t2.base, msg);
@@ -129,12 +129,12 @@ test('timeout -> 504', async () => {
   await t.close();
 });
 
-test('rate limit -> 429 with Retry-After', async () => {
+test('retired rate preferences do not create an app-local 429', async () => {
   const t = await boot({ RATE_LIMIT_PER_MINUTE: '2' }, ok);
   await post(t.base, msg); await post(t.base, msg);
   const r = await post(t.base, msg);
-  assert.equal(r.status, 429);
-  assert.ok(Number(r.headers.get('retry-after')) >= 1);
+  assert.equal(r.status, 200);
+  assert.equal(r.headers.get('retry-after'), null);
   await t.close();
 });
 
@@ -155,16 +155,15 @@ test('client token enforced', async () => {
   await t.close();
 });
 
-test('daily request budget -> 402 budget_exceeded; admin usage has counts only', async () => {
+test('retired daily budget never rejects requests; admin usage remains payload-free', async () => {
   const t = await boot({ DAILY_REQUEST_BUDGET: '1' }, ok);
   assert.equal((await post(t.base, msg)).status, 200);
   const r = await post(t.base, msg);
-  assert.equal(r.status, 402);
-  assert.equal((await r.json()).error.code, 'budget_exceeded');
+  assert.equal(r.status, 200);
   const u = await fetch(`${t.base}/admin/usage`, { headers: { authorization: 'Bearer adm' } });
   const j = await u.json();
-  assert.equal(j.requests, 1);
-  assert.equal(j.promptTokens, 7);
+  assert.equal(j.requests, 2);
+  assert.equal(j.promptTokens, 14);
   assert.equal((await fetch(`${t.base}/admin/usage`)).status, 401);
   await t.close();
 });

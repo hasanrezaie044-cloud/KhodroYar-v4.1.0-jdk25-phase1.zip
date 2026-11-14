@@ -51,11 +51,11 @@ class GapGptDirectContractTest {
         assertFalse(request.url.contains(key))
     }
 
-    @Test fun modelNamesAreNotHardcodedToOneModelAndOutputCostIsCapped() {
+    @Test fun retiredWireContractDoesNotInventAnAppOutputAllowance() {
         val request = GapGptDirectContract.chatRequest(GapGptDirectContract.CDN_BASE_URL, key, listOf(AiMessage("user", "سلام!")), "gemini-2.5-pro", 50_000)
         val body = JSONObject(request.body!!)
         assertEquals("gemini-2.5-pro", body.getString("model"))
-        assertEquals(AiLimits.MAX_OUTPUT_TOKENS, body.getInt("max_tokens"))
+        assertEquals(50_000, body.getInt("max_tokens"))
         assertEquals("https://api.gapapi.com/v1/chat/completions", request.url)
     }
 

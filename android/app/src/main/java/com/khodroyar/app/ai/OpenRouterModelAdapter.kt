@@ -55,11 +55,17 @@ object OpenRouterModelMetadata {
             // Keep blocked/unknown free variants visible, without displaying hundreds of irrelevant paid rows.
             if (!price.verifiedFree && !id.endsWith(":free") && id != OpenRouterFreePolicy.INITIAL_MODEL) return@mapNotNull null
             val allowed = user[id]
-            val supports = parameters(row)
+            val supports = parameters(row).intersect(allowed?.let(::parameters).orEmpty())
             val authorized = allowed != null && prices(allowed.optJSONObject("pricing")).verifiedFree &&
                 textOutput(allowed) && !retired(allowed, now) &&
                 responseIdentities(allowed) == responseIdentities(row)
-            val capabilities = AIModelCapability(supports.containsAll(setOf("tools", "tool_choice")), context(row), textOutput(row), imageInput = row.optJSONObject("architecture")?.optJSONArray("input_modalities")?.let { a -> (0 until a.length()).any { a.opt(it) == "image" } } == true)
+            fun images(r: JSONObject?): Boolean = r?.optJSONObject("architecture")?.optJSONArray("input_modalities")?.let { a ->
+                (0 until a.length()).any { a.opt(it) == "image" }
+            } == true
+            val scopedContext = allowed?.let(::context) ?: 0
+            val effectiveContext = if (context(row) > 0 && scopedContext > 0) minOf(context(row), scopedContext) else 0
+            val capabilities = AIModelCapability(supports.containsAll(setOf("tools", "tool_choice")), effectiveContext,
+                textOutput(row) && allowed?.let(::textOutput) == true, imageInput = images(row) && images(allowed))
             val canonical = (row.opt("canonical_slug") as? String).orEmpty()
             val fingerprintText = listOf(id, canonical, capabilities.toString(), supports.sorted().joinToString(",")).joinToString("|")
             val fingerprint = MessageDigest.getInstance("SHA-256").digest(fingerprintText.toByteArray()).joinToString("") { "%02x".format(it) }

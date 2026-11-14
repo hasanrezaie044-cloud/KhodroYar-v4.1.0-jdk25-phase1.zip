@@ -46,7 +46,7 @@ object GapGptDirectContract {
 
     fun selectedModel(s: AiSettings): String = s.gapGptModel.trim().ifBlank { DEFAULT_MODEL }
 
-    fun chatRequest(baseUrl: String, key: String, messages: List<AiMessage>, model: String, maxTokens: Int): AiHttpRequest {
+    fun chatRequest(baseUrl: String, key: String, messages: List<AiMessage>, model: String, maxTokens: Int?): AiHttpRequest {
         val url = requireNotNull(chatUrl(baseUrl)) { "Invalid direct GapGPT URL" }
         val apiKey = requireNotNull(normalizeApiKey(key)) { "Invalid provider key" }
         require(model.isNotBlank() && model.length <= 100 && model.none { it.isISOControl() })
@@ -56,7 +56,7 @@ object GapGptDirectContract {
             .put("messages", JSONArray().also { array ->
                 messages.forEach { array.put(JSONObject().put("role", it.role).put("content", it.content)) }
             })
-            .put("max_tokens", maxTokens.coerceIn(1, AiLimits.MAX_OUTPUT_TOKENS))
+            .put("max_tokens", maxTokens)
             .put("temperature", 0.2)
             .put("stream", false)
         // No proxy-only `json` field, no /v1/status, no forced response_format (model compatibility).

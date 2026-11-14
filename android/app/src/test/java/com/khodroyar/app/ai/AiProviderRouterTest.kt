@@ -22,21 +22,15 @@ class AiProviderRouterTest {
         assertEquals(0, backend.calls + direct.calls + backend.checks + direct.checks)
     }
 
-    @Test fun modeSelectionRoutesToOnlyTheChosenProtocol() = runBlocking {
-        var mode = AiMode.ONLINE
-        val backend = Fake("backend")
-        val direct = Fake("direct")
-        val router = AiProviderRouter({ mode }, backend, direct)
-        assertEquals("backend", (router.chat(listOf(AiMessage("user", "hi")), null, 32) as AiResult.Success).content)
-        mode = AiMode.GAPGPT_DIRECT
-        assertEquals("direct", (router.chat(listOf(AiMessage("user", "hi")), null, 32) as AiResult.Success).content)
-        router.status()
-        assertEquals(1, backend.calls)
-        assertEquals(1, direct.calls)
-        assertEquals(0, backend.checks)
-        assertEquals(1, direct.checks)
+    @Test fun noNativeOrRetiredModeMayDispatchThroughALegacyFallbackProtocol() = runBlocking {
+        val backend = Fake("backend"); val direct = Fake("direct")
+        for (mode in AiMode.entries) {
+            val router = AiProviderRouter({ mode }, backend, direct)
+            assertTrue(router.chat(listOf(AiMessage("user", "private")), null, null) is AiResult.Failure)
+            router.status()
+        }
+        assertEquals(0, backend.calls + direct.calls + backend.checks + direct.checks)
     }
-
     @Test fun nativeOpenRouterCanNeverFallBackIntoEitherLegacyPaidProtocol() = runBlocking {
         val backend = Fake("backend"); val direct = Fake("direct")
         val router = AiProviderRouter({ AiMode.OPENROUTER }, backend, direct)

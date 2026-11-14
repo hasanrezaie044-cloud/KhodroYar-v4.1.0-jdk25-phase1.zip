@@ -34,16 +34,7 @@ function loadConfig() {
     enabled: str('AI_ENABLED', '1') !== '0',
     clientToken: str('CLIENT_TOKEN'),
     adminToken: str('ADMIN_TOKEN'),
-    maxMessageChars: int('MAX_MESSAGE_CHARS', 4000, { min: 100 }),
-    maxMessages: int('MAX_MESSAGES', 20, { min: 1, max: 100 }),
-    maxTotalChars: int('MAX_TOTAL_CHARS', 24000, { min: 500 }),
-    maxOutputTokens: int('MAX_OUTPUT_TOKENS', 800, { min: 16, max: 8192 }),
-    rateLimitPerMinute: int('RATE_LIMIT_PER_MINUTE', 12, { min: 1 }),
-    rateLimitPerDay: int('RATE_LIMIT_PER_DAY', 200, { min: 1 }),
-    dailyRequestBudget: int('DAILY_REQUEST_BUDGET', 2000, { min: 0 }),
-    dailyTokenBudget: int('DAILY_TOKEN_BUDGET', 0, { min: 0 }),
     timeoutMs: int('REQUEST_TIMEOUT_MS', 30000, { min: 1000, max: 120000 }),
-    maxRetries: int('MAX_RETRIES', 1, { min: 0, max: 3 }),
   };
 }
 

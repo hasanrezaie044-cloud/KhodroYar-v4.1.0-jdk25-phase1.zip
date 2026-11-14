@@ -33,7 +33,7 @@ class DirectGapGptProvider(
             } ?: return@withContext AiResult.Failure(AiErrorKind.NOT_CONFIGURED, "کلید واقعی حساب GapGPT وارد نشده است. YOUR_GAPGPT_API_KEY فقط جای‌نگهدارِ نمونه است. کلید را فقط در تنظیمات برنامه وارد کنید، نه در چت.")
             val wanted = model?.trim()?.ifBlank { null } ?: GapGptDirectContract.selectedModel(settings)
             try {
-                val request = GapGptDirectContract.chatRequest(settings.gapGptBaseUrl, key, messages, wanted, maxTokens ?: AiLimits.MAX_OUTPUT_TOKENS)
+                val request = GapGptDirectContract.chatRequest(settings.gapGptBaseUrl, key, messages, wanted, maxTokens)
                 GapGptDirectContract.chatResponse(transport.execute(request), wanted)
             } catch (e: CancellationException) {
                 throw e

@@ -59,6 +59,6 @@ class OpenRouterWireTest {
         val bytes = ": keepalive\r\ndata: {\"text\":\"سلام\"}\r\n\r\ndata: [DONE]\n\n".toByteArray()
         SseEvents.read(bytes.inputStream().reader(), seen::add)
         assertEquals(listOf("{\"text\":\"سلام\"}", "[DONE]"), seen)
-        assertTrue(runCatching { SseEvents.read(("data: " + "x".repeat(65537)).reader()) {} }.isFailure)
+        assertTrue(runCatching { SseEvents.read(("data: " + "x".repeat(1024 * 1024 + 1)).reader()) {} }.isFailure)
     }
 }

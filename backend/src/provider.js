@@ -2,8 +2,6 @@
 
 const { HttpError } = require('./validate');
 
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-
 /**
  * OpenAI-compatible provider (GapGPT). The API key is only ever placed in the outgoing
  * Authorization header and is never logged, returned, or included in error text.
@@ -15,41 +13,18 @@ class GapGptProvider {
   }
 
   async #request(path, init) {
-    const attempts = this.cfg.maxRetries + 1;
-    let lastErr;
-    for (let i = 0; i < attempts; i++) {
-      const ctrl = new AbortController();
-      const timer = setTimeout(() => ctrl.abort(), this.cfg.timeoutMs);
-      try {
-        const res = await this.fetch(`${this.cfg.baseUrl}${path}`, {
-          ...init,
-          redirect: 'error',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${this.cfg.apiKey}`,
-            ...(init.headers || {}),
-          },
-          signal: ctrl.signal,
-        });
-        clearTimeout(timer);
-        if ([502, 503, 504].includes(res.status) && i < attempts - 1) {
-          await sleep(400 * (i + 1));
-          continue;
-        }
-        return res;
-      } catch (e) {
-        clearTimeout(timer);
-        lastErr = e;
-        if (i < attempts - 1) {
-          await sleep(400 * (i + 1));
-          continue;
-        }
-      }
-    }
-    if (lastErr && lastErr.name === 'AbortError') {
-      throw new HttpError(504, 'upstream_timeout', 'The AI provider did not respond in time');
-    }
-    throw new HttpError(502, 'upstream_unreachable', 'Could not reach the AI provider');
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), this.cfg.timeoutMs);
+    try {
+      return await this.fetch(`${this.cfg.baseUrl}${path}`, {
+        ...init, redirect: 'error',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${this.cfg.apiKey}`, ...(init.headers || {}) },
+        signal: ctrl.signal,
+      });
+    } catch (e) {
+      if (e?.name === 'AbortError') throw new HttpError(504, 'upstream_timeout', 'The AI provider did not respond in time');
+      throw new HttpError(502, 'upstream_unreachable', 'Could not reach the AI provider');
+    } finally { clearTimeout(timer); }
   }
 
   static mapUpstreamStatus(res) {
@@ -73,12 +48,7 @@ class GapGptProvider {
   async chat({ messages, model, maxTokens, temperature, json }) {
     const payload = { model, messages, max_tokens: maxTokens, temperature, stream: false };
     if (json) payload.response_format = { type: 'json_object' };
-    let res = await this.#request('/chat/completions', { method: 'POST', body: JSON.stringify(payload) });
-    if (res.status === 400 && json) {
-      // Some models/providers do not support response_format; retry once without it.
-      delete payload.response_format;
-      res = await this.#request('/chat/completions', { method: 'POST', body: JSON.stringify(payload) });
-    }
+    const res = await this.#request('/chat/completions', { method: 'POST', body: JSON.stringify(payload) });
     if (!res.ok) throw GapGptProvider.mapUpstreamStatus(res);
     let data;
     try {

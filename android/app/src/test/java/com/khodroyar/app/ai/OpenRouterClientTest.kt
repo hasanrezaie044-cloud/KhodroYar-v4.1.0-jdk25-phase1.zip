@@ -64,10 +64,11 @@ class OpenRouterClientTest {
             assertEquals(1, http.requests.count { it.method == "POST" })
         }
     }
-    @Test fun rateLimitCooldownDoesNotTriggerMoreRequestsOrAnotherModel() = runBlocking {
+    @Test fun rateLimitMakesOneAttemptWithoutARetryTimerButANewExplicitCallIsNotLocallyCapped() = runBlocking {
         val http = FakeHttp("{}", 429); val client = OpenRouterClient(f::settings, Key(f.key), http)
         client.complete(messages) {}; val count = http.requests.size
-        assertTrue(client.complete(messages) {} is FunctionResult.Failed); assertEquals(count, http.requests.size)
+        assertEquals(2, count); assertEquals(1, http.requests.count { it.method == "POST" })
+        assertTrue(client.complete(messages) {} is FunctionResult.Failed); assertEquals(count + 2, http.requests.size)
     }
     @Test fun offlineFailureIsNotRelabelledAsSuccessAndDoesNotLeakTransportException() = runBlocking {
         val http = FakeHttp(""); http.handler = { throw IOException("secret ${f.key}") }
@@ -96,7 +97,7 @@ class OpenRouterClientTest {
         val result = OpenRouterClient(f::settings, Key(f.key), http).complete(listOf(FunctionMessage("user", "این ${f.key}"))) {}
         assertTrue(result is FunctionResult.Failed); assertTrue(http.requests.isEmpty())
     }
-    @Test fun midStreamRateLimitIsSanitisedAndActivatesTheSameCooldown() = runBlocking {
+    @Test fun midStreamRateLimitIsSanitisedAndNeverTriggersAnAutomaticSecondFlight() = runBlocking {
         val count = java.util.concurrent.atomic.AtomicInteger()
         val http = object : AiHttpTransport, AiStreamingTransport {
             override fun execute(request: AiHttpRequest): AiHttpResponse { count.incrementAndGet(); return AiHttpResponse(200, f.catalog()) }
@@ -109,7 +110,8 @@ class OpenRouterClientTest {
         val client = OpenRouterClient(f::settings, Key(f.key), http)
         val failure = client.complete(messages) {} as FunctionResult.Failed
         assertEquals(AiErrorKind.RATE_LIMITED, failure.error.kind); assertFalse(failure.error.message.contains("RAW PRIVATE"))
-        val before = count.get(); assertTrue(client.complete(messages) {} is FunctionResult.Failed); assertEquals(before, count.get())
+        val before = count.get(); assertEquals(2, before)
+        assertTrue(client.complete(messages) {} is FunctionResult.Failed); assertEquals(before + 2, count.get())
     }
 
 }
