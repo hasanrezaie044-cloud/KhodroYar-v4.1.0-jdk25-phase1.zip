@@ -1,6 +1,6 @@
 # Isfahan route catalogue
 
-The existing `shiraz`, `zobahan`, `kharrazi` entries are retained. The three additions below share **one catalogue** (`TrafficRepository.CORRIDORS`) across the screen, worker and agent. These are full-road requests in **one explicitly displayed driving direction**, not claims about both carriageways or every street segment.
+The existing `shiraz`, `zobahan`, `kharrazi` entries are retained. The three additions below share **one catalogue** (`TrafficRepository.CORRIDORS`) across the screen, worker and agent. The endpoint pairs span the named roads in **one explicitly displayed driving direction**. As in the working 5.5.6 system, Neshan selects the actual route between the endpoints; the app does not guarantee every segment or both carriageways.
 
 ## New roads and endpoint evidence
 
@@ -31,14 +31,41 @@ Coordinates are latitude, longitude. Public OpenStreetMap road/node data were in
 - [1934453554](https://www.openstreetmap.org/api/0.6/node/1934453554/ways.json) is the southern change to میثمی, **not** the southern end of the whole combined corridor.
 - Relation 7521008 alone is incomplete for full highway endpoints and includes service roads. It was **not** treated as the entire highway.
 
-## Request and response safeguards
+## 5.5.8 compatibility repair: the working 5.5.6 system
 
-The official Neshan v4 directions contract supports `waypoints` in `latitude,longitude` order, separated by `|`; `alternative=false` requests one route. [1](https://platform.neshan.org/api/direction)
+The owner reported that traffic stopped working after the 5.5.7 route additions.
+That release had also changed requests for new roads and required a matching
+`overview_polyline`. A perfectly usable duration/distance response without that
+geometry could fail one route and therefore the whole snapshot. The user's live
+reply/key was not collected, so this is a reproduced compatibility case, not a
+claim to know the exact live provider error.
 
-- New entries send their intermediate, same-carriageway trace points as URL-encoded waypoints, not just two loose endpoints.
-- A new-road status requires a bounded precision-5 `overview_polyline`. Both endpoints must match in the right direction within **50 m**, every trace checkpoint must be near the response route, and the response must not detour away from the road trace (150 m path/simplification tolerance). A short terminal section cannot disappear merely because the wider path tolerance allowed it. Missing, reversed, partial, malformed or off-road geometry fails closed. It is not relabelled as that highway's fresh traffic.
-- `6.4`, `3.0`, `2.0` minute reference times are **approximate classification baselines**, not measured free-flow data. As before, smooth/moderate/heavy is a duration/reference estimate, not a sensor measurement for each segment. The screen discloses this limitation and the one-way coverage.
-- Automated tests use **synthetic JSON/geometry and mocked transport**. They establish URL/geometry/catalogue contracts, not current road conditions, live account access, or Neshan availability.
+**All six roads now use the same old contract:**
+
+- `GET https://api.neshan.org/v4/direction?type=car&origin=<lat,lng>&destination=<lat,lng>`
+- The same private user-supplied `Api-Key` header; no AI Bearer token or device location.
+- Only `type`, `origin` and `destination` query parameters. No `waypoints`,
+  `alternative`, alternate endpoint, extra provider permission or hidden fallback.
+- The **unchanged 5.5.6 parser** sums `duration.value` and `distance.value` from the
+  first route's legs. Optional geometry is not needed or inspected. The original
+  HTTP/key checks, finite positive time, nonnegative distance, 128 KiB body limit
+  and 1–100-leg bound remain. Invalid data still fails; no made-up traffic is shown.
+- The three original endpoint pairs/reference times are unchanged. The three new
+  endpoint pairs in the table above remain; only the added waypoint/trace machinery
+  is removed. Neshan may choose a detour between endpoints, as with the old system.
+- `6.4`, `3.0`, `2.0` minute reference times remain **approximate classification
+  baselines**, not measured free-flow data. Smooth/moderate/heavy is the old
+  duration/reference estimate, not a congestion measurement at each road segment.
+- Tab, worker and agent continue using the same repository/catalogue. The API key's
+  storage is unchanged and an update does not clear the saved key.
+
+JVM regressions use the old reply shape **without any polyline for all six routes**,
+pin exact legacy URLs, and keep invalid-response/key-redaction checks. A native UI
+test uses mocked Neshan HTTP, verifies all six rendered statuses, then taps manual
+refresh and verifies the next six requests. Synthetic evidence is named
+`traffic-legacy.json` and `37-traffic-legacy-response-six-routes.png`. These tests
+are not live Neshan/account/network availability or physical-phone proof. No
+personal key is needed or sent. Endpoint-source evidence above is unchanged.
 
 ## Attribution
 

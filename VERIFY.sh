@@ -68,8 +68,8 @@ echo
 
 # 9. Check version info
 echo "9. Version Information"
-grep -q "versionCode 74" android/app/build.gradle && echo "  ✓ versionCode 74" || { echo "  ✗ versionCode wrong"; fail=1; }
-grep -q "versionName '5.5.7'" android/app/build.gradle && echo "  ✓ versionName 5.5.7" || { echo "  ✗ versionName wrong"; fail=1; }
+grep -q "versionCode 75" android/app/build.gradle && echo "  ✓ versionCode 75" || { echo "  ✗ versionCode wrong"; fail=1; }
+grep -q "versionName '5.5.8'" android/app/build.gradle && echo "  ✓ versionName 5.5.8" || { echo "  ✗ versionName wrong"; fail=1; }
 echo
 
 # 10. Check no debug signing for release

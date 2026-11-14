@@ -69,7 +69,7 @@ def verified_proof(apk, verification, expected_head):
             or proof.get('offline_model_assets') != 'absent (online-only)' or proof.get('offline_native_engine') != 'absent'
             or proof.get('native_64_bit_16kb_alignment') != 'passed' or proof.get('bundled_notices_fonts') != 'all hashes verified'
             or not re.fullmatch(r'\d+(?:\.\d+){1,3}', proof.get('version_name', ''))
-            or type(proof.get('version_code')) is not int or proof['version_code'] < 74):
+            or type(proof.get('version_code')) is not int or proof['version_code'] < 75):
         raise ValueError('Public APK does not match the original audited online-only candidate')
     validate_runtime(proof.get('signed_runtime', {}))
     return proof
@@ -108,7 +108,8 @@ def prepare(apk, verification, directory, expected_head):
 - گزارش ← مقایسهٔ شرکت: جدول فشردهٔ تاریخ/شرکت/برنامه/اختلاف، بدون شرط کیلومتر، ساعت یا تأیید جزئیات. اختلاف = برنامه − شرکت؛ مثال ۲/۳ برابر +۱ است.
 - اصلاح صریح تعداد شرکت با علامت *، جدا از ردیف‌های OCR و سوابق برنامه، قابل بازگشت است؛ هیچ سرویس خودکار برای برابرکردن تعداد ساخته یا تغییر داده نمی‌شود.
 - جزئیات کیلومتر/ساعت در بخش اختیاری باقی می‌مانند؛ ساعت نامشخص همچنان صفر نیست.
-- سه مسیر اصفهان: شهید کشوری، شهید میثمی و شهید حبیب‌اللهی؛ ابتدا/انتها و نقاط میانی با منبع نقشه، جهت مشخص و کنترل هندسهٔ پاسخ. وضعیت تخمین زمان است، نه ترافیک نقطه‌به‌نقطه.
+- اصلاح ترافیک: روش دریافت و تحلیلِ نسخهٔ سالم ۵.۵.۶ بازگردانده شد؛ هر شش مسیر فقط با type=car، origin و destination از نشان پرسیده می‌شوند. پارامترهای اضافی و شرط polyline/تطابق هندسه حذف شدند؛ همان duration و distance در legs مبنا هستند. مبدأ/مقصد و جهت سه مسیر جدید کشوری، میثمی و حبیب‌اللهی حفظ شده‌اند؛ مسیر عملی را نشان انتخاب می‌کند، نه کنترل هندسهٔ برنامه.
+- آزمون بومی ترافیک با HTTP ساختگیِ همان قالب قدیمی بدون polyline: نمایش وضعیت هر شش مسیر و به‌روزرسانی دستی، بدون استفاده از کلید شخصی یا ادعای آزمون زندهٔ نشان. بخش گزارش‌ها، حریم خصوصی، بازار و سوابق در این اصلاح بازنویسی نشده‌اند.
 - متن حریم خصوصی/سلب مسئولیت نسخهٔ ۲، شامل خطای ورودی، OCR، خدمات ثالث و غیررسمی بودن خروجی‌ها؛ نسخهٔ قابل استفاده برای بازار در مخزن است.
 - اعلان نسخهٔ جدید هنگام ورود، فقط پس از پاسخ نسخهٔ بازار؛ دکمهٔ به‌روزرسانی صفحهٔ همان بسته را در خود بازار باز می‌کند. نبود بازار/شبکه ورود را مسدود نمی‌کند.
 - آزمون همان APK امضاشده روی امولاتور API 35: ثبت ۳ سرویس مصنوعی از فرم واقعی، SAF، رضایت/انصراف FastOCR، ورود صریح متن مصنوعیِ بدون کیلومتر/ساعت، نمایش شرکت ۲ / برنامه ۳ / اختلاف +۱ در ۱۴۰۵/۰۷/۰۵، اصلاح دستی و بازگشت، حفظ تعداد برنامه، IPC و لینک به‌روزرسانی با **بازار شبیه‌سازی‌شده**.
@@ -185,7 +186,7 @@ def publish(directory, repository, expected_head, run_id):
         stream.write(f'\nصفحهٔ بیلد و آزمون‌ها: {build_url}\n')
     assets = [apk, proof_path, root / 'SHA256SUMS', notes]
     subprocess.run(['gh', 'release', 'create', tag, '--repo', repository, '--target', expected_head,
-                    '--title', f"KhodroYar {proof['version_name']} — Daily counts, Isfahan routes and privacy",
+                    '--title', f"KhodroYar {proof['version_name']} — Traffic compatibility restored",
                     '--notes-file', str(notes), '--draft', '--latest=false', *map(str, assets)], check=True, timeout=240)
     release = gh_json(f'{api}/releases/tags/{tag}', missing_ok=True)
     if release is None:

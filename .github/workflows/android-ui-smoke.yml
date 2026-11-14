@@ -82,6 +82,22 @@ jobs:
                   text = text.replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
                   print('::notice title=Actual software keyboard ' + path.stem + '::' + text)
           PY
+      - name: Publish legacy Neshan compatibility evidence (mocked HTTP, no personal key)
+        if: always()
+        run: |
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          path = Path(os.environ['RUNNER_TEMP']) / 'orbit-ui-screenshots' / 'traffic-legacy.json'
+          assert path.is_file() and path.stat().st_size <= 16384, 'Missing native legacy-traffic evidence'
+          data = json.loads(path.read_text())
+          expected = dict(environment='Synthetic Neshan transport; NOT live Neshan', passed=True,
+              routes=['shiraz', 'zobahan', 'kharrazi', 'keshvari', 'meysami', 'habibollahi'],
+              requests=12, automatic_and_manual=True, legacy_query_only=True,
+              reply_has_polyline=False, all_six_statuses_displayed=True)
+          assert data == expected, 'Native traffic compatibility assertions did not all pass'
+          print('::notice title=Legacy Neshan six-route UI integration (NOT live Neshan)::' + json.dumps(data))
+          PY
       - name: Publish bounded synthetic previews for visual review
         if: always() && github.event_name == 'workflow_dispatch'
         run: |
@@ -160,3 +176,5 @@ jobs:
         run: '"$RUNNER_TEMP/feature-preview-env/bin/python" tools/ui-previews.py "$RUNNER_TEMP/native-feature-review" 36-count-first-320-large-font'
       - name: Full-road Isfahan catalogue
         run: '"$RUNNER_TEMP/feature-preview-env/bin/python" tools/ui-previews.py "$RUNNER_TEMP/native-feature-review" 35b-isfahan-full-road-catalogue'
+      - name: Legacy Neshan response rendered for all six routes (mocked)
+        run: '"$RUNNER_TEMP/feature-preview-env/bin/python" tools/ui-previews.py "$RUNNER_TEMP/native-feature-review" 37-traffic-legacy-response-six-routes'

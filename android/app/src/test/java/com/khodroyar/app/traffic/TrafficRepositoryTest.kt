@@ -8,44 +8,84 @@ import org.junit.Test
 import java.util.Collections
 import org.json.JSONArray
 import org.json.JSONObject
-import kotlin.math.roundToLong
 
 class TrafficRepositoryTest {
-    private fun body(seconds: Double = 3000.0, trace: List<TrafficPoint> = emptyList()): String {
-        val route = JSONObject().put("legs", JSONArray().put(JSONObject()
+    /** The working pre-5.5.7 reply shape: durations/distances, no route geometry. */
+    private fun body(seconds: Double = 3000.0): String = JSONObject().put("routes", JSONArray().put(
+        JSONObject().put("legs", JSONArray().put(JSONObject()
             .put("duration", JSONObject().put("value", seconds)).put("distance", JSONObject().put("value", 42000))))
-        if (trace.isNotEmpty()) route.put("overview_polyline", JSONObject().put("points", encode(trace)))
-        return JSONObject().put("routes", JSONArray().put(route)).toString()
+    )).toString()
+
+    private val expectedUrls = linkedMapOf(
+        "shiraz" to "https://api.neshan.org/v4/direction?type=car&origin=32.31,51.56&destination=32.62,51.66",
+        "zobahan" to "https://api.neshan.org/v4/direction?type=car&origin=32.3461,51.5211&destination=32.6539,51.666",
+        "kharrazi" to "https://api.neshan.org/v4/direction?type=car&origin=32.615,51.575&destination=32.655,51.745",
+        "keshvari" to "https://api.neshan.org/v4/direction?type=car&origin=32.6144146,51.7266836&destination=32.5910471,51.6675926",
+        "meysami" to "https://api.neshan.org/v4/direction?type=car&origin=32.6235237,51.6172508&destination=32.6043362,51.6241549",
+        "habibollahi" to "https://api.neshan.org/v4/direction?type=car&origin=32.6350839,51.6271786&destination=32.6235237,51.6172508",
+    )
+
+    @Test fun screenWorkerAndAgentShareSixRoutesAndTheOriginalThreeAreUnchanged() {
+        assertEquals(expectedUrls.keys, TrafficRepository.CORRIDORS.map { it.id }.toSet())
+        assertEquals(listOf(
+            TrafficCorridor("shiraz", "اتوبان اصفهان–شیراز (مبارکه ← اصفهان)", 32.3100, 51.5600, 32.6200, 51.6600, 45.0 * 60),
+            TrafficCorridor("zobahan", "اتوبان ذوب‌آهن (مبارکه ← اصفهان)", 32.3461, 51.5211, 32.6539, 51.6660, 50.0 * 60),
+            TrafficCorridor("kharrazi", "اتوبان شهید خرازی (ابتدا ← انتها)", 32.6150, 51.5750, 32.6550, 51.7450, 25.0 * 60),
+        ), TrafficRepository.CORRIDORS.take(3))
     }
-    /** Synthetic geometry at public route checkpoints, NOT a live provider response. */
-    private fun encode(points: List<TrafficPoint>): String = buildString {
-        var lat = 0L; var lng = 0L
-        fun delta(value: Long) {
-            var v = if (value < 0) (value shl 1).inv() else value shl 1
-            while (v >= 32) { append(((v and 31L).toInt() or 32).plus(63).toChar()); v = v shr 5 }
-            append((v + 63).toInt().toChar())
-        }
-        for (p in points) {
-            val y = (p.lat * 100000).roundToLong(); val x = (p.lng * 100000).roundToLong()
-            delta(y - lat); delta(x - lng); lat = y; lng = x
-        }
-    }
-    @Test fun threeConsumersShareSameFixedCorridorCatalogue() {
-        assertEquals(setOf("shiraz", "zobahan", "kharrazi", "keshvari", "meysami", "habibollahi"), TrafficRepository.CORRIDORS.map { it.id }.toSet())
-    }
-    @Test fun explicitFetchUsesNeshanHeaderNotAiBearerOrPhoneLocation() = runBlocking {
+
+    @Test fun explicitFetchUsesTheLegacyQueryForAllSixAndAcceptsLegsWithoutPolyline() = runBlocking {
         val urls = Collections.synchronizedList(mutableListOf<String>())
         val repo = TrafficRepository(AiHttpTransport { r ->
-            urls.add(r.url); assertEquals("GET", r.method); assertEquals("test-neshan-key", r.headers["Api-Key"])
-            assertNull(r.headers["Authorization"]); assertNull(r.body)
-            assertTrue(r.url.startsWith("https://api.neshan.org/v4/direction?type=car"))
+            urls.add(r.url); assertEquals("GET", r.method); assertEquals(mapOf("Api-Key" to "test-neshan-key"), r.headers)
+            assertNull(r.body)
+            assertTrue(r.url, r.url in expectedUrls.values)
             assertFalse(r.toString().contains("test-neshan-key"))
-            val corridor = TrafficRepository.CORRIDORS.single { r.url == TrafficRepository.directionUrl(it) }
-            AiHttpResponse(200, body(trace = corridor.trace))
+            // 5.5.7 rejected this otherwise usable reply for the added roads,
+            // then cancelled the whole six-route snapshot. It must work for ALL.
+            AiHttpResponse(200, body())
         })
         val snapshot = repo.fetch("test-neshan-key")
-        assertEquals(6, urls.size); assertEquals(6, snapshot.statuses.size)
+        assertEquals(6, urls.size)
+        assertEquals(expectedUrls.values.toSet(), urls.toSet())
+        assertEquals(expectedUrls.keys, snapshot.statuses.keys)
+        assertTrue(snapshot.statuses.values.all { !it.detail.isNullOrBlank() })
     }
+
+    @Test fun noNewWaypointAlternativeOrGeometryContractIsImposedOnAnyRoad() {
+        for (route in TrafficRepository.CORRIDORS) {
+            val url = TrafficRepository.directionUrl(route)
+            assertEquals(expectedUrls.getValue(route.id), url)
+            val uri = java.net.URI(url)
+            assertEquals("https", uri.scheme); assertEquals("api.neshan.org", uri.host)
+            assertEquals("/v4/direction", uri.path); assertNull(uri.rawFragment); assertNull(uri.userInfo)
+            assertEquals(setOf("type", "origin", "destination"), uri.rawQuery.split('&').map { it.substringBefore('=') }.toSet())
+            assertFalse(url.contains("waypoints")); assertFalse(url.contains("alternative"))
+        }
+    }
+
+    @Test fun addedRoadsRetainTheirSourcedWholeRoadEndpointsAndDirectionLabels() {
+        val roads = TrafficRepository.CORRIDORS.drop(3)
+        assertEquals(listOf("keshvari", "meysami", "habibollahi"), roads.map { it.id })
+        assertTrue(roads.all { it.coverageFa.isNotBlank() && it.referenceSec > 0 && it.originLat in 32.5..32.7 && it.destLat in 32.5..32.7 })
+        assertEquals(32.6144146, roads[0].originLat, .00000001)
+        assertEquals(51.6675926, roads[0].destLng, .00000001)
+        assertEquals(32.6043362, roads[1].destLat, .00000001)
+        assertEquals(32.6235237, roads[2].destLat, .00000001)
+    }
+
+    @Test fun unusedGeometryMetadataMayBeAbsentEmptyOrHaveAnotherShape() = runBlocking {
+        // Synthetic optional metadata, not live Neshan output. Only the legacy
+        // route leg values are consumed; arbitrary geometry is never measured.
+        for (geometry in listOf<Any?>(null, "", "_p~iF~ps|U_ulLnnqC_mqNvxq`@", JSONObject().put("points", ""), JSONArray())) {
+            val reply = JSONObject(body()).apply {
+                if (geometry != null) getJSONArray("routes").getJSONObject(0).put("overview_polyline", geometry)
+            }.toString()
+            val snapshot = TrafficRepository(AiHttpTransport { AiHttpResponse(200, reply) }).fetch("test-key")
+            assertEquals(expectedUrls.keys, snapshot.statuses.keys)
+        }
+    }
+
     @Test fun missingKeyFailsBeforeTransport() = runBlocking {
         var calls = 0
         try { TrafficRepository(AiHttpTransport { calls++; error("unexpected") }).fetch(""); fail("must reject") } catch (_: IllegalArgumentException) {}
@@ -61,6 +101,12 @@ class TrafficRepositoryTest {
         assertEquals(TrafficLevel.MODERATE, TrafficRepository.parse(body(1300.0), 1000.0).level)
         assertEquals(TrafficLevel.HEAVY, TrafficRepository.parse(body(1800.0), 1000.0).level)
     }
+    @Test fun multipleLegDurationsAndDistancesAreSummedAsBefore() {
+        val reply = """{"routes":[{"legs":[{"duration":{"value":600},"distance":{"value":4200}},{"duration":{"value":900},"distance":{"value":6200}}]}]}"""
+        val result = TrafficRepository.parse(reply, 1000.0)
+        assertEquals(TrafficLevel.MODERATE, result.level)
+        assertEquals("حدود 25 دقیقه · 10.4 کیلومتر", result.detail)
+    }
     @Test fun malformedProviderReplyCannotBecomeFreshTraffic() = runBlocking {
         try { TrafficRepository(AiHttpTransport { AiHttpResponse(200, "<html>secret-raw-page</html>") }).fetch("test-key"); fail("must reject") }
         catch (e: IllegalStateException) { assertFalse(e.message.orEmpty().contains("secret-raw-page")) }
@@ -70,50 +116,13 @@ class TrafficRepositoryTest {
         catch (e: IllegalStateException) { assertFalse(e.message.orEmpty().contains("sensitive")); assertFalse(e.message.orEmpty().contains("test-key")) }
     }
     @Test(expected = IllegalArgumentException::class) fun zeroTravelTimeIsNotReportedAsSmooth() { TrafficRepository.parse(body(0.0), 1000.0) }
-    @Test fun newFullLengthIsfahanRoadsHaveSourcedEndpointsAndOrderedEncodedWaypoints() {
-        val roads = TrafficRepository.CORRIDORS.filter { it.trace.isNotEmpty() }
-        assertEquals(setOf("keshvari", "meysami", "habibollahi"), roads.map { it.id }.toSet())
-        for (c in roads) {
-            assertTrue(c.coverageFa.contains("تمام مسیر"))
-            assertEquals(TrafficPoint(c.originLat, c.originLng), c.trace.first())
-            assertEquals(TrafficPoint(c.destLat, c.destLng), c.trace.last())
-            assertTrue(c.trace.size >= 4)
-            assertTrue(c.trace.all { it.lat in 32.5..32.7 && it.lng in 51.5..51.8 })
-            val url = TrafficRepository.directionUrl(c)
-            assertTrue(url.contains("alternative=false"))
-            assertTrue(url.endsWith("waypoints=" + c.trace.drop(1).dropLast(1).joinToString("%7C") { it.query() }))
-            assertFalse(url.contains("|"))
-            assertEquals(TrafficLevel.SMOOTH, TrafficRepository.parse(body(c.referenceSec, c.trace), c.referenceSec, c.trace).level)
-        }
-        assertEquals(32.6144146, roads.single { it.id == "keshvari" }.originLat, .00000001)
-        assertEquals(51.6675926, roads.single { it.id == "keshvari" }.destLng, .00000001)
-        assertEquals(32.6043362, roads.single { it.id == "meysami" }.destLat, .00000001)
-        assertEquals(32.6235237, roads.single { it.id == "habibollahi" }.destLat, .00000001)
+    @Test fun missingInvalidOrOversizedLegDataStillFailsInsteadOfInventingTraffic() {
+        for (reply in listOf(
+            """{"routes":[]}""", """{"routes":[{"legs":[]}]}""",
+            """{"routes":[{"legs":[{"distance":{"value":10}}]}]}""",
+            """{"routes":[{"legs":[{"duration":{"value":60},"distance":{"value":-1}}]}]}""",
+            """{"routes":[{"legs":[{"duration":{"value":-1},"distance":{"value":10}}]}]}""",
+            " ".repeat(128 * 1024 + 1),
+        )) assertTrue(runCatching { TrafficRepository.parse(reply, 1000.0) }.isFailure)
     }
-    @Test fun partialReversedMissingOrOffRoadGeometryCannotBeRelabelledAsTheWholeHighway() {
-        for (c in TrafficRepository.CORRIDORS.filter { it.trace.isNotEmpty() }) {
-            val wrong = listOf(c.trace.drop(1), c.trace.dropLast(1), c.trace.reversed(),
-                c.trace.toMutableList().apply { this[2] = TrafficPoint(this[2].lat + .02, this[2].lng) })
-            for ((index, points) in wrong.withIndex()) {
-                assertTrue("${c.id}: invalid geometry $index", runCatching { TrafficRepository.parse(body(c.referenceSec, points), c.referenceSec, c.trace) }.isFailure)
-            }
-            assertTrue(runCatching { TrafficRepository.parse(body(c.referenceSec), c.referenceSec, c.trace) }.isFailure)
-        }
-    }
-    @Test fun endpointsRequireTheWholeRoadButAllowSmallProviderSnapping() {
-        for (c in TrafficRepository.CORRIDORS.filter { it.trace.isNotEmpty() }) {
-            for (index in listOf(0, c.trace.lastIndex)) {
-                val near = c.trace.toMutableList().apply { this[index] = TrafficPoint(this[index].lat + .0002, this[index].lng) }
-                assertEquals(TrafficLevel.SMOOTH, TrafficRepository.parse(body(c.referenceSec, near), c.referenceSec, c.trace).level)
-                val short = c.trace.toMutableList().apply { this[index] = TrafficPoint(this[index].lat + .0007, this[index].lng) }
-                assertTrue("${c.id}: endpoint $index is over 50 m away", runCatching { TrafficRepository.parse(body(c.referenceSec, short), c.referenceSec, c.trace) }.isFailure)
-            }
-        }
-    }
-    @Test fun malformedOrHugePolylineIsBoundedAndDoesNotBecomeFreshTraffic() {
-        val c = TrafficRepository.CORRIDORS.single { it.id == "meysami" }
-        for (text in listOf("", "~~~~~~~", "\u0000", "?", "?".repeat(65537)))
-            assertTrue(runCatching { TrafficRepository.verifyTrace(text, c.trace) }.isFailure)
-    }
-
 }

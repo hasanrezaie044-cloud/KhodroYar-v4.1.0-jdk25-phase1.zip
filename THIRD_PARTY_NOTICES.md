@@ -37,7 +37,7 @@ remain available in Git history; the active application retains the Vazirmatn li
 
 ## Isfahan route coordinates (5.5.7)
 
-The three new fixed-route coordinate traces are derived from **© OpenStreetMap
+The three new fixed-route endpoint coordinate pairs are derived from **© OpenStreetMap
 contributors**, under [ODbL 1.0](https://www.openstreetmap.org/copyright). Attribution
 is visible in the traffic screen. Public source ways/nodes, endpoints, directions
 and limitations are documented in [docs/TRAFFIC-ROUTES.md](docs/TRAFFIC-ROUTES.md).

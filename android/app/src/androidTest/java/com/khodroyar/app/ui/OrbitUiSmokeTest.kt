@@ -41,6 +41,7 @@ import com.khodroyar.app.data.db.*
 import com.khodroyar.app.data.prefs.AppSettings
 import com.khodroyar.app.data.prefs.SettingsStore
 import com.khodroyar.app.data.repo.AppRepository
+import com.khodroyar.app.traffic.TrafficRepository
 import com.khodroyar.app.ui.components.*
 import com.khodroyar.app.ui.screens.*
 import com.khodroyar.app.ui.theme.*
@@ -450,6 +451,44 @@ class OrbitUiSmokeTest {
             compose.onNodeWithTag("traffic-route-$id").performScrollTo().assertIsDisplayed()
         }
         shot("35b-isfahan-full-road-catalogue")
+    }
+
+    @Test fun trafficDisplaysAllSixUsingTheWorkingLegacyNeshanContractAndManualRefresh() {
+        val requests = java.util.Collections.synchronizedList(mutableListOf<AiHttpRequest>())
+        val reply = """{"routes":[{"legs":[{"duration":{"value":360},"distance":{"value":6000}}]}]}"""
+        val traffic = TrafficRepository(AiHttpTransport { request ->
+            assertEquals("GET", request.method)
+            assertEquals(mapOf("Api-Key" to "synthetic-neshan-compatibility-key"), request.headers)
+            assertNull(request.body)
+            val query = java.net.URI(request.url).rawQuery.split('&').map { it.substringBefore('=') }.toSet()
+            assertEquals(setOf("type", "origin", "destination"), query)
+            requests.add(request)
+            AiHttpResponse(200, reply) // No polyline/waypoints; no live network.
+        })
+        repository.updateSettings { it.copy(neshanApiKey = "synthetic-neshan-compatibility-key", trafficNotifyEnabled = false) }
+        render { TrafficAssistantScreen(repository, traffic) }
+        compose.waitUntil(30_000) { compose.onAllNodesWithTag("traffic-last-updated").fetchSemanticsNodes().size == 1 }
+        assertEquals(6, requests.size)
+        assertEquals(TrafficRepository.CORRIDORS.map { TrafficRepository.directionUrl(it) }.toSet(), requests.map { it.url }.toSet())
+        for (route in TrafficRepository.CORRIDORS) {
+            compose.onNodeWithTag("traffic-route-${route.id}").performScrollTo().assertIsDisplayed()
+            val expected = if (route.id in setOf("meysami", "habibollahi")) "سنگین" else "روان"
+            compose.onNode(hasText(expected) and hasAnyAncestor(hasTestTag("traffic-route-${route.id}"))).assertIsDisplayed()
+        }
+        compose.onAllNodesWithText("هنوز بررسی نشده").assertCountEquals(0)
+        compose.onNodeWithTag("traffic-error").assertDoesNotExist()
+        shot("37-traffic-legacy-response-six-routes")
+        compose.onNodeWithTag("traffic-refresh").performScrollTo().performClick()
+        compose.waitUntil(30_000) {
+            requests.size == 12 && compose.onAllNodesWithText("بروزرسانی").fetchSemanticsNodes().size == 1
+        }
+        compose.onNodeWithTag("traffic-refresh").assertIsEnabled()
+        compose.onNodeWithTag("traffic-error").assertDoesNotExist()
+        val evidence = JSONObject().put("environment", "Synthetic Neshan transport; NOT live Neshan")
+            .put("passed", true).put("routes", org.json.JSONArray(TrafficRepository.CORRIDORS.map { it.id }))
+            .put("requests", requests.size).put("automatic_and_manual", true).put("legacy_query_only", true)
+            .put("reply_has_polyline", false).put("all_six_statuses_displayed", true)
+        publishSyntheticEvidence(context, "KhodroYar-UI-Smoke", "traffic-legacy.json", "application/json", evidence.toString().toByteArray())
     }
 
     @Test fun quickExpenseRequiresReviewSupportsCorrectionAndConfirmedUndoAtLargeFont() {

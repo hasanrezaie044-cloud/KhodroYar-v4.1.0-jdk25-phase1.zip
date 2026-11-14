@@ -1,6 +1,6 @@
 # مدیریت خودرو — Native Android
 
-## Current source: 5.5.7 (versionCode 74), based on restored 5.4.0
+## Current source: 5.5.8 (versionCode 75), based on restored 5.4.0
 
 Same `com.khodroyar.app`, Room 6, financial formulas and original signing identity:
 
@@ -19,10 +19,14 @@ Same `com.khodroyar.app`, Room 6, financial formulas and original signing identi
   download. FastOCR uses the user's encrypted personal key and explicit consent for
   **each** send. Saved text can be reparsed locally without another upload/charge;
   ordinary records, calculations and the local agent still work offline.
-- **Isfahan traffic**: add Shahid Keshvari, Shahid Meysami and Shahid Habibollahi to the
-  three existing routes. Sourced endpoints, intermediate waypoints and response-geometry
-  checks cover one stated direction of each full named road, not both carriageways or
-  point-by-point congestion. These are travel-time estimates, not live-provider validation.
+- **Traffic compatibility restored**: all six roads use the working 5.5.6 Neshan
+  request (`type=car`, origin, destination) and the exact old leg duration/distance
+  parser. The 5.5.7 waypoint parameters and mandatory polyline/geometry checks are
+  removed. Original routes and the sourced endpoints/directions of Keshvari, Meysami
+  and Habibollahi stay. Neshan chooses the actual route between those endpoints;
+  this is an estimated travel time, not point-by-point highway congestion. A native
+  mocked-transport test covers all six visible statuses and manual refresh using
+  the old reply shape without geometry. No personal key or live Neshan call is used.
 - **Privacy & disclaimer v2**: shared in-app and Bazaar-ready Persian text covers
   responsibility for inputs, incomplete/wrong OCR, unofficial outputs, optional third-party
   services and decisions based on results. Existing v1 acceptance must be renewed explicitly.

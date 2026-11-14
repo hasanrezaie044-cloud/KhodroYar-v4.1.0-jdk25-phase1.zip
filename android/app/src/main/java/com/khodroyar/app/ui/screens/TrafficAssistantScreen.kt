@@ -43,10 +43,9 @@ import java.util.concurrent.TimeUnit
 private val CORRIDORS = TrafficRepository.CORRIDORS
 
 @Composable
-fun TrafficAssistantScreen(repository: AppRepository) {
+fun TrafficAssistantScreen(repository: AppRepository, traffic: TrafficRepository = remember { TrafficRepository() }) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    val traffic = remember { TrafficRepository() }
     val settings by repository.settings.collectAsState(initial = repository.settingsNow)
 
     var apiKeyDraft by remember(settings.neshanApiKey) { mutableStateOf(settings.neshanApiKey) }
@@ -159,7 +158,7 @@ fun TrafficAssistantScreen(repository: AppRepository) {
             Button(
                 onClick = { refresh() },
                 enabled = !loading && settings.neshanApiKey.isNotBlank(),
-                modifier = Modifier.weight(1f),
+                modifier = Modifier.weight(1f).testTag("traffic-refresh"),
             ) {
                 if (loading) {
                     CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp, color = MaterialTheme.colorScheme.onPrimary)
@@ -179,10 +178,10 @@ fun TrafficAssistantScreen(repository: AppRepository) {
         }
 
         lastUpdated?.let {
-            Text("آخرین بروزرسانی: $it", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text("آخرین بروزرسانی: $it", modifier = Modifier.testTag("traffic-last-updated"), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         error?.let {
-            Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium)
+            Text(it, modifier = Modifier.testTag("traffic-error"), color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium)
         }
 
         CORRIDORS.forEach { c ->
