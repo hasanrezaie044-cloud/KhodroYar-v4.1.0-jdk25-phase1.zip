@@ -3,7 +3,7 @@ package com.khodroyar.app.ai
 import java.time.Instant
 
 /** A documented free quota is not zero-priced inference on a paid account. Never conflate the two. */
-enum class AICostEvidence { ZERO_PRICE, FREE_QUOTA, UNKNOWN, PAYMENT_REQUIRED }
+enum class AICostEvidence { ZERO_PRICE, FREE_QUOTA, UNKNOWN, PAYMENT_REQUIRED, ACCOUNT_QUOTA }
 enum class AIUseRegion { UNKNOWN, IRAN, SUPPORTED_ELSEWHERE }
 data class AIProviderDescriptor(val mode: AiMode, val id: String, val title: String, val cost: AICostEvidence,
     val iran: String, val conditions: String, val sources: List<String>, val adapterImplemented: Boolean = true)
@@ -11,12 +11,13 @@ object AIProviderRegistry {
     // Explicit policy snapshot: live model discovery alone cannot establish a provider's billing plan.
     const val VERIFIED_ON = "2026-11-10"
     val POLICY_EXPIRES_AT: Long = Instant.parse("2026-12-10T00:00:00Z").toEpochMilli()
+    val supportedModes = listOf(AiMode.LOCAL, AiMode.OPENROUTER, AiMode.GEMINI, AiMode.GROQ, AiMode.CLAUDE, AiMode.FIREWORKS, AiMode.GPT)
     val providers = listOf(
         AIProviderDescriptor(AiMode.OPENROUTER, "openrouter", "OpenRouter", AICostEvidence.ZERO_PRICE,
             "دسترسی ایران/حساب تضمین نشده؛ پاسخ سرویس ملاک است، نه VPN یا دورزدن محدودیت.",
             "فقط همهٔ قیمت‌های دقیقاً صفر + فهرست مجاز کلید + endpoint تازه؛ سهمیه محدود و نامعلوم تا اعلام معتبر سرویس.",
             listOf("https://openrouter.ai/docs/api_reference/models", "https://openrouter.ai/docs/guides/routing/provider-selection")),
-        AIProviderDescriptor(AiMode.GEMINI, "gemini", "Google Gemini", AICostEvidence.FREE_QUOTA,
+        AIProviderDescriptor(AiMode.GEMINI, "gemini", "Gemini", AICostEvidence.FREE_QUOTA,
             "ایران در فهرست رسمی مناطق مجاز Gemini API نیست؛ در حالت ایران ارسال مسدود است.",
             "فقط پروژهٔ Free بدون billing و مدلِ دارای Free tier؛ تعداد دقیق سهمیه وابسته به پروژه است. دادهٔ Free ممکن است برای بهبود محصولات استفاده شود؛ ابزارهای دادهٔ برنامه در این اتصال غیرفعال‌اند.",
             listOf("https://ai.google.dev/gemini-api/docs/pricing", "https://ai.google.dev/gemini-api/docs/available-regions", "https://ai.google.dev/gemini-api/docs/rate-limits")),
@@ -24,6 +25,20 @@ object AIProviderRegistry {
             "محدودیت صادرات/تحریم و حساب دارد؛ مجازبودن استفاده در ایران تأیید نشده و در برنامه مسدود است.",
             "فقط حساب Free بدون روش پرداخت؛ Developer پولی است. سقف نمونهٔ مستند GPT-OSS: ۳۰ RPM، ۱۰۰۰ RPD، ۸۰۰۰ TPM و ۲۰۰۰۰۰ TPD؛ حساب ممکن است متفاوت باشد. باقی‌مانده فقط از هدر معتبر همان پاسخ نمایش داده می‌شود.",
             listOf("https://console.groq.com/docs/billing-faqs", "https://console.groq.com/docs/rate-limits", "https://console.groq.com/docs/legal/services-agreement")),
+        AIProviderDescriptor(AiMode.CLAUDE, "claude", "Claude", AICostEvidence.ACCOUNT_QUOTA,
+            "فقط در منطقه و حساب مجاز سرویس.", "سهمیه و هزینه طبق حساب Anthropic؛ خرید یا ارتقا توسط برنامه انجام نمی‌شود.",
+            listOf("https://docs.anthropic.com/en/api/messages")),
+        AIProviderDescriptor(AiMode.FIREWORKS, "fireworks", "Fireworks AI", AICostEvidence.ACCOUNT_QUOTA,
+            "فقط در منطقه و حساب مجاز سرویس.", "سهمیه و هزینه طبق حساب Fireworks؛ خرید یا ارتقا توسط برنامه انجام نمی‌شود.",
+            listOf("https://docs.fireworks.ai/api-reference/post-chatcompletions")),
+        AIProviderDescriptor(AiMode.GPT, "gpt", "GPT", AICostEvidence.ACCOUNT_QUOTA,
+            "فقط در منطقه و حساب مجاز سرویس.", "سهمیه و هزینه طبق حساب OpenAI؛ خرید یا ارتقا توسط برنامه انجام نمی‌شود.",
+            listOf("https://platform.openai.com/docs/api-reference/chat")),
+        AIProviderDescriptor(AiMode.LOCAL, "local", "دستیار آفلاین", AICostEvidence.ZERO_PRICE,
+            "بدون شبکه", "روی همین دستگاه", emptyList()),
+    )
+    // Read-only compatibility for old preferences/tests; never offered in the supported picker.
+    private val legacy = listOf(
         AIProviderDescriptor(AiMode.CLOUDFLARE, "cloudflare", "Cloudflare Workers AI", AICostEvidence.FREE_QUOTA,
             "دسترسی و مجوز ایران تأیید نشده؛ در حالت ایران ارسال مسدود است.",
             "Workers Free: روزانه ۱۰۰۰۰ Neuron، نه ۱۰۰۰۰ توکن. Workers Paid اضافه‌مصرف پولی دارد. فقط پس از اثبات Workers Free از API اشتراک؛ وضعیت مجهول یا Paid مسدود است.",
@@ -39,21 +54,29 @@ object AIProviderRegistry {
             "AvalAI API سازگار و قیمت‌گذاری دارد؛ طرح رایگان بدون کارت/پرداختِ قابل اثبات پیدا نشد. اتصال قدیمی GapGPT حفظ شده اما مسیر پولی فعال یا fallback نیست.",
             listOf("https://docs.avalai.ir/fa/", "https://gapgpt.app/"), false),
     )
-    fun get(mode: AiMode): AIProviderDescriptor = providers.firstOrNull { it.mode == mode } ?: providers.first()
+
+    fun get(mode: AiMode): AIProviderDescriptor = (providers + legacy).firstOrNull { it.mode == mode } ?: providers.first()
     fun normalizeKey(mode: AiMode, raw: String): String? {
         val key = raw.trim()
         if (key.length !in 24..512 || key.any { it.isWhitespace() || it.isISOControl() || it == '"' || it == '\\' }) return null
         return when (mode) {
             AiMode.OPENROUTER -> OpenRouterFreePolicy.normalizeKey(key)
             AiMode.GEMINI -> key.takeIf { Regex("AIza[A-Za-z0-9_-]{20,}").matches(it) }
+            AiMode.CLAUDE, AiMode.GPT -> key.takeIf { Regex("[A-Za-z0-9_-]{24,512}").matches(it) }
             AiMode.GROQ -> key.takeIf { Regex("gsk_[A-Za-z0-9_-]{20,}").matches(it) }
             else -> key.takeIf { Regex("[A-Za-z0-9_-]{24,512}").matches(it) }
         }
     }
     fun barrier(settings: AiSettings, now: Long): String? {
         val p = get(settings.mode)
+        if (settings.mode !in supportedModes) return "این اتصال دیگر پشتیبانی نمی‌شود؛ اتصال را انتخاب کنید."
         if (!p.adapterImplemented) return p.conditions
-        if (settings.mode == AiMode.OPENROUTER) return null
+        if (settings.mode in setOf(AiMode.OPENROUTER, AiMode.LOCAL)) return null
+        if (p.cost == AICostEvidence.ACCOUNT_QUOTA) {
+            if (settings.useRegion != AIUseRegion.SUPPORTED_ELSEWHERE) return "منطقهٔ مجاز این حساب را مشخص کنید."
+            if (p.id !in settings.accountTermsConfirmed) return "شرایط هزینه و سهمیهٔ حساب را تأیید کنید."
+            return null
+        }
         if (now >= POLICY_EXPIRES_AT) return "شواهد قیمت/شرایط این اتصال منقضی شده؛ بدون به‌روزرسانی تأییدشده درخواست نمی‌شود."
         if (settings.useRegion != AIUseRegion.SUPPORTED_ELSEWHERE) return p.iran + " محل استفادهٔ مجاز را صریحاً در تنظیمات مشخص کنید؛ دورزدن محدودیت نداریم."
         if (p.id !in settings.freeAccountConfirmed) return "طرح Free و نداشتن billing/روش پرداخت این حساب هنوز توسط شما تأیید نشده است. برنامه نمی‌تواند طرح حساب را از کلید حدس بزند."
@@ -68,6 +91,10 @@ object AIProviderRegistry {
         val u = request.url
         if (request.method == "GET" && request.body != null || request.method == "POST" && request.body == null) return false
         return when {
+            u == "https://api.openai.com/v1/models" -> request.method == "GET"
+            Regex("https://api\\.anthropic\\.com/v1/models\\?limit=100(?:&after_id=[A-Za-z0-9_-]{1,240})?").matches(u) -> request.method == "GET"
+            Regex("https://api\\.fireworks\\.ai/v1/accounts/fireworks/models\\?pageSize=200(?:&pageToken=[A-Za-z0-9%+._~-]{1,12288})?").matches(u) -> request.method == "GET"
+            u in setOf("https://api.openai.com/v1/chat/completions", "https://api.fireworks.ai/inference/v1/chat/completions", "https://api.anthropic.com/v1/messages") -> request.method == "POST"
             u == "https://api.groq.com/openai/v1/models" -> request.method == "GET"
             u == "https://api.groq.com/openai/v1/chat/completions" -> request.method == "POST"
             u == "https://generativelanguage.googleapis.com/v1beta/models" -> request.method == "GET"

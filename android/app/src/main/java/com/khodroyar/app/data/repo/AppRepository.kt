@@ -694,6 +694,9 @@ class AppRepository(context: Context) {
 
     fun suggestions(field: String): Flow<List<String>> = db.suggestions().observeField(field)
 
+    /** Removes only the remembered chip; never a service, route or financial record. */
+    suspend fun deleteSuggestion(field: String, value: String) = db.suggestions().deleteValue(field, value)
+
     private suspend fun rememberSuggestions(vararg entries: Pair<String, String>) {
         val now = System.currentTimeMillis()
         val items = entries

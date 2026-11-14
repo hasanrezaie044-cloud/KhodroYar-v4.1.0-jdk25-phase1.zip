@@ -36,7 +36,7 @@ class DirectModelAdapter(
         require(AIProviderRegistry.permittedEndpoint(req))
         val response = runtime.send(providerId, req, onEvent)
         unchanged(s)
-        if (response.status != 200) throw Rejected(ProviderFailurePolicy.http(response.status, response.retryAfter))
+        if (response.status != 200) throw Rejected(ProviderFailurePolicy.response(response))
         return response
     }
     private fun failure(e: Exception): AiResult.Failure = when (e) {
@@ -95,7 +95,7 @@ class DirectModelAdapter(
                 val context = if (mode == AiMode.GEMINI) row.optInt("inputTokenLimit", 0) else if (mode == AiMode.CLOUDFLARE) 24000 else row.optInt("context_window", 0)
                 val fp = MessageDigest.getInstance("SHA-256").digest("$providerId|$id|$context|${AIProviderRegistry.VERIFIED_ON}".toByteArray()).joinToString("") { "%02x".format(it) }
                 AIModel(AIModelKey(providerId, id), row.optString("displayName", id), AIProviderRegistry.get(mode).title, row.optString("owned_by", providerId),
-                    AIModelPricing(null, null, false), AIModelCapability(true, context), AIModelAuthorization.AUTHORIZED, now, fp,
+                    AIModelPricing(null, null, false), AIModelCapability(true, context, imageInput = mode == AiMode.GEMINI), AIModelAuthorization.AUTHORIZED, now, fp,
                     costEvidence = AICostEvidence.FREE_QUOTA, freeQuotaEligible = true)
             }
             require(models.map { it.key }.distinct().size == models.size)
@@ -118,7 +118,8 @@ class DirectModelAdapter(
         if (found is AIModelDiscovery.Failed) throw Rejected(found.error)
         val selected = cached.singleOrNull { it.key == model && AIRequestPolicy.eligibleMetadata(it, clock()) }
             ?: throw Rejected(AiResult.Failure(AiErrorKind.MODEL_INVALID, "مدل انتخابی در فهرست تازهٔ مجاز/سهمیهٔ Free تأیید نشد."))
-        require(request.maxOutputTokens in 1..s.usage.bounded().outputTokens)
+        if (request.messages.any { it.images.isNotEmpty() } && !selected.capability.imageInput)
+            throw Rejected(AiResult.Failure(AiErrorKind.MODEL_INVALID, "مدل انتخابی تصویر نمی‌پذیرد؛ یک مدل تصویری انتخاب کنید."))
         require(request.messages.none { key in it.content || AiTextSafety.containsCredential(it.content) || it.calls.any { c -> key in c.arguments || AiTextSafety.containsCredential(c.arguments) } })
         if (mode == AiMode.GEMINI) {
             // Free Gemini may train on data. Never allow database tools or send tool results from real chats here.
@@ -126,7 +127,6 @@ class DirectModelAdapter(
             require(evaluation || (request.tools.isEmpty() && request.messages.none { it.role == "tool" || it.calls.isNotEmpty() }))
             val decoder = GeminiTextStream(model.id, geminiAliases[model.id].orEmpty(), onText)
             val body = GeminiWire.request(request)
-            require(body.toString().toByteArray(Charsets.UTF_8).size + 128 <= selected.capability.contextLength)
             val url = base(s) + "/models/${model.id}:" + if (request.stream) "streamGenerateContent?alt=sse" else "generateContent"
             val response = request(s, key, url, body, if (request.stream) ({ event -> unchanged(s); decoder.accept(event) }) else null)
             if (request.stream && response.body.isBlank()) decoder.result() else GeminiWire.completion(response.body, model.id, geminiAliases[model.id].orEmpty())
@@ -136,7 +136,6 @@ class DirectModelAdapter(
             if (request.tools.isNotEmpty()) body.put("tools", OpenRouterToolSchemas.tools(request.tools, compact = true)).put("tool_choice", "auto")
             if (mode == AiMode.GROQ) { body.remove("max_tokens"); body.put("max_completion_tokens", request.maxOutputTokens) }
             if (request.stream) body.put("stream_options", JSONObject().put("include_usage", true))
-            require(body.toString().toByteArray(Charsets.UTF_8).size + 128 + request.maxOutputTokens <= selected.capability.contextLength)
             val decoder = OpenRouterStream(model.id, emptyList(), { text -> unchanged(s); onText(text) }, setOf(model.id))
             val url = base(s) + if (mode == AiMode.CLOUDFLARE) "/v1/chat/completions" else "/chat/completions"
             val response = request(s, key, url, body, if (request.stream) ({ event -> unchanged(s); decoder.accept(event) }) else null)

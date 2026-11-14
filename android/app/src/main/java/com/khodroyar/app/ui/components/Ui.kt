@@ -7,6 +7,8 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.selection.toggleable
@@ -590,6 +592,7 @@ fun SuggestField(
     modifier: Modifier = Modifier,
     numeric: Boolean = false,
     imeAction: ImeAction = ImeAction.Next,
+    onDeleteSuggestion: ((String) -> Unit)? = null,
 ) {
     val matches = remember(value, suggestions) {
         suggestions.filter { it.isNotBlank() && (value.isBlank() || it.contains(value, true)) && it != value }.take(6)
@@ -616,13 +619,26 @@ fun SuggestField(
                 modifier = Modifier.fillMaxWidth(),
             ) {
                 matches.forEach { s ->
-                    SuggestionChip(
-                        onClick = { onValue(s) },
-                        label = { Text(s, style = MaterialTheme.typography.labelMedium, maxLines = 1) },
-                        shape = RoundedCornerShape(10.dp),
-                    )
+                    if (onDeleteSuggestion == null) SuggestionChip(onClick = { onValue(s) },
+                        label = { Text(s, style = MaterialTheme.typography.labelMedium, maxLines = 1) }, shape = RoundedCornerShape(10.dp))
+                    else DeletableSuggestion(s, onPick = { onValue(s) }, onDelete = { onDeleteSuggestion(s) })
                 }
             }
+        }
+    }
+}
+
+/** Long press opens an explicit deletion action; the field itself is not edited. */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable private fun DeletableSuggestion(value: String, onPick: () -> Unit, onDelete: () -> Unit) {
+    var menu by remember(value) { mutableStateOf(false) }
+    Box {
+        Surface(shape = RoundedCornerShape(10.dp), border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+            modifier = Modifier.combinedClickable(onClick = onPick, onLongClick = { menu = true }, onLongClickLabel = "حذف پیشنهاد")) {
+            Text(value, Modifier.padding(horizontal = 12.dp, vertical = 10.dp), style = MaterialTheme.typography.labelMedium, maxLines = 1)
+        }
+        DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+            DropdownMenuItem(text = { Text("حذف پیشنهاد") }, onClick = { menu = false; onDelete() })
         }
     }
 }

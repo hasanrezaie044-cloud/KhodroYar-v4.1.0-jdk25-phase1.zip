@@ -25,8 +25,6 @@ class OpenRouterClient(
     private val requestLock = Mutex()
     private val _models = MutableStateFlow<List<VerifiedFreeModel>>(emptyList())
     val models = _models.asStateFlow()
-    private val attempts = ArrayDeque<Long>()
-    private var blockedUntil = 0L
 
     private class SafeFailure(val failure: AiResult.Failure) : Exception("OpenRouter request rejected")
     private fun fail(kind: AiErrorKind, message: String): Nothing = throw SafeFailure(AiResult.Failure(kind, message))
@@ -49,7 +47,6 @@ class OpenRouterClient(
     private fun checkHttp(response: AiHttpResponse) {
         if (response.status == 200) return
         val failure = OpenRouterFreePolicy.error(response.status, response.retryAfter)
-        if (failure.kind == AiErrorKind.RATE_LIMITED) blockedUntil = clock() + (failure.retryAfterSec ?: 60) * 1000L
         throw SafeFailure(failure)
     }
     private fun headers(key: String) = mapOf("Authorization" to "Bearer $key", "Content-Type" to "application/json", "Accept" to "application/json, text/event-stream")
@@ -66,21 +63,13 @@ class OpenRouterClient(
         return runtime.send("openrouter", request, onEvent)
     }
 
-    private fun checkLimit() {
-        val now = clock()
-        if (now < blockedUntil) throw SafeFailure(AiResult.Failure(AiErrorKind.RATE_LIMITED,
-            "محدودیت قبلی OpenRouter هنوز تمام نشده؛ تلاش خودکار یا تغییر به مدل پولی انجام نمی‌شود.", ((blockedUntil - now) / 1000 + 1).toInt()))
-        while (attempts.isNotEmpty() && attempts.first() <= now - 60000) attempts.removeFirst()
-        if (attempts.size >= 20) fail(AiErrorKind.RATE_LIMITED, "حد ایمنی برنامه: حداکثر ۲۰ درخواست مدل در یک دقیقه. کمی صبر کنید؛ سهمیهٔ حساب را OpenRouter تعیین می‌کند.")
-    }
     private suspend fun <T> guarded(work: suspend () -> T, failure: (AiResult.Failure) -> T): T = withContext(Dispatchers.IO) {
         requestLock.withLock {
-            try { checkLimit(); work() }
+            try { work() }
             catch (e: CancellationException) { throw e }
             catch (e: AIRequestRejected) { failure(e.failure) }
             catch (e: SafeFailure) { runtime.annotateFailure("openrouter", e.failure.kind); failure(e.failure) }
             catch (e: OpenRouterReplyFailure) {
-                if (e.failure.kind == AiErrorKind.RATE_LIMITED) blockedUntil = clock() + (e.failure.retryAfterSec ?: 60) * 1000L
                 runtime.annotateFailure("openrouter", e.failure.kind); failure(e.failure)
             }
             catch (_: SocketTimeoutException) { failure(AiResult.Failure(AiErrorKind.TIMEOUT, "مهلت پاسخ OpenRouter تمام شد؛ عملیات تأییدنشده اجرا نمی‌شود.")) }
@@ -112,17 +101,16 @@ class OpenRouterClient(
         require(available.available && AIRequestPolicy.fresh(available.checkedAt, clock(), AIRequestPolicy.METADATA_TTL_MS))
         require(model.key.id in responseIds && responseIds.all(OpenRouterModelMetadata::validId))
         val messages = query.messages
-        require(messages.isNotEmpty() && messages.size <= 80 && messages.sumOf { it.content.length + it.calls.sumOf { c -> c.arguments.length } } <= 160000)
+        if (messages.any { it.images.isNotEmpty() } && !model.capability.imageInput)
+            fail(AiErrorKind.MODEL_INVALID, "مدل انتخابی تصویر نمی‌پذیرد؛ یک مدل تصویری انتخاب کنید.")
+        require(messages.isNotEmpty() && messages.sumOf { it.content.length.toLong() + it.calls.sumOf { c -> c.arguments.length.toLong() } } <= 32L * 1024 * 1024)
         if (messages.any { key in it.content || AiTextSafety.containsCredential(it.content) || it.calls.any { c -> key in c.arguments || AiTextSafety.containsCredential(c.arguments) } })
             fail(AiErrorKind.BAD_REQUEST, "متن شبیه کلید API است؛ ارسال نمی‌شود. کلید فقط در تنظیمات امن وارد شود.")
-        require(query.maxOutputTokens in 128..configuration().usage.bounded().outputTokens)
         val streaming = query.stream && transport is AiStreamingTransport
         val body = JSONObject().put("model", model.key.id).put("messages", JSONArray().apply { messages.forEach { put(OpenRouterWire.messageJson(it)) } })
             .put("stream", streaming).put("max_tokens", query.maxOutputTokens).put("provider", OpenRouterFreePolicy.routing())
         if (query.tools.isNotEmpty()) body.put("tools", OpenRouterToolSchemas.tools(query.tools, compact = true)).put("tool_choice", "auto")
         if (streaming) body.put("stream_options", JSONObject().put("include_usage", true))
-        require(body.toString().toByteArray(Charsets.UTF_8).size + 128 + query.maxOutputTokens <= model.capability.contextLength)
-        attempts.addLast(clock())
         val context = currentCoroutineContext()
         val decoder = OpenRouterStream(model.key.id, emptyList(), { text -> context.ensureActive(); requireScope(expectedScope); onText(text) }, responseIds)
         val response = request(AiHttpRequest(OpenRouterFreePolicy.CHAT_URL, "POST", headers(key), body.toString()),
@@ -143,7 +131,7 @@ class OpenRouterClient(
     private suspend fun perform(messages: List<FunctionMessage>, schemas: JSONArray, forcedTool: String?, onText: (String) -> Unit): FunctionResult = guarded({
         val (s, key) = account()
         if (!OpenRouterFreePolicy.isFreeId(s.openRouterModel)) fail(AiErrorKind.BAD_REQUEST, "فقط openrouter/free یا مدل :free تأییدشده مجاز است؛ درخواست پولی ارسال نشد.")
-        require(messages.isNotEmpty() && messages.size <= 80 && messages.sumOf { it.content.length + it.calls.sumOf { c -> c.arguments.length } } <= 160000)
+        require(messages.isNotEmpty() && messages.sumOf { it.content.length.toLong() + it.calls.sumOf { c -> c.arguments.length.toLong() } } <= 32L * 1024 * 1024)
         if (messages.any { OpenRouterFreePolicy.containsCredential(it.content) || it.calls.any { c -> OpenRouterFreePolicy.containsCredential(c.arguments) } }) fail(AiErrorKind.BAD_REQUEST, "متن شبیه کلید API است؛ ذخیره یا ارسال نمی‌شود. کلید را فقط در تنظیمات امن وارد کنید.")
         val catalog = fetchCatalog() // Never authorise from an old UI list, a suffix, or a remembered zero price.
         val selected = s.openRouterModel
@@ -151,10 +139,9 @@ class OpenRouterClient(
         val streaming = forcedTool == null && transport is AiStreamingTransport
         val body = JSONObject().put("tool_choice", "auto").put("model", selected).put("messages", JSONArray().apply { messages.forEach { put(OpenRouterWire.messageJson(it)) } })
             .put("tools", schemas).put("provider", OpenRouterFreePolicy.routing()).put("stream", streaming)
-            .put("max_tokens", if (forcedTool != null) 256 else s.usage.bounded().outputTokens)
+            .apply { if (forcedTool != null) put("max_tokens", 256) }
         if (forcedTool != null) body.put("tool_choice", JSONObject().put("type", "function").put("function", JSONObject().put("name", forcedTool)))
         // No models array, plugins, web search, paid fallback, custom endpoint, or purchasing API exists here.
-        attempts.addLast(clock())
         val request = AiHttpRequest(OpenRouterFreePolicy.CHAT_URL, "POST", headers(key), body.toString())
         val context = currentCoroutineContext()
         val decoder = OpenRouterStream(selected, catalog, onText = { text -> context.ensureActive(); onText(text) })

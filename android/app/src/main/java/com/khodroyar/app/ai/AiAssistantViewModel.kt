@@ -36,8 +36,11 @@ class AiAssistantViewModel @JvmOverloads constructor(
     private val openRouter = OpenRouterClient(settingsStore::load, OpenRouterApiKeyStore(app), http, runtime = requestRuntime)
     private val selectedAdapter = SelectedAIModelAdapter({ settingsStore.load().mode }, mapOf(
         AiMode.OPENROUTER to OpenRouterModelAdapter(openRouter),
-        *listOf(AiMode.GEMINI, AiMode.GROQ, AiMode.CLOUDFLARE).map { mode ->
+        *listOf(AiMode.GEMINI, AiMode.GROQ).map { mode ->
             mode to DirectModelAdapter(mode, settingsStore::load, ProviderApiKeyStore(app, mode), requestRuntime)
+        }.toTypedArray(),
+        *listOf(AiMode.CLAUDE, AiMode.FIREWORKS, AiMode.GPT).map { mode ->
+            mode to AccountModelAdapter(mode, settingsStore::load, ProviderApiKeyStore(app, mode), requestRuntime)
         }.toTypedArray()))
     private val managedModels = ManagedAIProvider(selectedAdapter, {
         settingsStore.load().let { s -> AISelectionSettings(s.enabled && s.mode != AiMode.LOCAL, s.consented,
@@ -90,7 +93,17 @@ class AiAssistantViewModel @JvmOverloads constructor(
         private set
     var usageLedger by mutableStateOf(usageStore.read())
         private set
-    val networkBusy: Boolean get() = busy || savingSettings || testJob?.isActive == true || statusJob?.isActive == true || modelState.checking
+    val networkBusy: Boolean get() = busy || imageLoading || savingSettings || testJob?.isActive == true || statusJob?.isActive == true || modelState.checking
+    var draftText by mutableStateOf("")
+        private set
+    fun editDraft(value: String) { draftText = value }
+    var canContinue by mutableStateOf(false)
+        private set
+    fun dismissFailure() { failure = null }
+    fun continueTurn() {
+        if (!canContinue || networkBusy || pending != null || !settings.enabled) return
+        canContinue = false; runAgent(retrying = true)
+    }
     var streamingText by mutableStateOf("")
         private set
 
@@ -113,6 +126,49 @@ class AiAssistantViewModel @JvmOverloads constructor(
     private var pendingFromAgent = false
 
     val activeModel: String get() = if (settings.mode == AiMode.LOCAL) "داخلی · بدون مدل/شبکه" else modelState.active?.let { "${AIProviderRegistry.get(settings.mode).title} · ${it.id}" } ?: "مدل را در تنظیمات انتخاب کنید"
+
+    val imageStore = ChatImageStore(app)
+    var draftImage by mutableStateOf<ChatImageRef?>(null)
+        private set
+    var imageLoading by mutableStateOf(false)
+        private set
+    fun attachImage(uri: android.net.Uri, fromCamera: Boolean = false) {
+        if (busy || savingSettings || imageLoading || executingAction) { if (fromCamera) imageStore.discardCamera(uri); return }
+        imageLoading = true
+        viewModelScope.launch {
+            try { val image = imageStore.prepare(uri); draftImage = image; pruneImages() }
+            catch (e: CancellationException) { throw e }
+            catch (_: Exception) { failure = AiResult.Failure(AiErrorKind.BAD_REQUEST, "تصویر باز نشد؛ JPG، PNG یا WebP انتخاب کنید.") }
+            finally { if (fromCamera) imageStore.discardCamera(uri); imageLoading = false }
+        }
+    }
+    fun removeDraftImage() { draftImage = null; pruneImages() }
+    fun reuseImage(ref: ChatImageRef) {
+        if (networkBusy) return
+        if (imageStore.file(ref).isFile) draftImage = ref
+        else failure = AiResult.Failure(AiErrorKind.BAD_REQUEST, "تصویر محلی موجود نیست؛ دوباره پیوست کنید.")
+    }
+    private fun pruneImages() {
+        viewModelScope.launch {
+            val saved = conversations.load().flatMap { it.messages }.mapNotNull { it.image }
+            val retained = (saved + messages.mapNotNull { it.image } + listOfNotNull(draftImage)).toSet()
+            withContext(Dispatchers.IO) { imageStore.prune(retained) }
+        }
+    }
+    fun selectChatProvider(mode: AiMode, afterSave: () -> Unit = {}) {
+        if (pending != null) return
+        val image = draftImage
+        configure(settings.copy(mode = mode, modelSelectionMode = AISelectionMode.MANUAL), "", false) {
+            draftImage = image; afterSave(); if (settings.consented) refreshModels()
+        }
+    }
+    fun selectChatModel(mode: AiMode, id: String, afterSave: () -> Unit = {}) {
+        if (pending != null || modelState.models.none { it.model.key.id == id && it.selectableAt(System.currentTimeMillis()) }) return
+        val image = draftImage
+        configure(settings.withModel(mode, id).copy(mode = mode, modelSelectionMode = AISelectionMode.MANUAL), "", false) {
+            draftImage = image; afterSave()
+        }
+    }
 
     init {
         viewModelScope.launch { automationStore.rules.collect { automations = it } }
@@ -175,7 +231,6 @@ class AiAssistantViewModel @JvmOverloads constructor(
     fun testModels() {
         if (networkBusy || settings.mode == AiMode.LOCAL) return
         if (settings.modelSelectionMode == AISelectionMode.MANUAL && settings.modelFor().isBlank()) { testMessage = "ابتدا یک مدل مشخص را پس از بررسی فراداده انتخاب و ذخیره کنید."; return }
-        if (settings.usage.bounded().outputTokens < 384) { testMessage = "آزمون اختیاری به سقف خروجی حداقل۳۸۴ نیاز دارد؛ سقف انتخابی شما خودکار بالا نمی‌رود."; return }
         if (!settings.enabled || !hasOpenRouterKey) { testMessage = "ابتدا کلید و مدل همین اتصال را ذخیره کنید."; return }
         if (!settings.consented) { queuedText = null; queuedTest = false; queuedManualTest = true; needsConsent = true; return }
         connection = ConnectionState.CHECKING
@@ -192,7 +247,8 @@ class AiAssistantViewModel @JvmOverloads constructor(
             catch (_: Exception) { connection = ConnectionState.ERROR; testMessage = "آزمون کامل نشد؛ تکرار خودکار نداریم." }
         }
     }
-    fun refreshModels() {
+    fun refreshModels(explicit: Boolean = true) {
+        if (!explicit && !usageStore.read().permitsBackgroundMetadata(settings.modelAccountScope)) return
         if (networkBusy || settings.mode == AiMode.LOCAL || !settings.consented || !hasOpenRouterKey) return
         statusJob?.cancel()
         statusJob = viewModelScope.launch {
@@ -244,7 +300,7 @@ class AiAssistantViewModel @JvmOverloads constructor(
         val newAccount = new.mode != settings.mode || forceNewConsent || new.cloudflareAccountId != settings.cloudflareAccountId
         val changed = newAccount || new.modelFor() != settings.modelFor() || new.modelSelectionMode != settings.modelSelectionMode || new.usage != settings.usage
         if (!new.usage.saveHistory) historySave?.cancel()
-        if (changed) newChat() else if (!new.enabled) { stop(); pending = null; local.dialogue.reset(); localContext = local.dialogue.context }
+        if (newAccount) newChat() else if (changed || !new.enabled) { stop(); pending = null; local.dialogue.reset(); localContext = local.dialogue.context }
         testJob?.cancel(); statusJob?.cancel()
         settingsStore.save(new.copy(consented = !newAccount && new.consented, modelAccountScope = if (newAccount && !forceNewConsent) UUID.randomUUID().toString() else new.modelAccountScope))
         settings = settingsStore.load(); managedModels.invalidate(); AIModelCatalogScheduler.sync(getApplication())
@@ -264,7 +320,7 @@ class AiAssistantViewModel @JvmOverloads constructor(
         queuedText = null
         queuedTest = false
         queuedManualTest = false
-        if (test) testConnection() else if (manual) testModels() else { refreshStatus(); if (text != null) send(text) }
+        if (test) testConnection() else if (manual) testModels() else { refreshStatus(); if (text != null && submit(text) && draftText.trim() == text) draftText = "" }
     }
 
     fun declineConsent() {
@@ -282,15 +338,18 @@ class AiAssistantViewModel @JvmOverloads constructor(
         if (text != null) send(text)
     }
 
-    fun send(raw: String) {
+    fun send(raw: String) { submit(raw) }
+    fun sendDraft() { if (submit(draftText)) draftText = "" }
+    private fun submit(raw: String): Boolean {
         val text = raw.trim()
-        if (text.isEmpty() || networkBusy || !settings.enabled || text.length > (if (settings.mode == AiMode.LOCAL) AiLimits.MAX_USER_CHARS else PersianAgentLimits.USER_CHARS)) return
+        if ((text.isEmpty() && draftImage == null) || networkBusy || !settings.enabled) return false
+        if (draftImage != null && settings.mode == AiMode.LOCAL) { failure = AiResult.Failure(AiErrorKind.MODEL_INVALID, "برای تصویر یک مدل آنلاین تصویری انتخاب کنید."); return false }
         if (OpenRouterFreePolicy.containsCredential(text) || selectedSecret?.let { it in text } == true) {
             failure = AiResult.Failure(AiErrorKind.BAD_REQUEST, "این متن شبیه کلید API است؛ در تاریخچه ذخیره یا ارسال نشد. کلید را فقط در تنظیمات امن وارد کنید.")
-            return
+            return false
         }
         if (pending != null) {
-            if (settings.mode != AiMode.LOCAL) return
+            if (settings.mode != AiMode.LOCAL) return false
             messages.add(ChatEntry(UUID.randomUUID().toString(), ChatRole.USER, text, System.currentTimeMillis()))
             persist()
             val grouped = pending!!.call.spec.name.startsWith("bulk_")
@@ -299,30 +358,35 @@ class AiAssistantViewModel @JvmOverloads constructor(
                 if (baseDecision == LocalApprovalInput.Decision.CONFIRM) LocalApprovalInput.Decision.REQUIRE_BUTTON else baseDecision
             } else LocalApprovalInput.classify(text, pending!!.destructive)
             when (decision) {
-                LocalApprovalInput.Decision.CONFIRM -> { confirmPending(); return }
-                LocalApprovalInput.Decision.CANCEL -> { cancelPending(); return }
+                LocalApprovalInput.Decision.CONFIRM -> { confirmPending(); return true }
+                LocalApprovalInput.Decision.CANCEL -> { cancelPending(); return true }
                 LocalApprovalInput.Decision.REQUIRE_BUTTON -> {
                     add(ChatRole.ASSISTANT, "عملیات گروهی یا حذف فقط با دکمهٔ تأیید همین خلاصه انجام می‌شود؛ برای انصراف «لغو» بگو.")
-                    return
+                    return false
                 }
                 LocalApprovalInput.Decision.REVISE -> Unit
             }
             // A correction invalidates the old approval card BEFORE it is parsed.
             pending = null
             runAgent()
-            return
+            return true
+        }
+        if (draftImage != null && modelState.models.firstOrNull { it.model.key.id == (modelState.active?.id ?: settings.modelFor()) }?.model?.capability?.imageInput == false) {
+            failure = AiResult.Failure(AiErrorKind.MODEL_INVALID, "این مدل تصویر نمی‌پذیرد؛ مدل تصویری انتخاب کنید."); return false
         }
         if (foreignHistory) { newChat(); foreignHistory = false }
         if (settings.mode != AiMode.LOCAL && !settings.consented) {
             queuedTest = false; queuedManualTest = false
             queuedText = text
             needsConsent = true
-            return
+            return false
         }
         failure = null
-        messages.add(ChatEntry(UUID.randomUUID().toString(), ChatRole.USER, text, System.currentTimeMillis()))
+        messages.add(ChatEntry(UUID.randomUUID().toString(), ChatRole.USER, text, System.currentTimeMillis(), draftImage))
+        draftImage = null
         persist()
         runAgent()
+        return true
     }
 
     fun retry() {
@@ -341,8 +405,9 @@ class AiAssistantViewModel @JvmOverloads constructor(
         if (out.ok && out.section != null) navigation = out.section
     }
     private fun applyStep(step: AgentStep) {
-        streamingText = ""
+        streamingText = ""; canContinue = false
         when (step) {
+            AgentStep.Continue -> canContinue = true
             is AgentStep.Reply -> add(ChatRole.ASSISTANT, step.text)
             is AgentStep.Result -> { add(ChatRole.RESULT, (if (step.outcome.ok) "" else "⚠️ ") + step.outcome.text); if (step.outcome.ok) navigation = step.outcome.section }
             is AgentStep.Confirm -> { pendingFromAgent = settings.mode != AiMode.LOCAL; if (step.pending.lead.isNotBlank()) add(ChatRole.ASSISTANT, step.pending.lead); pending = step.pending }
@@ -358,19 +423,21 @@ class AiAssistantViewModel @JvmOverloads constructor(
         }
     }
     private fun runAgent(retrying: Boolean = false) {
-        busy = true; streamingText = ""
+        busy = true; streamingText = ""; canContinue = false
         val run = ++generation; val mode = settings.mode; val snapshot = messages.toList()
         job = viewModelScope.launch {
             try {
                 val step = if (mode == AiMode.LOCAL) local.run(snapshot.last().text)
                     else if (retrying) agent.retry(textCallback(run), ::toolResult)
-                    else agent.start(snapshot, textCallback(run), ::toolResult)
+                    else agent.start(snapshot, textCallback(run), ::toolResult,
+                        snapshot.lastOrNull { it.role == ChatRole.USER }?.image?.let { listOf(imageStore.wire(it)) }.orEmpty())
                 coroutineContext.ensureActive()
                 if (run != generation) return@launch
                 if (mode == AiMode.LOCAL) localContext = local.dialogue.context
                 if (mode != AiMode.LOCAL && step !is AgentStep.Failure) connection = ConnectionState.ONLINE
                 applyStep(step)
             } catch (e: CancellationException) { throw e }
+            catch (_: ChatImageUnavailable) { if (run == generation) failure = AiResult.Failure(AiErrorKind.BAD_REQUEST, "تصویر محلی موجود نیست؛ دوباره پیوست کنید.") }
             catch (_: Exception) { if (run == generation) failure = AiResult.Failure(AiErrorKind.UNKNOWN, "دریافت پاسخ کامل نشد؛ عملیات تأییدنشده اجرا نمی‌شود.") }
             finally { if (run == generation) { busy = false; streamingText = "" } }
         }
@@ -415,7 +482,7 @@ class AiAssistantViewModel @JvmOverloads constructor(
         generation++
         job?.cancel()
         agent.reset()
-        streamingText = ""
+        streamingText = ""; canContinue = false
         busy = false
     }
 
@@ -426,7 +493,7 @@ class AiAssistantViewModel @JvmOverloads constructor(
 
     private fun persist() {
         if (messages.isEmpty() || !settings.usage.saveHistory) return
-        val title = messages.firstOrNull { it.role == ChatRole.USER }?.text?.take(40) ?: "گفتگو"
+        val title = messages.firstOrNull { it.role == ChatRole.USER }?.text?.take(40)?.ifBlank { "تصویر" } ?: "گفتگو"
         val convo = Conversation(conversationId, title, createdAt, System.currentTimeMillis(), messages.toList(), settings.mode, settings.modelAccountScope)
         historySave?.cancel()
         historySaveConversationId = convo.id
@@ -498,6 +565,7 @@ class AiAssistantViewModel @JvmOverloads constructor(
             conversations.delete(c.id)
             if (c.id == conversationId) newChat()
             history = conversations.load().sortedByDescending { it.updatedAt }
+            pruneImages()
         }
     }
 
@@ -509,7 +577,7 @@ class AiAssistantViewModel @JvmOverloads constructor(
         viewModelScope.launch {
             conversations.clearAll()
             history = emptyList()
-            newChat()
+            newChat(); pruneImages()
         }
     }
 }

@@ -4,7 +4,8 @@ package com.khodroyar.app.ai
 data class FunctionCall(val id: String, val name: String, val arguments: String, val providerSignature: String? = null)
 data class FunctionMessage(
     val role: String, val content: String = "", val calls: List<FunctionCall> = emptyList(), val toolCallId: String? = null,
-    /** Local budgeting identity, never serialized to any provider. */ val turnId: String? = null,
+    /** Local single-flight identity, never serialized to any provider. */ val turnId: String? = null,
+    val images: List<AIImage> = emptyList(),
 )
 sealed interface FunctionResult {
     data class Reply(val message: FunctionMessage, val model: String) : FunctionResult
@@ -21,14 +22,8 @@ interface FunctionCallingProvider {
 }
 
 object PersianAgentLimits {
-    const val USER_CHARS = 3000
-    const val HISTORY_CHARS = 4000
-    const val MAX_ROUNDS = 5
-    const val CALLS_PER_ROUND = 2
-    const val MAX_WRITES = 4
     const val ARGUMENT_CHARS = 8192
-    const val OUTPUT_CHARS = 6000
-    const val OUTPUT_TOKENS = 1536
+    const val OUTPUT_CHARS = 16 * 1024 * 1024
     const val TOOL_RESULT_CHARS = 1800
 }
 

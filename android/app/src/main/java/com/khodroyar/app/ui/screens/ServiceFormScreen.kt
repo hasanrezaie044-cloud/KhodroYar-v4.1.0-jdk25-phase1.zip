@@ -308,20 +308,20 @@ private fun ServiceFormBody(
                     TimeField("ساعت پایان", endTime, { endTime = it }, Modifier.weight(1f))
                 }
                 Spacer(Modifier.height(AppDimens.gap))
-                SuggestField("ساعت کارکرد", hours, { hours = it }, suggestHours, numeric = true)
+                SuggestField("ساعت کارکرد", hours, { hours = it }, suggestHours, numeric = true, onDeleteSuggestion = { item -> scope.launch { repository.deleteSuggestion("hours", item) } })
                 Spacer(Modifier.height(AppDimens.gap))
-                SuggestField("کیلومتر", km, { km = it }, suggestKm, numeric = true)
+                SuggestField("کیلومتر", km, { km = it }, suggestKm, numeric = true, onDeleteSuggestion = { item -> scope.launch { repository.deleteSuggestion("km", item) } })
                 Spacer(Modifier.height(AppDimens.gap))
-                SuggestField("تعداد عوارضی", tollCount, { tollCount = it }, suggestToll, numeric = true)
+                SuggestField("تعداد عوارضی", tollCount, { tollCount = it }, suggestToll, numeric = true, onDeleteSuggestion = { item -> scope.launch { repository.deleteSuggestion("tollCount", item) } })
             }
 
             /* ---------------------------------------------- 3. route & occupants */
             FormSection("مسیر و سرنشین", Icons.Outlined.Route, collapsible = false) {
-                SuggestField("مبدأ", origin, { origin = it }, suggestOrigin)
+                SuggestField("مبدأ", origin, { origin = it }, suggestOrigin, onDeleteSuggestion = { item -> scope.launch { repository.deleteSuggestion("origin", item) } })
                 Spacer(Modifier.height(AppDimens.gap))
-                SuggestField("مقصد", destination, { destination = it }, suggestDestination)
+                SuggestField("مقصد", destination, { destination = it }, suggestDestination, onDeleteSuggestion = { item -> scope.launch { repository.deleteSuggestion("destination", item) } })
                 Spacer(Modifier.height(AppDimens.gap))
-                SuggestField("سرنشین / نام", passengers, { passengers = it }, suggestPassengers)
+                SuggestField("سرنشین / نام", passengers, { passengers = it }, suggestPassengers, onDeleteSuggestion = { item -> scope.launch { repository.deleteSuggestion("passengers", item) } })
             }
 
             /* ------------------------------------------- 4. request number & car */

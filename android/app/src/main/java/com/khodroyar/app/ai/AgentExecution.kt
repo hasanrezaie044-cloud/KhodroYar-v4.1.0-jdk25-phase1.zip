@@ -28,6 +28,8 @@ sealed interface AgentStep {
     data class Result(val outcome: ToolOutcome) : AgentStep
     data class Confirm(val pending: PendingAction) : AgentStep
     data class Failure(val error: AiResult.Failure) : AgentStep
+    /** A further model round is an owner action, not a hidden autonomous loop or a usage ceiling. */
+    data object Continue : AgentStep
 }
 
 /** Only application-authored messages may cross this boundary; never raw provider exceptions. */

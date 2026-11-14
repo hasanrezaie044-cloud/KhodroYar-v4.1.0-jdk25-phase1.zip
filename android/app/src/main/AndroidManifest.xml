@@ -87,6 +87,13 @@
                 android:resource="@xml/file_paths" />
         </provider>
 
+        <receiver android:name=".notifications.AutoServiceTimeReceiver" android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.TIME_SET" />
+                <action android:name="android.intent.action.TIMEZONE_CHANGED" />
+            </intent-filter>
+        </receiver>
+
         <!-- WorkManager ships an initializer we don't need at startup: strip for faster cold start -->
         <provider
             android:name="androidx.startup.InitializationProvider"

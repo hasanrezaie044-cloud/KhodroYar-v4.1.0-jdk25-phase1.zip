@@ -69,7 +69,7 @@ class LocalDialogueEngine(
     }
 
     fun parse(raw: String): LocalIntent {
-        if (raw.isBlank() || raw.length > AiLimits.MAX_USER_CHARS) return reply("یک پیام کوتاه بنویسید؛ اطلاعاتی تغییر نکرد.")
+        if (raw.isBlank()) return reply("یک پیام کوتاه بنویسید؛ اطلاعاتی تغییر نکرد.")
         val t = normalize(raw).trim(' ', '.', '!', '؟', '?')
         if (t in setOf("لغو", "لغوش کن", "بیخیال", "بی خیال", "کنسل", "ولش کن", "نه", "نه ممنون", "انصراف")) {
             discardDraft()

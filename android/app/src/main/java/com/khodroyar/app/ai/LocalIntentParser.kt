@@ -43,7 +43,6 @@ class LocalIntentParser(private val today: () -> Jalali.Ymd = { Jalali.today() }
 
     fun parse(raw: String): LocalIntent {
         if (raw.isBlank()) return LocalIntent.Reply("پیام خود را بنویسید یا «راهنما» بفرستید.")
-        if (raw.length > AiLimits.MAX_USER_CHARS) return LocalIntent.Reply("پیام طولانی است؛ لطفاً هر بار یک درخواست کوتاه بنویسید.")
         val text = normalize(raw)
         if (has(text, "راهنما", "چه کار", "چیکار", "کمک", "چطور", "چگونه", "help")) return LocalIntent.Reply(HELP)
         if (NEGATED.containsMatchIn(text)) return LocalIntent.Reply("درخواستی برای تغییر اطلاعات اجرا نمی‌کنم. برای گزارش، مثلاً «گزارش این ماه» و برای راهنما «راهنما» بنویسید.")

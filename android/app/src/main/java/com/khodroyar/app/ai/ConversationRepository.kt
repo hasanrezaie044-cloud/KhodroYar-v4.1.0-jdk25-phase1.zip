@@ -28,10 +28,10 @@ class ConversationRepository(context: Context) {
         val coroutine = currentCoroutineContext()
         synchronized(lock) {
             coroutine.ensureActive()
-            val trimmedMessages = conversation.messages.takeLast(AiLimits.MAX_STORED_MESSAGES).map { it.copy(text = AiTextSafety.redact(it.text)) }
+            val trimmedMessages = conversation.messages.map { it.copy(text = AiTextSafety.redact(it.text)) }
             val updated = conversation.copy(title = AiTextSafety.redact(conversation.title), messages = trimmedMessages)
             val all = readAll().filter { it.id != updated.id } + updated
-            val kept = all.sortedByDescending { it.updatedAt }.take(AiLimits.MAX_STORED_CONVERSATIONS)
+            val kept = all.sortedByDescending { it.updatedAt }
             writeAll(kept)
         }
     }
@@ -63,7 +63,9 @@ class ConversationRepository(context: Context) {
                 put("id", c.id); put("title", c.title); put("createdAt", c.createdAt); put("updatedAt", c.updatedAt)
                 put("messages", JSONArray().also { ma ->
                     c.messages.forEach { m ->
-                        ma.put(JSONObject().put("id", m.id).put("role", m.role.name).put("text", m.text).put("createdAt", m.createdAt))
+                        ma.put(JSONObject().put("id", m.id).put("role", m.role.name).put("text", m.text).put("createdAt", m.createdAt).apply {
+                            m.image?.let { image -> put("image", image.fileName) }
+                        })
                     }
                 })
             })
@@ -82,7 +84,8 @@ class ConversationRepository(context: Context) {
         val msgs = (0 until ma.length()).mapNotNull { i ->
             val m = ma.optJSONObject(i) ?: return@mapNotNull null
             val role = runCatching { ChatRole.valueOf(m.optString("role")) }.getOrNull() ?: return@mapNotNull null
-            ChatEntry(m.optString("id", UUID.randomUUID().toString()), role, AiTextSafety.redact(m.optString("text", "")), m.optLong("createdAt", 0L))
+            ChatEntry(m.optString("id", UUID.randomUUID().toString()), role, AiTextSafety.redact(m.optString("text", "")), m.optLong("createdAt", 0L),
+                m.optString("image").takeIf { it.isNotBlank() }?.let { runCatching { ChatImageRef(it) }.getOrNull() })
         }
         val id = o.optString("id", "")
         if (id.isBlank()) return null

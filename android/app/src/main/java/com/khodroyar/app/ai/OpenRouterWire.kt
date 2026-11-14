@@ -6,17 +6,20 @@ import org.json.JSONObject
 /** Bounded, complete native tool calls only. A truncated/failed stream cannot produce an action. */
 object OpenRouterWire {
     fun messageJson(message: FunctionMessage): JSONObject = JSONObject().put("role", message.role).apply {
-        put("content", message.content)
+        put("content", if (message.images.isEmpty()) message.content else JSONArray().apply {
+            if (message.content.isNotBlank()) put(JSONObject().put("type", "text").put("text", message.content))
+            message.images.forEach { image -> put(JSONObject().put("type", "image_url").put("image_url", JSONObject().put("url", "data:${image.mimeType};base64,${image.base64}"))) }
+        })
         if (message.calls.isNotEmpty()) put("tool_calls", JSONArray().apply {
             message.calls.forEach { call -> put(JSONObject().put("id", call.id).put("type", "function")
                 .put("function", JSONObject().put("name", call.name).put("arguments", call.arguments))) }
         })
         message.toolCallId?.let { put("tool_call_id", it) }
     }
-    fun completion(body: String, selected: String, catalog: List<VerifiedFreeModel>, responseIds: Set<String>? = null): FunctionResult.Reply {
-        require(body.length <= 256 * 1024)
-        val root = NativeJson.objectValue(body, 256 * 1024)
-        checkError(root); checkCost(root)
+    fun completion(body: String, selected: String, catalog: List<VerifiedFreeModel>, responseIds: Set<String>? = null, verifyZeroCost: Boolean = true): FunctionResult.Reply {
+        require(body.length <= PersianAgentLimits.OUTPUT_CHARS)
+        val root = NativeJson.objectValue(body, PersianAgentLimits.OUTPUT_CHARS)
+        checkError(root); if (verifyZeroCost) checkCost(root)
         val model = root.getString("model")
         checkIdentity(model, selected, catalog, responseIds)
         val choices = root.getJSONArray("choices"); require(choices.length() == 1)
@@ -38,7 +41,6 @@ object OpenRouterWire {
         val content = if (json.isNull("content")) "" else json.optString("content", "")
         require(content.length <= PersianAgentLimits.OUTPUT_CHARS)
         val array = json.optJSONArray("tool_calls")
-        require(array == null || array.length() <= PersianAgentLimits.CALLS_PER_ROUND)
         val calls = (0 until (array?.length() ?: 0)).map { i ->
             val call = requireNotNull(array).getJSONObject(i); require(call.getString("type") == "function")
             val f = call.getJSONObject("function")
@@ -55,7 +57,7 @@ object OpenRouterWire {
         NativeJson.objectValue(call.arguments, PersianAgentLimits.ARGUMENT_CHARS) // Prose or an incomplete JSON object is not executable.
     }
     fun checkError(root: JSONObject) {
-        if (root.has("error")) throw OpenRouterReplyFailure(OpenRouterFreePolicy.error(root.optJSONObject("error")?.optInt("code", 500) ?: 500))
+        if (root.has("error")) throw OpenRouterReplyFailure(ProviderFailurePolicy.fromError(root, root.optJSONObject("error")?.optInt("code", 500) ?: 500))
     }
     fun checkCost(root: JSONObject) {
         val usage = root.optJSONObject("usage") ?: return
@@ -67,7 +69,7 @@ internal class OpenRouterReplyFailure(val failure: AiResult.Failure) : IllegalSt
 
 class OpenRouterStream(
     private val selected: String, private val catalog: List<VerifiedFreeModel>, private val onText: (String) -> Unit,
-    private val responseIds: Set<String>? = null,
+    private val responseIds: Set<String>? = null, private val verifyZeroCost: Boolean = true,
 ) {
     private val content = StringBuilder()
     private data class Partial(val id: StringBuilder = StringBuilder(), val name: StringBuilder = StringBuilder(), val args: StringBuilder = StringBuilder())
@@ -76,7 +78,7 @@ class OpenRouterStream(
     fun accept(data: String) {
         require(!done)
         if (data == "[DONE]") { done = true; return }
-        val root = NativeJson.objectValue(data, 65536); OpenRouterWire.checkError(root); OpenRouterWire.checkCost(root)
+        val root = NativeJson.objectValue(data, 65536); OpenRouterWire.checkError(root); if (verifyZeroCost) OpenRouterWire.checkCost(root)
         val actual = root.optString("model", "")
         if (actual.isNotBlank()) {
             OpenRouterWire.checkIdentity(actual, selected, catalog, responseIds)
@@ -96,7 +98,7 @@ class OpenRouterStream(
         val toolCalls = delta.optJSONArray("tool_calls")
         for (i in 0 until (toolCalls?.length() ?: 0)) {
             val item = requireNotNull(toolCalls).getJSONObject(i); val index = item.getInt("index")
-            require(index in 0 until PersianAgentLimits.CALLS_PER_ROUND)
+            require(index >= 0)
             require(!item.has("type") || item.getString("type") == "function")
             val p = calls.getOrPut(index) { Partial() }
             if (item.has("id")) p.id.append(item.getString("id"))

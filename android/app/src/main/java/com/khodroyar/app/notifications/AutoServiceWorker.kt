@@ -29,7 +29,8 @@ import com.khodroyar.app.data.repo.AppRepository
  */
 class AutoServiceWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
 
-    override suspend fun doWork(): Result = try {
+    override suspend fun doWork(): Result {
+        val outcome = try {
         AutomationStore.get(applicationContext).inspectLocked { rules ->
             val today = Jalali.todayString()
             // Both workers share this gate, including the legacy last-run check below.
@@ -40,6 +41,10 @@ class AutoServiceWorker(context: Context, params: WorkerParameters) : CoroutineW
         }
     } catch (e: CancellationException) { throw e }
     catch (_: Exception) { Result.retry() }
+        if (outcome is androidx.work.ListenableWorker.Result.Success && inputData.getBoolean(AutoServiceScheduler.DAILY_INPUT, false))
+            AutoServiceScheduler.realign(applicationContext)
+        return outcome
+    }
 
     private suspend fun registerLegacyService(): Result {
         val ctx = applicationContext

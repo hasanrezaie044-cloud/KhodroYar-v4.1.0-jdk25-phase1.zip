@@ -16,6 +16,7 @@ object GeminiWire {
                     .put("response", JSONObject().put("result", m.content))))
             } else {
                 if (m.content.isNotEmpty()) parts.put(JSONObject().put("text", m.content))
+                m.images.forEach { image -> parts.put(JSONObject().put("inlineData", JSONObject().put("mimeType", image.mimeType).put("data", image.base64))) }
                 m.calls.forEach { c -> parts.put(JSONObject().put("functionCall", JSONObject().put("name", c.name).put("id", c.id)
                     .put("args", NativeJson.objectValue(c.arguments, PersianAgentLimits.ARGUMENT_CHARS))).apply {
                         c.providerSignature?.let { put("thoughtSignature", it) }
@@ -58,7 +59,7 @@ class GeminiTextStream(private val selected: String, private val aliases: Set<St
     private var identity = ""; private var stopped = false
     fun accept(event: String) {
         if (event == "[DONE]") return
-        val root = NativeJson.objectValue(event, 256 * 1024)
+        val root = NativeJson.objectValue(event, PersianAgentLimits.OUTPUT_CHARS)
         root.optJSONObject("error")?.let { throw OpenRouterReplyFailure(ProviderFailurePolicy.http(it.optInt("code", 500))) }
         val model = root.optString("modelVersion")
         if (model.isNotBlank()) { require(model in aliases && (identity.isEmpty() || identity == model)); identity = model }
@@ -79,7 +80,7 @@ class GeminiTextStream(private val selected: String, private val aliases: Set<St
                 val signature = part.optString("thoughtSignature").takeIf { it.isNotBlank() }
                 require(signature == null || signature.length <= 8192)
                 calls += FunctionCall(id, f.getString("name"), f.getJSONObject("args").toString(), signature).also(OpenRouterWire::validateCall)
-                require(calls.size <= PersianAgentLimits.CALLS_PER_ROUND && calls.map { it.id }.distinct().size == calls.size)
+                require(calls.map { it.id }.distinct().size == calls.size)
             }
         }
         if (identity.isNotEmpty() && text.isNotEmpty()) onText(text.toString())

@@ -239,6 +239,8 @@ interface SuggestionDao {
         (SELECT value FROM suggestions WHERE field = :field ORDER BY usedAt DESC LIMIT 20)
     """)
     suspend fun trim(field: String)
+    @Query("DELETE FROM suggestions WHERE field = :field AND value = :value")
+    suspend fun deleteValue(field: String, value: String)
     @Query("DELETE FROM suggestions") suspend fun clear()
 }
 

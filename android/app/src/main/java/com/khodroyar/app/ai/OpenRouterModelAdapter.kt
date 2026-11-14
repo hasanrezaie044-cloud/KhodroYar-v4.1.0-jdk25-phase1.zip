@@ -57,9 +57,9 @@ object OpenRouterModelMetadata {
             val allowed = user[id]
             val supports = parameters(row)
             val authorized = allowed != null && prices(allowed.optJSONObject("pricing")).verifiedFree &&
-                parameters(allowed).containsAll(setOf("tools", "tool_choice", "max_tokens")) && context(allowed) >= 32768 && textOutput(allowed) && !retired(allowed, now) &&
+                textOutput(allowed) && !retired(allowed, now) &&
                 responseIdentities(allowed) == responseIdentities(row)
-            val capabilities = AIModelCapability(supports.containsAll(setOf("tools", "tool_choice", "max_tokens")), context(row), textOutput(row))
+            val capabilities = AIModelCapability(supports.containsAll(setOf("tools", "tool_choice")), context(row), textOutput(row), imageInput = row.optJSONObject("architecture")?.optJSONArray("input_modalities")?.let { a -> (0 until a.length()).any { a.opt(it) == "image" } } == true)
             val canonical = (row.opt("canonical_slug") as? String).orEmpty()
             val fingerprintText = listOf(id, canonical, capabilities.toString(), supports.sorted().joinToString(",")).joinToString("|")
             val fingerprint = MessageDigest.getInstance("SHA-256").digest(fingerprintText.toByteArray()).joinToString("") { "%02x".format(it) }
@@ -78,8 +78,8 @@ object OpenRouterModelMetadata {
         val active = (0 until endpoints.length()).map { endpoints.getJSONObject(it) }.filter { endpoint ->
             val status = endpoint.opt("status")
             val online = status is Number && runCatching { BigDecimal(status.toString()).intValueExact() == 0 }.getOrDefault(false)
-            online && prices(endpoint.optJSONObject("pricing")).verifiedFree && context(endpoint) >= 32768 &&
-                parameters(endpoint).containsAll(setOf("tools", "tool_choice"))
+            online && prices(endpoint.optJSONObject("pricing")).verifiedFree &&
+                (!model.capability.toolCalling || parameters(endpoint).containsAll(setOf("tools", "tool_choice")))
         }
         val providers = active.map { AiTextSafety.redact(it.optString("provider_name", "ارائه‌دهنده")).take(80) }.distinct().take(12)
         val uptime = active.mapNotNull { row -> (row.opt("uptime_last_30m") as? Number)?.toDouble()?.takeIf { it.isFinite() && it in 0.0..100.0 } }.maxOrNull() ?: 0.0

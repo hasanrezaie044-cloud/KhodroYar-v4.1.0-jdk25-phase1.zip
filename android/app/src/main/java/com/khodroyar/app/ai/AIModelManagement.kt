@@ -11,7 +11,8 @@ import kotlinx.coroutines.sync.withLock
 data class AIModelKey(val provider: String, val id: String)
 enum class AISelectionMode { AUTOMATIC, MANUAL }
 enum class AIModelAuthorization { AUTHORIZED, NOT_AUTHORIZED, UNKNOWN }
-data class AIModelCapability(val toolCalling: Boolean, val contextLength: Int, val textOutput: Boolean = true)
+data class AIModelCapability(val toolCalling: Boolean, val contextLength: Int, val textOutput: Boolean = true,
+    val imageInput: Boolean = false, val maxOutputTokens: Int? = null)
 data class AIModelPricing(val input: BigDecimal?, val output: BigDecimal?, val allFieldsZero: Boolean) {
     val verifiedFree: Boolean get() = input?.signum() == 0 && output?.signum() == 0 && allFieldsZero
 }
@@ -37,7 +38,7 @@ interface AIModelCatalog {
 /** No HTTP, JSON wire format, Android Context, database or real tool executor crosses this boundary. */
 data class AIModelRequest(
     val messages: List<FunctionMessage>, val tools: List<ToolSpec>,
-    val maxOutputTokens: Int = 512, val stream: Boolean = true,
+    val maxOutputTokens: Int? = null, val stream: Boolean = true,
 )
 interface AIModelAdapter : AIModelCatalog {
     val providerId: String
@@ -66,7 +67,7 @@ interface AIModelEvaluationStore {
     /** Last owner-selected/initially chosen model, distinct from currently ready status. */
     fun selected(scope: String): AIModelKey? = active(scope)
     fun setSelected(scope: String, key: AIModelKey) {}
-    /** Reserve BEFORE each dummy inference, including failures; restart cannot reset the budget. */
+    /** Recheck explicit consent/scope before each synthetic inference. Not a usage allowance. */
     fun reserve(scope: String, now: Long, automatic: Boolean): Boolean
 }
 interface AIModelEvaluator {
@@ -76,8 +77,8 @@ object AIRequestPolicy {
     const val METADATA_TTL_MS = 60_000L
     const val EVALUATION_TTL_MS = 7 * 24 * 60 * 60_000L
     fun fresh(at: Long, now: Long, ttl: Long) = at > 0 && now >= at && now - at < ttl
-    fun eligibleMetadata(model: AIModel, now: Long): Boolean = (model.pricing.verifiedFree || model.costEvidence == AICostEvidence.FREE_QUOTA && model.freeQuotaEligible) && model.capability.toolCalling &&
-        model.capability.textOutput && model.capability.contextLength >= 8192 && model.pinnedIdentity && !model.deprecated &&
+    fun eligibleMetadata(model: AIModel, now: Long): Boolean = (model.pricing.verifiedFree || model.costEvidence == AICostEvidence.FREE_QUOTA && model.freeQuotaEligible || model.costEvidence == AICostEvidence.ACCOUNT_QUOTA) &&
+        model.capability.textOutput && model.pinnedIdentity && !model.deprecated &&
         model.authorization == AIModelAuthorization.AUTHORIZED && fresh(model.checkedAt, now, METADATA_TTL_MS)
     fun approved(model: AIModel, result: AIModelEvaluation?, now: Long): Boolean = eligibleMetadata(model, now) &&
         result != null && result.key == model.key && result.fingerprint == model.fingerprint && result.passed && fresh(result.checkedAt, now, EVALUATION_TTL_MS)
@@ -92,7 +93,9 @@ object AIModelSelector {
     }
 }
 data class AIModelView(val model: AIModel, val evaluation: AIModelEvaluation?, val availability: AIModelAvailability?, val approved: Boolean, val reason: String) {
-    /** UI and manual save must not turn an old approved snapshot into a new authorization. */
+    /** Choice needs fresh provider metadata. Endpoint health is checked lazily before inference, not by probing every row. */
+    fun selectableAt(now: Long): Boolean = AIRequestPolicy.eligibleMetadata(model, now)
+    /** Ready is a stronger status; never turn an expired snapshot into a fresh authorization. */
     fun readyAt(now: Long): Boolean = approved && AIRequestPolicy.eligibleMetadata(model, now) && availability?.let {
         it.available && AIRequestPolicy.fresh(it.checkedAt, now, AIRequestPolicy.METADATA_TTL_MS)
     } == true
@@ -156,12 +159,11 @@ class ManagedAIProvider(
         mutable.value = mutable.value.copy(models = models.map { model ->
             val result = results[model.key]; val h = health[model.key]
             val reason = when {
-                !(model.pricing.verifiedFree || model.costEvidence == AICostEvidence.FREE_QUOTA && model.freeQuotaEligible) -> "قیمت صفر تأیید نشده؛ هرگز درخواست نمی‌شود"
+                !(model.pricing.verifiedFree || model.costEvidence == AICostEvidence.FREE_QUOTA && model.freeQuotaEligible || model.costEvidence == AICostEvidence.ACCOUNT_QUOTA) -> "قیمت صفر تأیید نشده؛ هرگز درخواست نمی‌شود"
                 model.authorization != AIModelAuthorization.AUTHORIZED -> "کشف شده، اما برای این کلید/Guardrail مجاز نیست؛ ابتدا در OpenRouter اجازه بدهید"
                 !model.pinnedIdentity -> "مسیریاب/شناسهٔ پویا؛ برای ارزیابی قابل اتکا یک مدل مشخص لازم است"
                 model.deprecated -> "مدل حذف یا منسوخ شده است"
-                !model.capability.toolCalling -> "پشتیبانی ابزار کافی نیست"
-                model.capability.contextLength < 8192 || !model.capability.textOutput -> "ظرفیت/خروجی مناسب ایجنت نیست"
+                !model.capability.textOutput -> "این مدل خروجی متن ندارد"
                 !AIRequestPolicy.fresh(model.checkedAt, now, AIRequestPolicy.METADATA_TTL_MS) -> "بررسی قیمت و دسترسی باید تازه شود"
                 (blocked[model.key] ?: 0) > now -> "موقتاً نامعتبر/در دسترس نیست؛ بدون دورزدن محدودیت"
                 h?.available == false -> h.explanation.ifBlank { "ارائه‌دهندهٔ رایگانِ فعال تأیید نشد" }
@@ -241,7 +243,7 @@ class ManagedAIProvider(
             val evaluation = evaluator.evaluate(model, adapter) { stillAuthorized(p) && store.reserve(p.scope, clock(), automatic) }
             if (!stillAuthorized(p)) return
             if (evaluation.deferred) {
-                mutable.value = mutable.value.copy(notice = "بودجهٔ روزانهٔ آزمون تمام شد؛ نتیجهٔ قبلی حفظ شد. آزمون خودکار بیشتر یا خرید اعتبار انجام نمی‌شود.")
+                mutable.value = mutable.value.copy(notice = "رضایت یا اتصال تغییر کرد؛ آزمون متوقف شد و نتیجهٔ قبلی حفظ شد.")
                 break
             }
             if (evaluation.errorKind in accountErrors) {
@@ -260,7 +262,6 @@ class ManagedAIProvider(
         try {
             if (!discover(true)) return@withLock
             if (runTests) {
-                if (p.usage.bounded().outputTokens < 384) { publish("آزمون اختیاری به سقف خروجی حداقل۳۸۴ نیاز دارد؛ سقف انتخابی شما خودکار بالا نمی‌رود."); return@withLock }
                 tests(p, automatic = false, retest = true)
                 evaluationStop?.let { stopAccount(it); return@withLock }
                 if (!stillAuthorized(p) || !discover(true)) return@withLock
@@ -291,7 +292,6 @@ class ManagedAIProvider(
             while (attempted.size < (if (p.allowModelFallback) 2 else 1) && stillAuthorized(p)) {
                 val model = candidates(p).firstOrNull { it.key !in attempted } ?: break
                 if (turnRequests > 0 && lastSelection != model.key && !p.allowModelFallback) return@withLock stopTurn("مدل قبلی متوقف شد؛ جایگزینی این نوبت بدون اجازه انجام نمی‌شود.")
-                if (turnRequests >= p.usage.bounded().requestsPerTurn) return@withLock stopTurn("بودجهٔ درخواست این نوبت تمام شد؛ هیچ تلاش اضافی انجام نشد.")
                 val replacing = turnModel != null && turnModel != model.key
                 if (replacing && (!p.allowModelFallback || turnReplacements >= 1))
                     return@withLock stopTurn("سقف یک جایگزینِ مجاز در این نوبت رسیده است؛ مدل دیگری انتخاب یا درخواست نمی‌شود.")
@@ -306,7 +306,7 @@ class ManagedAIProvider(
                 if (replacing) turnReplacements++
                 turnModel = model.key; turnRequests++
                 when (val result = adapter.infer(model.key, AIModelRequest(messages, AIToolExposure.tools(messages, p.usage.toolsEnabled),
-                    maxOutputTokens = p.usage.bounded().outputTokens), onText)) {
+                    maxOutputTokens = null).let { if (model.capability.toolCalling) it else it.copy(tools = emptyList()) }, onText)) {
                     is FunctionResult.Reply -> {
                         if (!stillAuthorized(p)) return@withLock unavailable("حساب/رضایت تغییر کرد؛ پاسخ کنار گذاشته شد و ابزاری اجرا نمی‌شود.")
                         // No adapter may silently change the selected identity, even to another free model.
@@ -321,7 +321,7 @@ class ManagedAIProvider(
                 if (error.kind in accountErrors || error.kind in ProviderFailurePolicy.NEVER_RETRY) {
                     return@withLock stopAccount(error) // Never evade account limits with model switching.
                 }
-                blocked[model.key] = clock() + 30 * 60_000L
+                // Provider failures do not create a local timed quota. No automatic retry is scheduled.
                 health[model.key] = AIModelAvailability(false, clock(), explanation = error.message)
                 if (error.kind in setOf(AiErrorKind.MODEL_INVALID, AiErrorKind.BAD_REQUEST, AiErrorKind.GUARDRAIL_REJECTED)) {
                     val failed = AIModelEvaluation(model.key, model.fingerprint, clock(), emptyList(), 0, explanation = error.message)
@@ -352,7 +352,7 @@ class ManagedAIProvider(
         return true
     }
     private fun stopTurn(detail: String): FunctionResult.Failed {
-        select(null, "بودجه/اجازهٔ ادامهٔ این نوبت تمام شد"); publish(detail)
+        select(null, "ادامهٔ این مدل به اجازهٔ شما نیاز دارد"); publish(detail)
         return unavailable(detail)
     }
     private fun stopAccount(error: AiResult.Failure): FunctionResult.Failed {

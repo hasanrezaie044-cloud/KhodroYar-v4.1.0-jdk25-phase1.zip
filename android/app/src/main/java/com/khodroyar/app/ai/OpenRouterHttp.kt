@@ -81,7 +81,7 @@ class OpenRouterHttp : AiHttpTransport, AiStreamingTransport {
             val body = stream.bufferedReader(Charsets.UTF_8).use { reader ->
                 if (code == 200 && callback != null && c.contentType.orEmpty().startsWith("text/event-stream", true)) {
                     SseEvents.read(reader) { event -> flight.check(); callback(event) }; ""
-                } else boundedText(reader, if (request.method == "GET") 4 * 1024 * 1024 else 256 * 1024, flight::check)
+                } else boundedText(reader, if (request.method == "GET") 4 * 1024 * 1024 else PersianAgentLimits.OUTPUT_CHARS, flight::check)
             }
             flight.check()
             return AiHttpResponse(code, body, c.getHeaderField("Retry-After"), listOf("x-ratelimit-remaining-requests", "x-ratelimit-remaining-tokens").mapNotNull { k -> c.getHeaderField(k)?.takeIf { it.length <= 40 }?.let { k to it } }.toMap())
@@ -109,11 +109,10 @@ class OpenRouterHttp : AiHttpTransport, AiStreamingTransport {
 
 object SseEvents {
     fun read(reader: Reader, callback: (String) -> Unit) {
-        val line = StringBuilder(); val event = StringBuilder(); var chars = 0; var events = 0
+        val line = StringBuilder(); val event = StringBuilder(); var chars = 0
         fun dispatch(): Boolean {
             if (event.isEmpty()) return false
             val text = event.toString().removeSuffix("\n"); event.setLength(0)
-            require(++events <= 20000)
             callback(text)
             return text == "[DONE]"
         }
@@ -122,7 +121,7 @@ object SseEvents {
             if (value.isEmpty()) return dispatch()
             if (value.startsWith("data:")) {
                 val data = value.substring(5).removePrefix(" ")
-                require(event.length + data.length <= 65536)
+                require(event.length + data.length <= 1024 * 1024)
                 event.append(data).append('\n')
             }
             return false // Comments/keepalives/event names never enter model text.
@@ -130,9 +129,9 @@ object SseEvents {
         while (true) {
             val ch = reader.read()
             if (ch < 0) { if (line.isNotEmpty()) consume(); dispatch(); return }
-            require(++chars <= 2 * 1024 * 1024)
+            require(++chars <= 32 * 1024 * 1024)
             if (ch.toChar() == '\n') { if (consume()) return }
-            else { require(line.length < 65536); line.append(ch.toChar()) }
+            else { require(line.length < 1024 * 1024); line.append(ch.toChar()) }
         }
     }
 }

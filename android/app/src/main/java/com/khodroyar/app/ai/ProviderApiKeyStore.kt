@@ -22,18 +22,18 @@ class ProviderApiKeyStore(context: Context, private val mode: AiMode) : AiApiKey
     fun clear() { if (mode == AiMode.OPENROUTER) original.clear() else check(prefs.edit().remove(AIProviderRegistry.get(mode).id).commit()) }
 }
 
-/** Install-wide budgets do not reset when provider, model, account, consent or history changes. */
+/** Payload-free usage accounting, never an install-wide usage gate. */
 class AndroidAIUsageStore(context: Context) : AIUsageStore {
     private val prefs = context.applicationContext.getSharedPreferences("khodroyar_ai_usage", Context.MODE_PRIVATE)
     override fun read(): AIUsageLedger = synchronized(lock) {
         AIUsageLedger(prefs.getLong("day", -1), prefs.getInt("requests", 0), prefs.getLong("tokens", 0), prefs.getInt("metadata", 0),
             prefs.getLong("minute", -1), prefs.getInt("minute_requests", 0), prefs.getString("blocked_scope", "").orEmpty(),
-            prefs.getLong("blocked_until", 0), prefs.getString("blocked_kind", "").orEmpty())
+            prefs.getLong("blocked_until", 0), prefs.getString("blocked_kind", "").orEmpty(), prefs.getLong("actual_tokens", 0))
     }
     override fun write(value: AIUsageLedger) = synchronized(lock) {
         check(prefs.edit().putLong("day", value.day).putInt("requests", value.requests).putLong("tokens", value.reservedTokens)
             .putInt("metadata", value.metadataRequests).putLong("minute", value.minute).putInt("minute_requests", value.minuteRequests)
-            .putString("blocked_scope", value.blockedScope).putLong("blocked_until", value.blockedUntil).putString("blocked_kind", value.blockedKind).commit()) { "Usage reservation failed" }
+            .putLong("actual_tokens", value.actualTokens).putString("blocked_scope", value.blockedScope).putLong("blocked_until", value.blockedUntil).putString("blocked_kind", value.blockedKind).commit()) { "Usage reservation failed" }
     }
     companion object { private val lock = Any() }
 }

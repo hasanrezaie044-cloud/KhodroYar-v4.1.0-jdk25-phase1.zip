@@ -51,14 +51,8 @@ class AndroidModelEvaluationStore(context: Context) : AIModelEvaluationStore {
     }
     override fun reserve(scope: String, now: Long, automatic: Boolean): Boolean = synchronized(lock) {
         if (automatic || now <= 0 || settings.load().modelAccountScope != scope) return@synchronized false
-        val day = now / 86_400_000L
-        if (prefs.getString("budget_scope", "") == scope && day < prefs.getLong("budget_day", -1)) return@synchronized false
-        val same = prefs.getString("budget_scope", "") == scope && prefs.getLong("budget_day", -1) == day
-        val total = if (same) prefs.getInt("total", 0) else 0
-        val auto = if (same) prefs.getInt("auto", 0) else 0
-        if (total >= 16 || automatic && auto >= 8) return@synchronized false
-        prefs.edit().putString("budget_scope", scope).putLong("budget_day", day).putInt("total", total + 1)
-            .putInt("auto", auto + if (automatic) 1 else 0).commit()
+        // Consent/scope validity only; no daily reservation or clock-based usage gate.
+        true
     }
     companion object { private val lock = Any() }
 }
