@@ -73,6 +73,20 @@ class AIUsagePolicyTest {
             assertEquals(kind, rejected(rt, metadata).kind); assertEquals(1, http.calls)
         }
     }
+    @Test fun periodicMetadataCannotRetryAHardFailureEvenAfterCooldownDayRolloverAndRestart() = runBlocking {
+        for (code in listOf(401, 402, 403, 451, 429)) {
+            val store = MemoryAIUsageStore(); val http = Http().apply { status = code }
+            runtime(http, store).send("groq", request())
+            now += 86400000
+            val restarted = runtime(http, store)
+            assertFalse(restarted.ledger().permitsBackgroundMetadata("account"))
+            assertTrue(restarted.ledger().permitsBackgroundMetadata("explicitly-reconfigured-account"))
+            if (restarted.ledger().permitsBackgroundMetadata("account"))
+                restarted.send("groq", AiHttpRequest("https://api.groq.com/openai/v1/models", "GET", emptyMap()))
+            assertEquals(1, http.calls)
+        }
+        assertTrue(AIUsageLedger().permitsBackgroundMetadata("account"))
+    }
     @Test fun retryAfterDoesNotScheduleARetryButAllowsLaterExplicitUserRequest() = runBlocking {
         val store = MemoryAIUsageStore(); val http = Http().apply { status = 429 }; val rt = runtime(http, store)
         rt.send("groq", request()); now += 119000

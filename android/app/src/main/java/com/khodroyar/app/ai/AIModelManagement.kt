@@ -290,11 +290,11 @@ class ManagedAIProvider(
             var last: AiResult.Failure? = null
             while (attempted.size < (if (p.allowModelFallback) 2 else 1) && stillAuthorized(p)) {
                 val model = candidates(p).firstOrNull { it.key !in attempted } ?: break
-                if (turnRequests > 0 && lastSelection != model.key && !p.allowModelFallback) return@withLock unavailable("مدل قبلی متوقف شد؛ جایگزینی این نوبت بدون اجازه انجام نمی‌شود.")
-                if (turnRequests >= p.usage.bounded().requestsPerTurn) return@withLock unavailable("بودجهٔ درخواست این نوبت تمام شد؛ هیچ تلاش اضافی انجام نشد.")
+                if (turnRequests > 0 && lastSelection != model.key && !p.allowModelFallback) return@withLock stopTurn("مدل قبلی متوقف شد؛ جایگزینی این نوبت بدون اجازه انجام نمی‌شود.")
+                if (turnRequests >= p.usage.bounded().requestsPerTurn) return@withLock stopTurn("بودجهٔ درخواست این نوبت تمام شد؛ هیچ تلاش اضافی انجام نشد.")
                 val replacing = turnModel != null && turnModel != model.key
                 if (replacing && (!p.allowModelFallback || turnReplacements >= 1))
-                    return@withLock unavailable("سقف یک جایگزینِ مجاز در این نوبت رسیده است؛ مدل دیگری انتخاب یا درخواست نمی‌شود.")
+                    return@withLock stopTurn("سقف یک جایگزینِ مجاز در این نوبت رسیده است؛ مدل دیگری انتخاب یا درخواست نمی‌شود.")
                 attempted += model.key
                 if (!inspect(model, force = lastSelection != model.key)) {
                     evaluationStop?.let { return@withLock stopAccount(it) }
@@ -350,6 +350,10 @@ class ManagedAIProvider(
         mutable.value = mutable.value.copy(active = null)
         publish(message)
         return true
+    }
+    private fun stopTurn(detail: String): FunctionResult.Failed {
+        select(null, "بودجه/اجازهٔ ادامهٔ این نوبت تمام شد"); publish(detail)
+        return unavailable(detail)
     }
     private fun stopAccount(error: AiResult.Failure): FunctionResult.Failed {
         // Preserve quality receipts, not a misleading currently-ready indication for a blocked account.

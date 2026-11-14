@@ -289,7 +289,8 @@ class AIModelManagementTest {
         adapter.handler = { _, _ -> FunctionResult.Failed(AiResult.Failure(AiErrorKind.SERVER, "synthetic")) }
         assertTrue(provider.complete(turn) is FunctionResult.Failed)
         assertEquals(listOf(keyA, keyB, keyB), adapter.requests.map { it.first })
-        assertTrue(adapter.requests.none { it.first == c })
+        assertTrue(adapter.requests.none { it.first == c }); assertNull(provider.state.value.active)
+        assertTrue(provider.state.value.message.orEmpty().contains("یک جایگزین"))
     }
     @Test fun optionalManualEvaluationCannotSubstituteAnUnreadyRouterOrAnotherModel() = runBlocking {
         for (manual in listOf<AIModelKey?>(null, AIModelKey("future-provider", OpenRouterFreePolicy.INITIAL_MODEL), AIModelKey("future-provider", "test/unavailable"))) {

@@ -17,8 +17,11 @@ class AIModelCatalogWorker(context: Context, params: WorkerParameters) : Corouti
         val store = AiSettingsStore(applicationContext)
         val settings = store.load()
         if (!settings.enabled || settings.mode != AiMode.OPENROUTER || !settings.consented) return Result.success()
+        val usage = AndroidAIUsageStore(applicationContext)
+        // Even an expired 429 cooldown is not permission for an automatic metadata retry.
+        if (!usage.read().permitsBackgroundMetadata(settings.modelAccountScope)) return Result.success()
         try {
-            val client = OpenRouterClient(store::load, OpenRouterApiKeyStore(applicationContext), runtime = AIRequestRuntime(OpenRouterHttp(), { store.load().usage }, { store.load().modelAccountScope }, AndroidAIUsageStore(applicationContext)))
+            val client = OpenRouterClient(store::load, OpenRouterApiKeyStore(applicationContext), runtime = AIRequestRuntime(OpenRouterHttp(), { store.load().usage }, { store.load().modelAccountScope }, usage))
             val adapter = OpenRouterModelAdapter(client)
             // Discovery includes both public pricing and the key-scoped /models/user guardrail view.
             when (val found = adapter.discover(force = true)) {

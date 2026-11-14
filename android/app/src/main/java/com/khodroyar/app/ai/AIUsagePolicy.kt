@@ -47,7 +47,10 @@ data class AIRequestDiagnostic(
     val remainingRequests: Int? = null, val remainingTokens: Int? = null,
 )
 data class AIUsageLedger(val day: Long = -1, val requests: Int = 0, val reservedTokens: Long = 0, val metadataRequests: Int = 0,
-    val minute: Long = -1, val minuteRequests: Int = 0, val blockedScope: String = "", val blockedUntil: Long = 0, val blockedKind: String = "")
+    val minute: Long = -1, val minuteRequests: Int = 0, val blockedScope: String = "", val blockedUntil: Long = 0, val blockedKind: String = "") {
+    /** A timer expiring is not owner permission to retry a hard failure in periodic work. */
+    fun permitsBackgroundMetadata(account: String): Boolean = blockedScope != account || ProviderFailurePolicy.NEVER_RETRY.none { it.name == blockedKind }
+}
 interface AIUsageStore { fun read(): AIUsageLedger; fun write(value: AIUsageLedger) }
 class MemoryAIUsageStore : AIUsageStore { private var value = AIUsageLedger(); override fun read() = value; override fun write(value: AIUsageLedger) { this.value = value } }
 class AIRequestRejected(val failure: AiResult.Failure) : Exception("AI request rejected locally")
