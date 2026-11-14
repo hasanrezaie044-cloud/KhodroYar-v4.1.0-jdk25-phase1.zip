@@ -155,7 +155,7 @@ fun AiAssistantScreen(vm: AiAssistantViewModel = viewModel(), onNavigate: (Agent
         Box(Modifier.weight(1f).fillMaxWidth()) {
             when {
                 !settings.enabled && vm.pending == null -> DisabledCard(onEnable = { vm.saveSettings(settings.copy(enabled = true)) })
-                vm.messages.isEmpty() && !vm.busy -> EmptyState(vm.connection, settings.mode, onSettings = { showSettings = true }, onExample = vm::send)
+                vm.messages.isEmpty() && !vm.busy && vm.pending == null -> EmptyState(vm.connection, settings.mode, onSettings = { showSettings = true }, onExample = vm::send)
                 else -> LazyColumn(
                     state = listState,
                     modifier = Modifier.fillMaxSize().testTag("ai-chat-list"),

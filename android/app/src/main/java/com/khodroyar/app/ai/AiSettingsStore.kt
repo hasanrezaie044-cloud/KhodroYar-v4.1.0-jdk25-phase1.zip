@@ -62,6 +62,11 @@ class AiSettingsStore(context: Context) {
             .apply()
     }
 
+    /** Persist BEFORE changing a key in another preference file; process death cannot reuse old account consent. */
+    fun revokeOpenRouterConsent() {
+        check(prefs.edit().putBoolean("openrouter_consented_v1", false).commit()) { "Consent revocation failed" }
+    }
+
     /** Random per-install id used only for server-side rate limiting. Not tied to the person. */
     fun installId(): String {
         val existing = prefs.getString("install_id", null)

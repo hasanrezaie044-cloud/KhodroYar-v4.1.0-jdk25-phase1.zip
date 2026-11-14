@@ -145,6 +145,42 @@ class NativeOpenRouterAgentTest {
         assertTrue(settings.pendingQuickMileage.isNullOrBlank()); assertTrue(tools.execute(fresh.call).ok)
         assertEquals(1, repo.maintenancesByPrefixOnce("").size)
     }
+    @Test fun singleServiceUsesExactlyTheRatesThatWerePricedInItsImmutablePreview() = runBlocking {
+        val original = Rates(nightKm = 1000.0, hour = 2000.0)
+        val changed = original.copy(hour = 9000.0)
+        val reads = AtomicInteger()
+        val operations = ServiceBatchOperations(db, settings) { if (reads.incrementAndGet() == 1) original else changed }
+        val proposed = (preview(AppAgentTools(context, repo), "add_service",
+            """{"date":"1404/01/01","service_type":"night","origin":"مبارکه","destination":"اصفهان","km":60,"hours":3}""").call.args["single_service_plan"] as ServiceBatchPlan).created.single()
+        val frozen = operations.prepareSingle(null, proposed)
+        assertEquals(1, reads.get()); assertEquals(original.toString(), frozen.rates[1404])
+        assertEquals(66000L, frozen.created.single().income)
+        assertTrue(runCatching { operations.execute(frozen) }.isFailure)
+        assertTrue(db.services().allOnce().isEmpty()); assertEquals(1000.0, settings.current.vehicleCurrentKm, 0.0)
+        assertTrue(settings.pendingQuickMileage.isNullOrBlank())
+    }
+    @Test fun committedServiceWithConcurrentManualMileageIsAnHonestPartialFailureNotFullSuccess() = runBlocking {
+        val rates = Rates(nightKm = 1000.0, hour = 2000.0)
+        val reads = AtomicInteger()
+        // Existing replaceable rate reader deterministically models the concurrent settings edit
+        // AFTER the journal is staged, while the approved transaction is still in flight.
+        val operations = ServiceBatchOperations(db, settings) {
+            if (reads.incrementAndGet() == 2) settings.update { it.copy(vehicleCurrentKm = 9000.0) }
+            rates
+        }
+        val proposed = (preview(AppAgentTools(context, repo), "add_service",
+            """{"date":"1404/01/01","service_type":"night","origin":"مبارکه","destination":"اصفهان","km":60,"hours":3}""").call.args["single_service_plan"] as ServiceBatchPlan).created.single()
+        val frozen = operations.prepareSingle(null, proposed)
+        val error = runCatching { operations.execute(frozen) }.exceptionOrNull()
+        assertTrue(error is ServiceBatchVerificationException)
+        assertTrue(requireNotNull(error).message.orEmpty().contains("دوباره ثبت نکنید"))
+        assertEquals(frozen.created, db.services().allOnce()); assertEquals(9000.0, settings.current.vehicleCurrentKm, 0.0)
+        assertNotNull(settings.quickMileageNotice.value); assertTrue(settings.pendingQuickMileage.isNullOrBlank())
+        // Even retrying the durable plan cannot reinsert or overwrite the later manual value.
+        operations.execute(frozen)
+        assertEquals(1, db.services().allOnce().size); assertEquals(9000.0, settings.current.vehicleCurrentKm, 0.0)
+        settings.acknowledgeQuickMileageNotice()
+    }
     @Test fun companyCountsWithUnknownMetricsRemainReadOnlyAndRawDocumentIsNeverAToolResult() = runBlocking {
         val tools = AppAgentTools(context, repo); val date = "1404/07/05"
         val create = preview(tools, "bulk_register_services", explicitBulk.replace("1404/01/01", date).replace("1404/12/29", date).replace("\"per_day\":1", "\"per_day\":3"))
@@ -186,6 +222,10 @@ class NativeOpenRouterAgentTest {
         prefs.edit().putString("mode", "GAPGPT_DIRECT").putBoolean("consented", true).commit()
         assertEquals(AiMode.OPENROUTER, AiSettingsStore(context).load().mode); assertFalse(AiSettingsStore(context).load().consented)
         prefs.edit().putString("mode", "LOCAL").commit(); assertEquals(AiMode.LOCAL, AiSettingsStore(context).load().mode)
+        val aiSettings = AiSettingsStore(context)
+        aiSettings.save(AiSettings(consented = true)); assertTrue(aiSettings.load().consented)
+        aiSettings.revokeOpenRouterConsent(); assertFalse(aiSettings.load().consented)
+        assertFalse(prefs.getBoolean("openrouter_consented_v1", true))
         val keys = OpenRouterApiKeyStore(context); keys.save(syntheticKey); assertEquals(syntheticKey, keys.read())
         val xml = File(context.applicationInfo.dataDir, "shared_prefs/khodroyar_openrouter_credentials.xml").readText()
         assertFalse(xml.contains(syntheticKey)); assertFalse(xml.contains("api_key"))
@@ -201,7 +241,7 @@ class NativeOpenRouterAgentTest {
     private fun completion(content: String, calls: List<FunctionCall> = emptyList()): String = JSONObject().put("model", free)
         .put("choices", JSONArray().put(JSONObject().put("finish_reason", if (calls.isEmpty()) "stop" else "tool_calls")
             .put("message", FunctionMessage("assistant", content, calls).json()))).toString()
-    private fun renderChat(http: AiHttpTransport, consented: Boolean = false): AiAssistantViewModel {
+    private fun renderChat(http: AiHttpTransport, consented: Boolean = false, toolRunner: AgentToolRunner? = null): AiAssistantViewModel {
         AiSettingsStore(context).save(AiSettings(consented = consented))
         OpenRouterApiKeyStore(context).save(syntheticKey)
         val application = context.applicationContext as Application
@@ -209,7 +249,7 @@ class NativeOpenRouterAgentTest {
         compose.runOnIdle {
             val store = ViewModelStore().also { viewModelStore = it }
             vm = ViewModelProvider(store, object : ViewModelProvider.Factory {
-                @Suppress("UNCHECKED_CAST") override fun <T : androidx.lifecycle.ViewModel> create(modelClass: Class<T>): T = AiAssistantViewModel(application, http) as T
+                @Suppress("UNCHECKED_CAST") override fun <T : androidx.lifecycle.ViewModel> create(modelClass: Class<T>): T = AiAssistantViewModel(application, http, toolRunner) as T
             })[AiAssistantViewModel::class.java]
         }
         compose.setContent { CarManagerTheme {
@@ -329,6 +369,27 @@ class NativeOpenRouterAgentTest {
             .put("passed", true).put("posts", posts.get()).put("cancelled_create_unchanged", true).put("cancelled_delete_unchanged", true)
             .put("double_tap_created_once", true).put("unapproved_queue_discarded", true).put("confirmed_delete_readback", true).put("mileage_restored", true)
         publishSyntheticEvidence(context, "KhodroYar-UI-Smoke", "openrouter-approvals.json", "application/json", evidence.toString().toByteArray())
+    }
+    @Test fun aDeviceLocalApprovalOnAnEmptyChatStillShowsTheRealConfirmAndCancelCard() {
+        val executed = AtomicInteger()
+        val tools = object : AgentToolRunner {
+            override suspend fun execute(call: ValidatedCall): ToolOutcome { executed.incrementAndGet(); return ToolOutcome(true, "عملیات مصنوعی تأیید شد") }
+            override fun describe(call: ValidatedCall) = "توقف قانون آزمایشی؛ سوابق تغییر نمی‌کنند."
+            override suspend fun describeTarget(call: ValidatedCall): String? = null
+        }
+        val vm = renderChat(AiHttpTransport { error("Local approval must not use any network") }, toolRunner = tools)
+        assertTrue(vm.messages.isEmpty())
+        compose.runOnIdle { vm.setAutomation("abcd1234", false) }
+        compose.waitUntil(5000) { vm.pending != null && !vm.busy }
+        compose.onNodeWithTag("agent-action-summary").assertExists()
+        assertEquals(0, executed.get())
+        compose.onNodeWithTag("agent-cancel-action").performScrollTo().performClick()
+        assertEquals(0, executed.get())
+        compose.runOnIdle { vm.newChat(); vm.setAutomation("abcd1234", false) }
+        compose.waitUntil(5000) { vm.pending != null && !vm.busy }
+        compose.onNodeWithTag("agent-confirm-action").performScrollTo().performClick()
+        compose.waitUntil(5000) { !vm.busy && vm.pending == null }
+        assertEquals(1, executed.get())
     }
     @Test fun nativeAndroidJsonCannotCoerceNonstandardSyntaxOrRoundFractionalIntegerArguments() {
         for (args in listOf("{month:1}", "{'month':1}", "{\"month\":1,}", "{\"month\":1,\"month\":2}",

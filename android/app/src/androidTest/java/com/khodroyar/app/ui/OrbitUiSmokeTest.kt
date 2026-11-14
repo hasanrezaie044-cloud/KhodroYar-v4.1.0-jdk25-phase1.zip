@@ -199,7 +199,7 @@ class OrbitUiSmokeTest {
         shot("09-finance")
         compose.onNodeWithTag("nav-HOME").performClick()
         compose.onNodeWithTag("dashboard-list").performScrollToNode(hasText("دستیار هوشمند"))
-        compose.onNodeWithText("دستیار هوشمند").performClick()
+        compose.onNode(hasText("دستیار هوشمند") and hasAnyAncestor(hasTestTag("dashboard-list"))).performClick()
         compose.waitUntil(15_000) { compose.onAllNodesWithText("چی برات انجام بدم؟").fetchSemanticsNodes().isNotEmpty() }
         shot("10-assistant")
         compose.onNodeWithText("کارهای خودکار · 0").performClick()

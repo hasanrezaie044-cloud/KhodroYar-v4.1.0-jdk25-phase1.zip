@@ -83,6 +83,7 @@ class AiAssistantViewModel @JvmOverloads constructor(
     private var queuedTest = false
     private var job: Job? = null
     private var historySave: Job? = null
+    private var historySaveConversationId: String? = null
     private var statusJob: Job? = null
     private var testJob: Job? = null
     private var generation = 0
@@ -171,6 +172,7 @@ class AiAssistantViewModel @JvmOverloads constructor(
         viewModelScope.launch {
             try {
                 hasOpenRouterKey = withContext(Dispatchers.IO) {
+                    if (changed) settingsStore.revokeOpenRouterConsent()
                     if (typed.isNotEmpty()) keyStore.save(typed) else if (forgetKey) keyStore.clear()
                     keyStore.read()?.let(OpenRouterFreePolicy::normalizeKey) != null
                 }
@@ -366,6 +368,7 @@ class AiAssistantViewModel @JvmOverloads constructor(
         val title = messages.firstOrNull { it.role == ChatRole.USER }?.text?.take(40) ?: "گفتگو"
         val convo = Conversation(conversationId, title, createdAt, System.currentTimeMillis(), messages.toList(), settings.mode)
         historySave?.cancel()
+        historySaveConversationId = convo.id
         historySave = viewModelScope.launch { conversations.save(convo) }
     }
 
@@ -428,7 +431,7 @@ class AiAssistantViewModel @JvmOverloads constructor(
 
     fun deleteConversation(c: Conversation) {
         if (executingAction) return
-        if (c.id == conversationId) historySave?.cancel()
+        if (c.id == historySaveConversationId) historySave?.cancel()
         viewModelScope.launch {
             conversations.delete(c.id)
             if (c.id == conversationId) newChat()

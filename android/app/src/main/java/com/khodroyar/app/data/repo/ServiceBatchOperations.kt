@@ -61,6 +61,9 @@ data class ServiceBatchPlan(
     }
 }
 
+/** App-owned partial result: rows committed, but a concurrent manual odometer edit was preserved. */
+class ServiceBatchVerificationException(val explanation: String) : IllegalStateException(explanation)
+
 class ServiceBatchOperations(private val db: AppDatabase, private val settings: SettingsStore, private val ratesFor: suspend (Int) -> Rates) {
     fun savedTemplate(s: AppSettings = settings.current): ServiceTemplate? = if (!s.autoServicePresetSaved) null else
         ServiceTemplate(s.autoServiceType, s.autoServiceCarType, s.autoServiceOrigin, s.autoServiceDestination, s.autoServiceKm,
@@ -135,14 +138,17 @@ class ServiceBatchOperations(private val db: AppDatabase, private val settings: 
         val before = id?.let { requireNotNull(db.services().byId(it)) { "سرویس مبنا پیدا نشد." } }
         require(before != null || proposed != null)
         require(proposed == null || before == null || proposed.id == before.id)
+        val rateRows = mutableMapOf<Int, Rates>()
         val next = proposed?.let { row ->
             require(PersianInput.date(row.date) == row.date && row.date <= Jalali.todayString()) { "تاریخ سرویس معتبر نیست یا در آینده است." }
             val template = ServiceTemplate(row.type, row.carType, row.origin, row.destination, row.km, row.hours, row.startTime, row.endTime, row.tollCount)
             require(template.valid()) { "نوع، مسیر، زمان، کیلومتر یا ساعت سرویس کامل/معتبر نیست." }
             require(listOf(row.missionFood, row.missionToll, row.missionFine).all { it.isFinite() && it in 0.0..1.0e9 })
             require(settings.current.isRental || ServiceType.fromWire(row.type) !in ServiceType.RENTAL_TYPES) { "نوع اجاره‌ای در تنظیمات خودرو فعال نیست." }
+            val year = row.date.take(4).toInt()
+            val rates = ratesFor(year).also { rateRows[year] = it }
             row.copy(income = IncomeCalculator.calculate(ServiceType.fromWire(row.type), row.km, row.hours, row.tollCount,
-                row.missionFood, row.missionToll, row.missionFine, ratesFor(row.date.take(4).toInt()), row.startTime.ifBlank { null }, row.endTime.ifBlank { null }))
+                row.missionFood, row.missionToll, row.missionFine, rates, row.startTime.ifBlank { null }, row.endTime.ifBlank { null }))
         }
         val dates = listOfNotNull(before?.date, next?.date)
         val start = dates.min(); val end = dates.max()
@@ -151,7 +157,7 @@ class ServiceBatchOperations(private val db: AppDatabase, private val settings: 
         fun km(r: ServiceEntity?) = r?.takeIf { ServiceType.fromWire(it.type) !in ServiceType.FIXED_AMOUNT_TYPES }?.km ?: 0.0
         ServiceBatchPlan(if (before == null) "bulk_register_services" else if (next == null) "bulk_delete_services" else "bulk_edit_services",
             UUID.randomUUID().toString(), start, end, hashRows(db.services().rangeOnce(start, end)), listOf(ServiceChange(before, next)), 0,
-            null, next?.let { mapOf(it.date.take(4).toInt() to ratesFor(it.date.take(4).toInt()).toString()) }.orEmpty(), mileageBefore,
+            null, rateRows.mapValues { it.value.toString() }, mileageBefore,
             (mileageBefore + km(next) - km(before)).coerceAtLeast(0.0).toFloat().toDouble(), null, null, false)
     }
 
@@ -170,6 +176,7 @@ class ServiceBatchOperations(private val db: AppDatabase, private val settings: 
             }
             val journal = ServiceBatchJournal.from(plan)
             if (journal != null) settings.stageQuickMileage(journal.encode()) { it.vehicleCurrentKm.toFloat().toDouble() == plan.mileageBefore }
+            var recovered = QuickMileageJournal.Recovery.NONE
             try {
                 db.withTransaction {
                     // Rate writes share Room's transaction lock, including concurrent UI edits.
@@ -190,8 +197,10 @@ class ServiceBatchOperations(private val db: AppDatabase, private val settings: 
             } finally {
                 // This distinguishes a rolled-back transaction from a committed one. A crash
                 // before this point is repaired through the same shared journal on next launch.
-                if (journal != null) QuickMileageJournal.recover(db, settings)
+                if (journal != null) recovered = QuickMileageJournal.recover(db, settings)
             }
+            if (recovered == QuickMileageJournal.Recovery.CONFLICT) throw ServiceBatchVerificationException(
+                "تغییر همین سرویس‌ها در دیتابیس ثبت و بازخوانی شد، اما کیلومترشمار هم‌زمان دستی تغییر کرد و مقدار دستی حفظ شد. به‌روزرسانی کیلومترِ پیش‌نمایش تأیید نشد؛ سوابق و کیلومتر خودرو را بررسی کنید. دوباره ثبت نکنید و موفقیت کامل فرض نکنید.")
             plan.changes.size
         }
     }

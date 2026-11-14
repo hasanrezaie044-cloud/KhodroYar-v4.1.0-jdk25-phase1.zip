@@ -5,6 +5,7 @@ import com.khodroyar.app.automation.*
 import com.khodroyar.app.core.analytics.*
 import com.khodroyar.app.core.finance.PurchaseCategory
 import com.khodroyar.app.data.repo.QuickDraft
+import com.khodroyar.app.data.repo.ServiceBatchVerificationException
 import com.khodroyar.app.data.repo.ServiceBatchPlan
 import com.khodroyar.app.data.db.ServiceEntity
 import kotlinx.coroutines.flow.first
@@ -127,6 +128,8 @@ class AppAgentTools(context: Context, private val repo: AppRepository) : AgentTo
             withContext(Dispatchers.IO) { executeExtra(call) }
         } catch (e: CancellationException) {
             throw e
+        } catch (e: ServiceBatchVerificationException) {
+            ToolOutcome(false, e.explanation)
         } catch (e: AgentUserException) {
             ToolOutcome(false, e.userMessage)
         } catch (_: Exception) {

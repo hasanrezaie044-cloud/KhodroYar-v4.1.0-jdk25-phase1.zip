@@ -5,6 +5,7 @@ import com.khodroyar.app.automation.ServiceTemplate
 import com.khodroyar.app.core.rates.ServiceType
 import com.khodroyar.app.core.text.PersianInput
 import com.khodroyar.app.data.repo.AppRepository
+import com.khodroyar.app.data.repo.ServiceBatchVerificationException
 import com.khodroyar.app.data.repo.ServiceBatchPlan
 import kotlinx.coroutines.CancellationException
 
@@ -51,6 +52,7 @@ class ServiceRecordTools(private val repository: AppRepository) : AgentToolRunne
             ToolOutcome(true, result + if (report.isNotEmpty()) "\n\nگزارش پس از عملیات:\n$report" else "")
         }
     } catch (e: CancellationException) { throw e }
+    catch (e: ServiceBatchVerificationException) { ToolOutcome(false, e.explanation) }
     catch (e: AgentUserException) { ToolOutcome(false, e.userMessage) }
     catch (e: Exception) { ToolOutcome(false, e.message?.take(250) ?: "عملیات تأیید نشد؛ سوابق را بررسی کنید.") }
 
