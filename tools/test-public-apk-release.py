@@ -45,6 +45,20 @@ class PublicationFixtures(unittest.TestCase):
     def test_metadata_fixture_is_accepted_but_is_not_an_apk_audit(self):
         self.assertEqual(self.verify()['sha256'], publication.digest(self.apk))
 
+    def test_current_delivery_notes_never_reintroduce_automatic_evaluations_or_paid_fallback(self):
+        self.proof.update(version_code=78, version_name='5.6.2')
+        self.save()
+        output = self.root / 'prepared-current'
+        with patch.object(publication, 'audit_actual_apk'):
+            publication.prepare(self.apk, self.path, output, HEAD)
+        notes = (output / 'test-summary.md').read_text()
+        self.assertIn('گفتگوی عادی هرگز ارزیابی مدل ندارد', notes)
+        self.assertIn('بررسی اتصال و پس‌زمینه فقط فراداده', notes)
+        self.assertIn('بدون retry/fallback', notes)
+        self.assertIn('سیاست۵', notes)
+        self.assertNotIn('جایگزینی خودکار حداکثر یک بار', notes)
+        self.assertTrue((output / 'KhodroYar-5.6.2-release-signed.apk').is_file())
+
     def test_changed_apk_bytes_are_rejected(self):
         self.apk.write_bytes(b'different fixture bytes')
         with self.assertRaises(ValueError): self.verify()

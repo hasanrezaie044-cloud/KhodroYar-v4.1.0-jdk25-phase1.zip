@@ -96,7 +96,7 @@ def prepare(apk, verification, directory, expected_head):
     shutil.copyfile(verification, root / 'verification.json')
     (root / 'SHA256SUMS').write_text(f"{proof['sha256']}  {name}\n")
     # No credentials, keystores, private delivery keys, or test APK are copied.
-    policy_version = '۴' if proof['version_code'] >= 77 else '۳' if proof['version_code'] >= 76 else '۲'
+    policy_version = '۵' if proof['version_code'] >= 78 else '۴' if proof['version_code'] >= 77 else '۳' if proof['version_code'] >= 76 else '۲'
     agent_notes = """## ارتقای ۵.۶ از ۵.۵.۸: ایجنت فارسی فقط‌رایگان
 
 - اتصال مستقیم OpenRouter با کلید شخصیِ Keystore-encrypted، مدل اولیه openrouter/free و رضایت تازه؛ بدون بک‌اند اجباری. فهرست مدل/قیمت صفر پیش از هر درخواست، max_price صفر، no paid fallback و منع خرید اعتبار.
@@ -123,6 +123,18 @@ def prepare(apk, verification, directory, expected_head):
 - native tool_calls با schema مجاز، برنامهٔ چندمرحله‌ای، تأیید صریح هر ثبت/ویرایش/حذف، snapshot ثابت، تراکنش و readback؛ همان ابزارها، محاسبات و Room6، بدون بک‌اند اجباری یا مدل آفلاین/صدا.
 - سرویس تکی/بازه/گروهی، مقایسهٔ مالی، ریز قیمت واقعی، بیمه/نگهداری و تحلیل فقط‌خواندنی گزارش شرکت. تاریخ/مقدار نامعلوم ساخته نمی‌شود؛ اصل سند/دیتابیس ارسال نمی‌شود.
 - کلید شخصیِ رمزنگاری‌شده با Keystore، رضایت تازه، تاریخچهٔ محلی و حداقل دادهٔ لازم؛ هیچ کلید واقعی/سند خصوصی وارد CI نیست.
+
+## قابلیت‌ها و بررسی‌های غیرAI حفظ‌شده
+
+"""
+    if proof['version_code'] >= 78:
+        agent_notes = """## ارتقای ۵.۶.۲: اصلاح مصرف و اتصال انتخابی
+
+- گفتگوی عادی هرگز ارزیابی مدل ندارد؛ سلام یک POST عادی با prompt کوتاه و بدون تاریخچه/ابزار دارد. بررسی اتصال و پس‌زمینه فقط فراداده‌اند. آزمون دستی جداگانه و اختیاری، پس از تأیید هشدار مصرف: یک مدل، حداکثر۴درخواست×۳۸۴خروجی، با دادهٔ ساختگی و بدون ابزار واقعی.
+- پیش‌فرض بدون retry/fallback؛ ارائه‌دهنده خودکار تغییر نمی‌کند. ۴۰۱/۴۰۲/۴۰۳/۴۵۱/۴۲۹ دور زده یا دوباره خودکار ارسال نمی‌شوند. بودجهٔ پایدار درخواست/ورودی/خروجی/توکن روز/نوبت، schema صفحه‌ای و تاریخچهٔ کوتاه؛ مصرف واقعی از تخمین جداست و diagnostics کلید/متن ندارد.
+- OpenRouter همان قیمت‌های دقیق صفر/Guardrail/endpoint تازه و سقف صفر را دارد. Groq/Gemini/Cloudflare adapter رسمی مشروط به منطقه/مدل/Free بدون billing دارند؛ Gemini ابزار سوابق ندارد و Cloudflare باید طرح Free را از API اثبات کند. Free quota تضمین صفرصورتحساب حساب paid نیست. Cerebras/HF/ایرانیِ فاقد رایگان اثبات‌شده غیرفعال‌اند.
+- آزمون سازگاری providerها با mock است، نه حساب/اعتبار/منطقه/کیفیت زنده؛ هیچ اعتبار واقعی استفاده نشده. جزئیات قبولی در گزارش‌های همان Actions run است. راهنما: docs/AI-MODEL-MANAGEMENT.fa.md و docs/AI-PROVIDERS.fa.md.
+- کلیدهای Keystore، رضایت تازه v3، سیاست۵، history-scoping و تنظیم tools/history؛ همان چت تمام‌صفحهٔ RTL، همهٔ ابزارها و تأیید صریح/تراکنش/readback/journal قبلی. بسته/امضا، Room6، سوابق، منطق و ثبت دستی آفلاین تغییر نکرده‌اند.
 
 ## قابلیت‌ها و بررسی‌های غیرAI حفظ‌شده
 

@@ -28,8 +28,8 @@ class DirectModelAdapterTest {
             .put("inputTokenLimit", 1048576).put("supportedGenerationMethods", JSONArray(listOf("generateContent"))))).toString()
         else -> JSONObject().put("success", true).put("result", JSONArray().put(JSONObject().put("id", "7aa2a0a0-0000-4444-8888-aaaaaaaaaaaa").put("name", cfModel))).toString()
     }
-    private fun subscriptions(plan: String = "Workers Free") = JSONObject().put("success", true).put("result", JSONArray().put(JSONObject()
-        .put("rate_plan", JSONObject().put("public_name", plan)))).toString()
+    private fun subscriptions(plan: String = "Workers Free", state: String = "Provisioned", price: Int = 0) = JSONObject().put("success", true).put("result", JSONArray().put(JSONObject()
+        .put("rate_plan", JSONObject().put("public_name", plan)).put("state", state).put("price", price))).toString()
     private fun gemini(text: String = "سلام", version: String = geminiModel, finish: String = "STOP") = JSONObject().put("modelVersion", version)
         .put("candidates", JSONArray().put(JSONObject().put("index", 0).put("content", JSONObject().put("role", "model").put("parts", JSONArray().put(JSONObject().put("text", text))))
             .put("finishReason", finish))).put("usageMetadata", JSONObject().put("promptTokenCount", 10).put("candidatesTokenCount", 2).put("totalTokenCount", 12)).toString()
@@ -77,7 +77,7 @@ class DirectModelAdapterTest {
         assertEquals(1, http.requests.count { it.method == "POST" })
     }
     @Test fun cloudflarePaidUnknownMissingOrUnreadableSubscriptionsNeverDispatchInference() = runBlocking {
-        for (plans in listOf(subscriptions("Workers Paid"), "{\"success\":true,\"result\":[]}", "{\"success\":false}", subscriptions("unrecognised"))) {
+        for (plans in listOf(subscriptions("Workers Paid"), "{\"success\":true,\"result\":[]}", "{\"success\":false}", subscriptions("unrecognised"), subscriptions(state = "Cancelled"), subscriptions(price = 5))) {
             val http = Http { AiHttpResponse(200, plans) }; val a = adapter(AiMode.CLOUDFLARE, http)
             assertTrue(a.discover(true) is AIModelDiscovery.Failed)
             assertTrue(a.infer(AIModelKey("cloudflare", cfModel), AIModelRequest(messages, emptyList())) is FunctionResult.Failed)
@@ -156,9 +156,69 @@ class DirectModelAdapterTest {
     @Test fun officialEndpointAllowlistRejectsCustomHostsRedirectTargetsAccountPathsAndPaidProviderEndpoints() {
         for (url in listOf("https://api.groq.com.evil.example/openai/v1/chat/completions", "http://api.groq.com/openai/v1/models", "https://api.groq.com/openai/v1/chat/completions?key=secret",
             "https://api.cloudflare.com/client/v4/accounts/../subscriptions", "https://generativelanguage.googleapis.com/v1beta/models/unknown:generateContent", "https://api.avalai.ir/v1/chat/completions")) {
-            assertFalse(AIProviderRegistry.permittedEndpoint(AiHttpRequest(url, "POST", body = "{}")))
+            assertFalse(AIProviderRegistry.permittedEndpoint(AiHttpRequest(url, "POST", emptyMap(), body = "{}")))
         }
-        assertFalse(AIProviderRegistry.permittedEndpoint(AiHttpRequest("https://api.groq.com/openai/v1/models", "POST", body = "{}")))
+        assertFalse(AIProviderRegistry.permittedEndpoint(AiHttpRequest("https://api.groq.com/openai/v1/models", "POST", emptyMap(), body = "{}")))
+    }
+    @Test fun allImplementedDirectProvidersParseUsageAndTextFromTheirDocumentedStreamFormats() = runBlocking {
+        for (mode in listOf(AiMode.GROQ, AiMode.GEMINI, AiMode.CLOUDFLARE)) {
+            val id = settings(mode).modelFor(); val posts = java.util.concurrent.atomic.AtomicInteger()
+            val http = object : AiHttpTransport, AiStreamingTransport {
+                override fun execute(q: AiHttpRequest) = AiHttpResponse(200, if (q.url.endsWith("subscriptions")) subscriptions() else metadata(mode))
+                override fun stream(q: AiHttpRequest, onEvent: (String) -> Unit): AiHttpResponse {
+                    posts.incrementAndGet()
+                    if (mode == AiMode.GEMINI) {
+                        val first = JSONObject(gemini("سلا")); first.getJSONArray("candidates").getJSONObject(0).remove("finishReason")
+                        onEvent(first.toString()); onEvent(gemini("م"))
+                    } else {
+                        fun chunk(text: String, finish: Any) = JSONObject().put("model", id).put("choices", JSONArray().put(JSONObject().put("index", 0)
+                            .put("delta", JSONObject().put("content", text)).put("finish_reason", finish))).toString()
+                        onEvent(chunk("سلا", JSONObject.NULL)); onEvent(chunk("م", "stop"))
+                        onEvent(JSONObject().put("choices", JSONArray()).put("usage", JSONObject().put("prompt_tokens", 10).put("completion_tokens", 2).put("total_tokens", 12)).toString())
+                        onEvent("[DONE]")
+                    }
+                    return AiHttpResponse(200, "")
+                }
+            }
+            val rt = AIRequestRuntime(http, clock = { now }); val a = adapter(mode, http, runtime = rt)
+            val m = (a.discover(true) as AIModelDiscovery.Found).models.single(); val visible = mutableListOf<String>()
+            val result = a.infer(m.key, AIModelRequest(messages, emptyList(), 256, true)) { visible += it } as FunctionResult.Reply
+            assertEquals("سلام", result.message.content); assertEquals("سلام", visible.last()); assertEquals(1, posts.get())
+            assertEquals(12, rt.diagnostics.value.last().actual?.total)
+        }
+    }
+    @Test fun groqAndCloudflareNativeChangesStillRequireAppOwnedApprovalAndContinueFromToolResults() = runBlocking {
+        for (mode in listOf(AiMode.GROQ, AiMode.CLOUDFLARE)) {
+            val s = settings(mode); var posts = 0; var writes = 0; val bodies = mutableListOf<String>()
+            val http = Http { q -> if (q.method == "GET") AiHttpResponse(200, if (q.url.endsWith("subscriptions")) subscriptions() else metadata(mode)) else {
+                posts++; bodies += requireNotNull(q.body)
+                AiHttpResponse(200, if (posts == 1) OpenRouterFixture.completion("پیشنهاد", listOf(FunctionCall("expense_once", "add_expense", """{"date":"1404/01/01","amount":1000,"title":"ساختگی"}""")), s.modelFor())
+                    else OpenRouterFixture.completion("نتیجهٔ ابزار دریافت شد", model = s.modelFor()))
+            } }
+            val a = adapter(mode, http); val m = (a.discover(true) as AIModelDiscovery.Found).models.single()
+            val provider = object : FunctionCallingProvider {
+                override suspend fun complete(messages: List<FunctionMessage>, onText: (String) -> Unit) =
+                    a.infer(m.key, AIModelRequest(messages, AIToolExposure.tools(messages, true), 512, false), onText)
+            }
+            val runner = object : AgentToolRunner {
+                override suspend fun execute(call: ValidatedCall): ToolOutcome { writes++; return ToolOutcome(true, "ثبت واقعیِ mock تأیید شد") }
+                override fun describe(call: ValidatedCall) = "پیش‌نمایش ساختگی"
+                override suspend fun describeTarget(call: ValidatedCall): String? = null
+            }
+            val agent = PersianToolAgent(provider, runner)
+            val pending = agent.start(listOf(ChatEntry("u", ChatRole.USER, "یک هزینهٔ آزمایشی ثبت کن", 1))) as AgentStep.Confirm
+            assertEquals(0, writes); assertEquals(1, posts)
+            assertTrue(agent.confirm(pending.pending) is AgentStep.Reply)
+            assertEquals(1, writes); assertEquals(2, posts)
+            assertTrue(bodies.last().contains("\"tool_call_id\":\"expense_once\""))
+            agent.confirm(pending.pending); assertEquals(1, writes); assertEquals(2, posts)
+        }
+    }
+    @Test fun aPrefixlessStoredCloudflareKeyIsBlockedIfItAppearsInMessageData() = runBlocking {
+        val http = Http { q -> AiHttpResponse(200, if (q.url.endsWith("subscriptions")) subscriptions() else metadata(AiMode.CLOUDFLARE)) }
+        val a = adapter(AiMode.CLOUDFLARE, http); val m = (a.discover(true) as AIModelDiscovery.Found).models.single()
+        assertTrue(a.infer(m.key, AIModelRequest(listOf(FunctionMessage("user", key(AiMode.CLOUDFLARE))), emptyList())) is FunctionResult.Failed)
+        assertTrue(http.requests.all { it.method == "GET" })
     }
     @Test fun paymentRequiredAndUnverifiedProvidersStayVisibleButHaveNoActiveAdapter() {
         for (mode in listOf(AiMode.CEREBRAS, AiMode.HUGGING_FACE, AiMode.AVALAI)) {

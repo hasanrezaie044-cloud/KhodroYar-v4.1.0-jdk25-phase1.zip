@@ -367,6 +367,27 @@ class NativeOpenRouterAgentTest {
                 .put("passed", true).put("normal_inference_posts", 1).put("evaluation_posts", 0).put("duplicate_send_blocked", true)
                 .put("greeting_has_no_tool_schemas", true).put("actual_usage_from_fixture", 49).toString().toByteArray())
     }
+    @Test fun connectionButtonIsMetadataOnlyAndCancellingManualTestWarningMakesNoPost() {
+        val posts = AtomicInteger()
+        val vm = renderChat(AiHttpTransport { q ->
+            if (q.method == "POST") posts.incrementAndGet()
+            AiHttpResponse(200, catalog())
+        }, consented = true, approvedIds = emptyList())
+        compose.onNodeWithTag("ai-options").performClick()
+        compose.onNodeWithText("تنظیمات هوش مصنوعی و مدل‌ها").performClick()
+        compose.waitUntil(10000) { vm.modelState.models.any { it.approved } && !vm.networkBusy }
+        compose.onNodeWithTag("openrouter-test").performScrollTo().performClick()
+        compose.waitUntil(10000) { vm.testMessage?.contains("۰ درخواست تولید متن") == true && !vm.networkBusy }
+        assertEquals(0, posts.get()); assertTrue(AndroidModelEvaluationStore(context).load(vm.settings.modelAccountScope).isEmpty())
+        compose.onNodeWithTag("ai-manual-evaluation").performScrollTo().performClick()
+        compose.onNodeWithTag("ai-evaluate-confirm").assertExists()
+        compose.onNodeWithText("انصراف — بدون درخواست").performClick()
+        compose.waitForIdle(); assertEquals(0, posts.get())
+        publishSyntheticEvidence(context, "KhodroYar-UI-Smoke", "ai-manual-test-consent.json", "application/json",
+            JSONObject().put("environment", "Synthetic HTTP; actual Compose buttons; NOT live provider")
+                .put("passed", true).put("metadata_connection_posts", 0).put("cancelled_evaluation_posts", 0)
+                .put("separate_cost_confirmation_shown", true).toString().toByteArray())
+    }
     @Test fun providerKeysAndInstallWideUsagePersistEncryptedOrBoundedWithoutTouchingRecords() = runBlocking {
         val values = mapOf(AiMode.GEMINI to ("AIza" + "x".repeat(35)), AiMode.GROQ to ("gsk_" + "y".repeat(48)), AiMode.CLOUDFLARE to "z".repeat(40))
         values.forEach { (mode, key) -> ProviderApiKeyStore(context, mode).save(key) }

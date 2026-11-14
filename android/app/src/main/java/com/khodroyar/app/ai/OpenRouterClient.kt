@@ -113,7 +113,7 @@ class OpenRouterClient(
         require(model.key.id in responseIds && responseIds.all(OpenRouterModelMetadata::validId))
         val messages = query.messages
         require(messages.isNotEmpty() && messages.size <= 80 && messages.sumOf { it.content.length + it.calls.sumOf { c -> c.arguments.length } } <= 160000)
-        if (messages.any { AiTextSafety.containsCredential(it.content) || it.calls.any { c -> AiTextSafety.containsCredential(c.arguments) } })
+        if (messages.any { key in it.content || AiTextSafety.containsCredential(it.content) || it.calls.any { c -> key in c.arguments || AiTextSafety.containsCredential(c.arguments) } })
             fail(AiErrorKind.BAD_REQUEST, "متن شبیه کلید API است؛ ارسال نمی‌شود. کلید فقط در تنظیمات امن وارد شود.")
         require(query.maxOutputTokens in 128..configuration().usage.bounded().outputTokens)
         val streaming = query.stream && transport is AiStreamingTransport
@@ -173,7 +173,7 @@ class OpenRouterClient(
                 val model = if (s.modelSelectionMode == AISelectionMode.MANUAL) eligible.firstOrNull { it.key.id == s.openRouterModel } else eligible.firstOrNull()
                 val health = model?.let { adapter.availability(it, force = true) }
                 val ok = health?.available == true
-                AiProviderStatus(true, ok, ok, model?.key?.id.orEmpty(), false,
+                AiProviderStatus(true, ok, ok, model?.key?.id.orEmpty(), ok,
                     if (ok) "کلید/فهرست/endpoint پاسخ داد؛ بدون درخواست تولید متن یا آزمون مدل."
                     else health?.explanation ?: "مدل مجاز آماده نیست؛ هیچ پیام AI ارسال نشد.",
                     if (ok) null else health?.errorKind ?: AiErrorKind.NOT_FOUND)

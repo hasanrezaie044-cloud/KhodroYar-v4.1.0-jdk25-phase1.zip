@@ -62,8 +62,12 @@ class DirectModelAdapter(
                 val subscriptions = NativeJson.objectValue(request(s, key, "https://api.cloudflare.com/client/v4/accounts/${s.cloudflareAccountId}/subscriptions").body, 128 * 1024)
                 require(subscriptions.optBoolean("success", false))
                 val rows = subscriptions.getJSONArray("result")
-                val plans = (0 until rows.length()).map { rows.getJSONObject(it).getJSONObject("rate_plan").getString("public_name") }
-                if ("Workers Free" !in plans || plans.any { it.startsWith("Workers") && it != "Workers Free" })
+                require(rows.length() <= 200)
+                val records = (0 until rows.length()).map { rows.getJSONObject(it) }
+                val plans = records.map { it.getJSONObject("rate_plan").getString("public_name") }
+                val free = records.any { row -> row.getJSONObject("rate_plan").getString("public_name") == "Workers Free" &&
+                    row.optString("state") == "Provisioned" && (row.opt("price") as? Number)?.let { BigDecimal(it.toString()).signum() == 0 } == true }
+                if (!free || plans.any { it.contains("workers", ignoreCase = true) && it != "Workers Free" })
                     throw Rejected(AiResult.Failure(AiErrorKind.NOT_CONFIGURED, "طرح Workers Free از پاسخ رسمی حساب اثبات نشد یا طرح پولی وجود دارد؛ inference مسدود است."))
             }
             val path = if (mode == AiMode.CLOUDFLARE) "/models/search" else "/models"
@@ -115,7 +119,7 @@ class DirectModelAdapter(
         val selected = cached.singleOrNull { it.key == model && AIRequestPolicy.eligibleMetadata(it, clock()) }
             ?: throw Rejected(AiResult.Failure(AiErrorKind.MODEL_INVALID, "مدل انتخابی در فهرست تازهٔ مجاز/سهمیهٔ Free تأیید نشد."))
         require(request.maxOutputTokens in 1..s.usage.bounded().outputTokens)
-        require(request.messages.none { AiTextSafety.containsCredential(it.content) || it.calls.any { c -> AiTextSafety.containsCredential(c.arguments) } })
+        require(request.messages.none { key in it.content || AiTextSafety.containsCredential(it.content) || it.calls.any { c -> key in c.arguments || AiTextSafety.containsCredential(c.arguments) } })
         if (mode == AiMode.GEMINI) {
             // Free Gemini may train on data. Never allow database tools or send tool results from real chats here.
             val evaluation = request.messages.firstOrNull()?.let { it.role == "system" && it.content.contains(SafePersianModelEvaluator.MARKER) } == true

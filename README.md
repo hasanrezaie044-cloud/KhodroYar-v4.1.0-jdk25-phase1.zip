@@ -1,23 +1,34 @@
 # مدیریت خودرو — Native Android
 
-## Current source: 5.6.1 (versionCode 77), incrementally upgraded from 5.6.0 / 5.5.8
+## Current source: 5.6.2 (versionCode 78), incrementally upgraded from 5.6.1 / 5.5.8
 
 Same `com.khodroyar.app`, Room 6, financial formulas and original signing identity:
 
-- **Persian native-tool agent**: direct, user-key OpenRouter at `https://openrouter.ai/api/v1`,
-  using provider-independent Automatic (default) or approved Manual model management.
-  Official public + key-scoped catalogs, exact zero pricing, live endpoints and four dummy
-  Persian/Jalali/tool/calculation/approval tests gate eligibility. No random-router lock-in;
-  bounded failover keeps committed tool results and never replays writes. Metadata cache
-  is at most 60 seconds; six-hour background work is metadata-only. See the
-  [current model-management/RTL full-screen chat guide](docs/AI-MODEL-MANAGEMENT.fa.md).
-  Each inference still enforces verified zero prices and native tools;
-  zero price caps, no paid fallback and no backend requirement. Natural-language planning,
-  bounded multistep calls, streaming, app-owned previews/explicit approvals and verified
-  database results extend the existing chat/repositories. Offline/manual work is unchanged.
-  New tools cover individual/bulk services, genuine stored rates/Jalali calendars, arbitrary
-  financial comparisons, read-only company-report analysis and insurance/maintenance.
-  See the [current Persian setup/architecture/security guide](docs/OPENROUTER-AGENT.fa.md).
+- **Predictable, user-selected AI**: ordinary chat never evaluates models. A cold greeting
+  makes one normal inference POST, with a short prompt, no old history/tool schemas and
+  no automatic fallback. Connection checks are metadata-only. Optional manual evaluation
+  requires a separate request/token warning and confirmation (one model, at most four
+  synthetic requests). No live account/credits are used in development or tests.
+  Durable install-wide request/input/output/token budgets, bounded agent/tool turns,
+  staged native schemas, shorter history and key-free usage/latency diagnostics guard
+  dispatch. Auth/billing/quota/region failures are never retried or routed around.
+- **Explicit providers, truthful free conditions**: OpenRouter retains fresh all-zero
+  pricing, key guardrails, endpoints and zero-price routing caps. Groq, native Gemini
+  and Cloudflare Workers AI have fixed official adapters with conditional free-account,
+  model and region gates; no provider changes automatically. Free quota is not free
+  inference on a paid account. Gemini Free app-data tools are blocked for privacy.
+  Cerebras, Hugging Face and Iranian alternatives are shown with payment/unverified
+  reasons, not falsely activated as no-card-free. See the [current AI guide](docs/AI-MODEL-MANAGEMENT.fa.md)
+  and [official-source provider matrix](docs/AI-PROVIDERS.fa.md). Mock compatibility is
+  not live account, Persian quality, billing-plan or Iran-access verification.
+- **Existing native-tool agent**: all previous typed app tools, approvals, snapshots,
+  transactions, readback and quick-mileage journal remain integrated. A model can only
+  propose a change; the app owns every explicit approval and verified result. Individual/
+  bulk services, genuine stored rates/Jalali calendars, financial comparisons, read-only
+  company-report analysis, insurance/maintenance and offline/manual work are unchanged.
+  No backend is required. Metadata caches are at most 60 seconds; six-hour OpenRouter
+  background work is metadata-only, never an inference/evaluation. See the [historical
+  tool/security architecture](docs/OPENROUTER-AGENT.fa.md).
 - **Count-first company reports**: Reports → Company service counts shows a compact
   date/company/app/difference table. Difference is **app − company**: company 2 and
   app 3 on `1405/07/05` gives **+1**, even when all km/hours cells are blank. No
@@ -41,9 +52,9 @@ Same `com.khodroyar.app`, Room 6, financial formulas and original signing identi
   this is an estimated travel time, not point-by-point highway congestion. A native
   mocked-transport test covers all six visible statuses and manual refresh using
   the old reply shape without geometry. No personal key or live Neshan call is used.
-- **Privacy & disclaimer v4**: shared in-app and Bazaar-ready Persian text covers
+- **Privacy & disclaimer v5**: shared in-app and Bazaar-ready Persian text covers
   responsibility for inputs, incomplete/wrong OCR, unofficial outputs, optional third-party
-  services and decisions based on results. Previous acceptance must be renewed explicitly; OpenRouter also needs separate provider/data consent.
+  services and decisions based on results. Previous acceptance must be renewed explicitly; each provider/key needs renewed provider/data consent; keys stay Keystore-encrypted and history is provider/account-scoped.
 - **Cafe Bazaar updates preserved**: asynchronous entry notice and user-triggered Bazaar
   action, Settings → About manual check; no APK self-installer or developer-account access.
   Existing guarded record commands, approvals, charts, exports and IME/navigation safety remain.

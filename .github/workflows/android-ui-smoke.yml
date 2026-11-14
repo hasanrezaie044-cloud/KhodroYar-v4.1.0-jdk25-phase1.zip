@@ -137,6 +137,19 @@ jobs:
               committed_write_not_replayed=True, chat_height_over_60_percent=True, partial_stream_cleared=True)
           assert data == expected, 'Actual native model replacement replay/approval assertions did not all pass'
           print('::notice title=Model failover after approved real Room write (mock)::' + json.dumps(data))
+          path = path.with_name('ai-consumption-regression.json')
+          assert path.is_file() and path.stat().st_size <= 16384, 'Missing greeting/duplicate/zero-evaluation regression evidence'
+          data = json.loads(path.read_text())
+          assert data == dict(environment='Synthetic HTTP; real Compose, Keystore and durable usage; NOT live provider', passed=True,
+              normal_inference_posts=1, evaluation_posts=0, duplicate_send_blocked=True,
+              greeting_has_no_tool_schemas=True, actual_usage_from_fixture=49), 'Ordinary greeting must use exactly ONE normal inference'
+          print('::notice title=Cold greeting consumption regression (mock)::' + json.dumps(data))
+          path = path.with_name('ai-manual-test-consent.json')
+          assert path.is_file() and path.stat().st_size <= 16384, 'Missing metadata-only connection/manual evaluation cancellation evidence'
+          data = json.loads(path.read_text())
+          assert data == dict(environment='Synthetic HTTP; actual Compose buttons; NOT live provider', passed=True,
+              metadata_connection_posts=0, cancelled_evaluation_posts=0, separate_cost_confirmation_shown=True), 'Manual-test cost confirmation must remain separate'
+          print('::notice title=Metadata-only connection and cancelled evaluation (mock)::' + json.dumps(data))
           PY
       - name: Publish bounded synthetic previews for visual review
         if: always() && github.event_name == 'workflow_dispatch'
@@ -146,6 +159,9 @@ jobs:
       - name: Free-agent approval preview
         if: always() && github.event_name == 'workflow_dispatch'
         run: '"$RUNNER_TEMP/ui-preview-env/bin/python" tools/ui-previews.py "$RUNNER_TEMP/orbit-ui-screenshots" 38-openrouter-approval-320-large-font'
+      - name: One-request greeting preview
+        if: always() && github.event_name == 'workflow_dispatch'
+        run: '"$RUNNER_TEMP/ui-preview-env/bin/python" tools/ui-previews.py "$RUNNER_TEMP/orbit-ui-screenshots" 41-ai-one-request-greeting-320'
       - name: Home preview
         if: always() && github.event_name == 'workflow_dispatch'
         run: '"$RUNNER_TEMP/ui-preview-env/bin/python" tools/ui-previews.py "$RUNNER_TEMP/orbit-ui-screenshots" 01-home-light-fa'

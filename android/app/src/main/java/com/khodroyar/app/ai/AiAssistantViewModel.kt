@@ -107,6 +107,9 @@ class AiAssistantViewModel @JvmOverloads constructor(
     private var testJob: Job? = null
     private var generation = 0
     private var keyRevision = 0
+    /** Ephemeral only, like the HTTPS key; never saveable state/history/diagnostics. Covers prefixless provider tokens. */
+    private var selectedSecret: String? = null
+    private fun safeText(value: String): String = AiTextSafety.redact(selectedSecret?.let { value.replace(it, "[کلید حذف شد]") } ?: value)
     private var pendingFromAgent = false
 
     val activeModel: String get() = if (settings.mode == AiMode.LOCAL) "داخلی · بدون مدل/شبکه" else modelState.active?.let { "${AIProviderRegistry.get(settings.mode).title} · ${it.id}" } ?: "مدل را در تنظیمات انتخاب کنید"
@@ -118,9 +121,9 @@ class AiAssistantViewModel @JvmOverloads constructor(
         viewModelScope.launch {
             val revision = keyRevision
             val storedKey = withContext(Dispatchers.IO) {
-                runCatching { keyStore().read()?.let { AIProviderRegistry.normalizeKey(settingsStore.load().mode, it) } != null }.getOrDefault(false)
+                runCatching { keyStore().read()?.let { AIProviderRegistry.normalizeKey(settingsStore.load().mode, it) } }.getOrNull()
             }
-            if (revision == keyRevision) hasOpenRouterKey = storedKey
+            if (revision == keyRevision) { selectedSecret = storedKey; hasOpenRouterKey = storedKey != null }
             val last = conversations.load().filter { it.mode == settings.mode && it.accountScope == settings.modelAccountScope }.maxByOrNull { it.updatedAt }
             if (settings.usage.saveHistory && last != null && messages.isEmpty() && !busy) openConversation(last)
             refreshStatus(); AIModelCatalogScheduler.sync(app)
@@ -211,19 +214,20 @@ class AiAssistantViewModel @JvmOverloads constructor(
             settingsError = "قالب کلید این ارائه‌دهنده معتبر نیست؛ فقط در همین تنظیمات امن وارد کنید."; return
         }
         val changed = typed.isNotEmpty() || forgetKey
+        keyRevision++
         statusJob?.cancel(); testJob?.cancel(); stop()
         if (changed) {
-            keyRevision++
             settingsStore.save(settings.copy(consented = false)); settings = settingsStore.load(); newChat()
         }
         savingSettings = true
         viewModelScope.launch {
             try {
-                hasOpenRouterKey = withContext(Dispatchers.IO) {
+                val stored = withContext(Dispatchers.IO) {
                     if (changed) settingsStore.revokeOpenRouterConsent()
                     if (typed.isNotEmpty()) keyStore(new.mode).save(typed) else if (forgetKey) keyStore(new.mode).clear()
-                    keyStore(new.mode).read()?.let { AIProviderRegistry.normalizeKey(new.mode, it) } != null
+                    keyStore(new.mode).read()?.let { AIProviderRegistry.normalizeKey(new.mode, it) }
                 }
+                selectedSecret = stored; hasOpenRouterKey = stored != null
                 val target = if (changed) new.copy(modelAccountScope = UUID.randomUUID().toString()) else new
                 saveSettings(target, forceNewConsent = changed)
                 savingSettings = false
@@ -280,7 +284,7 @@ class AiAssistantViewModel @JvmOverloads constructor(
     fun send(raw: String) {
         val text = raw.trim()
         if (text.isEmpty() || networkBusy || !settings.enabled || text.length > (if (settings.mode == AiMode.LOCAL) AiLimits.MAX_USER_CHARS else PersianAgentLimits.USER_CHARS)) return
-        if (OpenRouterFreePolicy.containsCredential(text)) {
+        if (OpenRouterFreePolicy.containsCredential(text) || selectedSecret?.let { it in text } == true) {
             failure = AiResult.Failure(AiErrorKind.BAD_REQUEST, "این متن شبیه کلید API است؛ در تاریخچه ذخیره یا ارسال نشد. کلید را فقط در تنظیمات امن وارد کنید.")
             return
         }
@@ -328,7 +332,7 @@ class AiAssistantViewModel @JvmOverloads constructor(
         runAgent(retrying = settings.mode != AiMode.LOCAL && agent.canResume)
     }
     private fun textCallback(run: Int): (String) -> Unit = { text ->
-        viewModelScope.launch { if (run == generation && busy) streamingText = OpenRouterFreePolicy.redactCredentials(text) }
+        viewModelScope.launch { if (run == generation && busy) streamingText = safeText(text) }
     }
     private suspend fun toolResult(name: String, out: ToolOutcome) {
         streamingText = ""
@@ -415,7 +419,7 @@ class AiAssistantViewModel @JvmOverloads constructor(
     }
 
     private fun add(role: ChatRole, text: String) {
-        messages.add(ChatEntry(UUID.randomUUID().toString(), role, OpenRouterFreePolicy.redactCredentials(text), System.currentTimeMillis()))
+        messages.add(ChatEntry(UUID.randomUUID().toString(), role, safeText(text), System.currentTimeMillis()))
         persist()
     }
 
@@ -478,7 +482,7 @@ class AiAssistantViewModel @JvmOverloads constructor(
     fun openConversation(c: Conversation) {
         if (executingAction) return
         newChat()
-        messages.addAll(c.messages)
+        messages.addAll(c.messages.map { it.copy(text = safeText(it.text)) })
         if (c.mode != settings.mode || c.accountScope != settings.modelAccountScope) {
             foreignHistory = true
             settingsStore.save(settings.copy(consented = false)); settings = settingsStore.load(); refreshStatus()

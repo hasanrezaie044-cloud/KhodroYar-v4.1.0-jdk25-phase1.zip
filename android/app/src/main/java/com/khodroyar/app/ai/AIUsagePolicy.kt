@@ -92,7 +92,7 @@ class AIRequestRuntime(
             }
             synchronized(reservationLock) {
                 val previous = store.read()
-                if (day < previous.day) reject(AiErrorKind.RATE_LIMITED, "ساعت دستگاه عقب رفته؛ بودجهٔ قبلی برای جلوگیری از مصرف اضافه حفظ شد.")
+                if (day < previous.day || minute < previous.minute) reject(AiErrorKind.RATE_LIMITED, "ساعت دستگاه عقب رفته؛ بودجهٔ قبلی برای جلوگیری از مصرف اضافه حفظ شد.")
                 if (previous.blockedScope == account && start < previous.blockedUntil)
                     reject(runCatching { AiErrorKind.valueOf(previous.blockedKind) }.getOrDefault(AiErrorKind.RATE_LIMITED), "ارسال پس از خطای سهمیه/اعتبار/کلید متوقف است؛ تلاش یا جایگزینی خودکار نداریم.")
                 val old = if (day == previous.day) previous else previous.copy(day = day, requests = 0, reservedTokens = 0, metadataRequests = 0)
@@ -124,6 +124,12 @@ class AIRequestRuntime(
                 if (reply.status !in 200..299) {
                     error = ProviderFailurePolicy.http(reply.status, reply.retryAfter).kind
                     block(account, requireNotNull(error), reply.retryAfter)
+                }
+                if (!metadata && reply.status in 200..299 && (usage?.output?.let { it > out } == true || usage?.total?.let { it > input + out } == true)) {
+                    val extra = ((usage?.total ?: 0) - input - out).coerceAtLeast(0)
+                    synchronized(reservationLock) { store.write(store.read().let { it.copy(reservedTokens = it.reservedTokens + extra) }) }
+                    throw OpenRouterReplyFailure(AiResult.Failure(AiErrorKind.GUARDRAIL_REJECTED,
+                        "سرویس مصرفی بیش از سقف رزروشده اعلام کرد؛ پاسخ/ابزار پذیرفته نمی‌شود و ارسال بعدی متوقف است. تنظیمات حساب را بررسی کنید."))
                 }
                 reply
             } catch (e: CancellationException) { error = AiErrorKind.DISABLED; throw e }

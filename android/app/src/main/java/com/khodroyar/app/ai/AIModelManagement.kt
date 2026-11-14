@@ -87,7 +87,7 @@ object AIModelSelector {
     fun ranked(models: List<AIModel>, evaluations: List<AIModelEvaluation>, health: Map<AIModelKey, AIModelAvailability>, now: Long): List<AIModel> {
         val results = evaluations.associateBy { it.key }
         return models.filter { AIRequestPolicy.eligibleMetadata(it, now) }
-            .sortedWith(compareByDescending<AIModel> { results[it.key]?.score ?: 0 }
+            .sortedWith(compareByDescending<AIModel> { model -> results[model.key]?.takeIf { AIRequestPolicy.approved(model, it, now) }?.score ?: 0 }
                 .thenByDescending { health[it.key]?.uptime ?: 0.0 }.thenByDescending { it.capability.contextLength }.thenBy { it.key.id })
     }
 }

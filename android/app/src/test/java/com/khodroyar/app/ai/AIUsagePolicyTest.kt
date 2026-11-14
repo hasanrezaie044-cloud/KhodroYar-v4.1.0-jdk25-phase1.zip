@@ -69,7 +69,7 @@ class AIUsagePolicyTest {
             val store = MemoryAIUsageStore(); val http = Http().apply { status = code }; val rt = runtime(http, store)
             rt.send("groq", request()); assertEquals(kind, rt.diagnostics.value.single().error)
             assertEquals(kind, rejected(runtime(http, store)).kind)
-            val metadata = AiHttpRequest("https://api.groq.com/openai/v1/models", "GET")
+            val metadata = AiHttpRequest("https://api.groq.com/openai/v1/models", "GET", emptyMap())
             assertEquals(kind, rejected(rt, metadata).kind); assertEquals(1, http.calls)
         }
     }
@@ -90,7 +90,7 @@ class AIUsagePolicyTest {
     }
     @Test fun metadataNeverConsumesInferenceTokenBudgetButHasItsOwnHttpCountAndRateCap() = runBlocking {
         val http = Http(); val rt = runtime(http)
-        repeat(12) { rt.send("groq", AiHttpRequest("https://api.groq.com/openai/v1/models", "GET")) }
+        repeat(12) { rt.send("groq", AiHttpRequest("https://api.groq.com/openai/v1/models", "GET", emptyMap())) }
         assertEquals(0, rt.ledger().requests); assertEquals(0L, rt.ledger().reservedTokens); assertEquals(12, rt.ledger().metadataRequests)
         assertEquals(AiErrorKind.RATE_LIMITED, rejected(rt).kind); assertEquals(12, http.calls)
         now += 60000; rt.send("groq", request()); assertEquals(13, http.calls)
@@ -127,6 +127,16 @@ class AIUsagePolicyTest {
         assertEquals(AIUsage(2, 5, 7), AIUsage.from(JSONObject("""{"x_groq":{"usage":{"prompt_tokens":2,"completion_tokens":5}}}""")))
         assertNull(AIUsage.from(JSONObject("{}")))
         assertNull(AIUsage.from(JSONObject("""{"usage":{"prompt_tokens":-1,"completion_tokens":0.5,"total_tokens":1000000000}}""")))
+    }
+    @Test fun providerReportedOverrunStopsFurtherRequestsAndIsNeverRefusedFromDiagnostics() = runBlocking {
+        val http = Http().apply { body = """{"usage":{"prompt_tokens":300,"completion_tokens":1000,"total_tokens":1300}}""" }
+        val rt = runtime(http)
+        try { rt.send("groq", request()); fail("Overrun cannot produce an executable reply") }
+        catch (e: OpenRouterReplyFailure) { assertEquals(AiErrorKind.GUARDRAIL_REJECTED, e.failure.kind) }
+        assertTrue(rt.ledger().reservedTokens >= 1300)
+        assertEquals(AiErrorKind.GUARDRAIL_REJECTED, rt.diagnostics.value.single().error)
+        assertEquals(1300, rt.diagnostics.value.single().actual?.total)
+        assertEquals(AiErrorKind.GUARDRAIL_REJECTED, rejected(rt).kind); assertEquals(1, http.calls)
     }
     @Test fun diagnosticsAreBoundedAndWireErrorsCanBeAnnotatedWithoutRecordingBodies() = runBlocking {
         val rt = runtime(Http(), limits = AIUsageLimits(requestsPerDay = 100, tokensPerDay = 200000))
