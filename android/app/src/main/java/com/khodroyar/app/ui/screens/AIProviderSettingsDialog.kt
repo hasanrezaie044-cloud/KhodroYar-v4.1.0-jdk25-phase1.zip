@@ -118,7 +118,7 @@ internal fun AIProviderSettingsDialog(
 
             if (!local && descriptor.adapterImplemented) {
                 OutlinedButton(onClick = { onTest(draft, key, forget); clearTyped() }, enabled = valid && !saving && draft.enabled && !(forget && key.isBlank()), modifier = Modifier.fillMaxWidth().testTag("openrouter-test")) { Text("ذخیره و بررسی اتصال — بدون پیام AI") }
-                OutlinedButton(onClick = { confirmEvaluation = true }, enabled = valid && !saving && draft.enabled && draft.usage.outputTokens >= 384, modifier = Modifier.fillMaxWidth().testTag("ai-manual-evaluation")) { Text("آزمون اختیاری یک مدل…") }
+                OutlinedButton(onClick = { confirmEvaluation = true }, enabled = valid && !saving && draft.enabled && draft.usage.outputTokens >= 384 && (draft.modelSelectionMode == AISelectionMode.AUTOMATIC || draft.modelFor().isNotBlank()), modifier = Modifier.fillMaxWidth().testTag("ai-manual-evaluation")) { Text("آزمون اختیاری یک مدل…") }
             }
             if (saving) LinearProgressIndicator(Modifier.fillMaxWidth())
             error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
@@ -138,7 +138,7 @@ internal fun AIProviderSettingsDialog(
         confirmButton = { Button(onClick = { onSave(draft, key, forget); clearTyped() }, enabled = valid && !saving) { Text("ذخیره") } },
         dismissButton = { TextButton(onClick = onDismiss, enabled = !saving) { Text("بستن") } })
     if (confirmEvaluation) AlertDialog(onDismissRequest = { confirmEvaluation = false }, title = { Text("مصرف آزمون اختیاری") },
-        text = { Text("فقط یک مدلِ همین اتصال، با دادهٔ کاملاً ساختگی:\nحداکثر ۴ درخواست AI؛ سقف خروجی جمعاً ۱۵۳۶توکن (۳۸۴ در هر درخواست). سقف رزرو ورودی+خروجی حداکثر ${4L * (draft.usage.bounded().inputTokens + 384)} توکن است؛ مصرف واقعی ممکن است کمتر باشد و در عیب‌یابی نشان داده می‌شود. فراداده نیز GET جداگانه دارد.\nاین آزمون از سهمیهٔ سرویس کم می‌کند، اختیاری است و برای سلام/گفتگو اجرا نمی‌شود. هیچ ابزار یا رکورد واقعی استفاده نمی‌شود. در خطا متوقف می‌شود و خودکار تکرار ندارد.") },
+        text = { Text("ارائه‌دهنده: ${descriptor.title}؛ مدل: ${if (draft.modelSelectionMode == AISelectionMode.MANUAL) draft.modelFor() else providerModels.active?.id ?: "یک انتخاب اولیه از فهرست مجاز"}\nفقط یک مدلِ همین اتصال، با دادهٔ کاملاً ساختگی:\nحداکثر ۴ درخواست AI؛ سقف خروجی جمعاً ۱۵۳۶توکن (۳۸۴ در هر درخواست). سقف رزرو ورودی+خروجی حداکثر ${4L * (draft.usage.bounded().inputTokens + 384)} توکن است؛ مصرف واقعی ممکن است کمتر باشد و در عیب‌یابی نشان داده می‌شود. فراداده نیز GET جداگانه دارد.\nاین آزمون از سهمیهٔ سرویس کم می‌کند، اختیاری است و برای سلام/گفتگو اجرا نمی‌شود. هیچ ابزار یا رکورد واقعی استفاده نمی‌شود. در خطا متوقف می‌شود و خودکار تکرار ندارد.") },
         confirmButton = { Button(onClick = { confirmEvaluation = false; onEvaluate(draft, key, forget); clearTyped() }, modifier = Modifier.testTag("ai-evaluate-confirm")) { Text("با این سقف آزمون را اجرا کن") } },
         dismissButton = { TextButton(onClick = { confirmEvaluation = false }) { Text("انصراف — بدون درخواست") } })
 }

@@ -37,7 +37,7 @@ interface AIModelCatalog {
 /** No HTTP, JSON wire format, Android Context, database or real tool executor crosses this boundary. */
 data class AIModelRequest(
     val messages: List<FunctionMessage>, val tools: List<ToolSpec>,
-    val maxOutputTokens: Int = PersianAgentLimits.OUTPUT_TOKENS, val stream: Boolean = true,
+    val maxOutputTokens: Int = 512, val stream: Boolean = true,
 )
 interface AIModelAdapter : AIModelCatalog {
     val providerId: String
@@ -130,6 +130,8 @@ class ManagedAIProvider(
     private var evaluationStop: AiResult.Failure? = null
     private var turnIdentity: String? = null
     private var turnRequests = 0
+    private var turnModel: AIModelKey? = null
+    private var turnReplacements = 0
     fun dismissNotice() { mutable.value = mutable.value.copy(notice = null) }
     fun invalidate() { invalidations.incrementAndGet(); adapter.invalidate(); mutable.value = AIModelState(); scope = "" }
     private fun account(): AISelectionSettings? {
@@ -141,7 +143,7 @@ class ManagedAIProvider(
         }
         if (scope != p.scope) {
             scope = p.scope; models = emptyList(); health.clear(); healthMonitor.reset(); blocked.clear(); lastSelection = store.active(scope)
-            chosen = store.selected(scope); turnIdentity = null; turnRequests = 0
+            chosen = store.selected(scope); turnIdentity = null; turnRequests = 0; turnModel = null; turnReplacements = 0
             evaluations = store.load(scope); catalogFailure = null; evaluationStop = null; adapter.invalidate(); mutable.value = AIModelState()
         }
         return p
@@ -179,7 +181,7 @@ class ManagedAIProvider(
         when {
             p.mode == AISelectionMode.MANUAL -> list.filter { it.key == p.manual }
             !p.allowModelFallback && chosen != null -> list.filter { it.key == chosen }
-            else -> list
+            else -> list.sortedBy { if (it.key == chosen) 0 else 1 }
         }
     }
     private fun select(key: AIModelKey?, reason: String) {
@@ -224,8 +226,10 @@ class ManagedAIProvider(
             .filter { retest || evaluations.none { e -> e.key == it.key && e.fingerprint == it.fingerprint && e.suiteVersion == SafePersianModelEvaluator.VERSION && AIRequestPolicy.fresh(e.checkedAt, now, if (e.passed) AIRequestPolicy.EVALUATION_TTL_MS else 24 * 60 * 60_000L) } }
             .sortedWith(compareByDescending<AIModel> { it.capability.contextLength }.thenBy { it.key.id })
         // Only the explicitly selected (or one initial eligible) model; at most four dummy requests.
-        val target = p.manual?.takeIf { it.id.isNotBlank() && it.id != OpenRouterFreePolicy.INITIAL_MODEL } ?: chosen
-        for (model in todo.filter { target == null || it.key == target }.take(1)) {
+        val target = if (p.mode == AISelectionMode.MANUAL) p.manual else chosen
+        val selected = if (p.mode == AISelectionMode.MANUAL && target == null) emptyList() else todo.filter { target == null || it.key == target }.take(1)
+        if (selected.isEmpty()) { publish("مدل مشخصِ انتخابی برای آزمون تأیید نشده است؛ هیچ مدل دیگری آزموده نمی‌شود."); return }
+        for (model in selected) {
             if (count >= 1 || !stillAuthorized(p)) break
             if (!inspect(model, force = true)) {
                 if (evaluationStop != null) break
@@ -256,6 +260,7 @@ class ManagedAIProvider(
         try {
             if (!discover(true)) return@withLock
             if (runTests) {
+                if (p.usage.bounded().outputTokens < 384) { publish("آزمون اختیاری به سقف خروجی حداقل۳۸۴ نیاز دارد؛ سقف انتخابی شما خودکار بالا نمی‌رود."); return@withLock }
                 tests(p, automatic = false, retest = true)
                 evaluationStop?.let { stopAccount(it); return@withLock }
                 if (!stillAuthorized(p) || !discover(true)) return@withLock
@@ -280,12 +285,16 @@ class ManagedAIProvider(
             // Ordinary chat NEVER evaluates a model. Missing/expired receipts are informational only.
             evaluationStop = null
             val identity = messages.firstOrNull()?.turnId ?: java.util.UUID.randomUUID().toString()
-            if (identity != turnIdentity) { turnIdentity = identity; turnRequests = 0 }
+            if (identity != turnIdentity) { turnIdentity = identity; turnRequests = 0; turnModel = null; turnReplacements = 0 }
             val attempted = mutableSetOf<AIModelKey>()
             var last: AiResult.Failure? = null
             while (attempted.size < (if (p.allowModelFallback) 2 else 1) && stillAuthorized(p)) {
                 val model = candidates(p).firstOrNull { it.key !in attempted } ?: break
                 if (turnRequests > 0 && lastSelection != model.key && !p.allowModelFallback) return@withLock unavailable("مدل قبلی متوقف شد؛ جایگزینی این نوبت بدون اجازه انجام نمی‌شود.")
+                if (turnRequests >= p.usage.bounded().requestsPerTurn) return@withLock unavailable("بودجهٔ درخواست این نوبت تمام شد؛ هیچ تلاش اضافی انجام نشد.")
+                val replacing = turnModel != null && turnModel != model.key
+                if (replacing && (!p.allowModelFallback || turnReplacements >= 1))
+                    return@withLock unavailable("سقف یک جایگزینِ مجاز در این نوبت رسیده است؛ مدل دیگری انتخاب یا درخواست نمی‌شود.")
                 attempted += model.key
                 if (!inspect(model, force = lastSelection != model.key)) {
                     evaluationStop?.let { return@withLock stopAccount(it) }
@@ -294,8 +303,8 @@ class ManagedAIProvider(
                 if (!stillAuthorized(p)) break
                 select(model.key, "مدل قبلی معتبر/در دسترس نبود؛ جایگزین فقط از فهرست قبول‌شده و مجاز است")
                 publish()
-                if (turnRequests >= p.usage.bounded().requestsPerTurn) return@withLock unavailable("بودجهٔ درخواست این نوبت تمام شد؛ هیچ تلاش اضافی انجام نشد.")
-                turnRequests++
+                if (replacing) turnReplacements++
+                turnModel = model.key; turnRequests++
                 when (val result = adapter.infer(model.key, AIModelRequest(messages, AIToolExposure.tools(messages, p.usage.toolsEnabled),
                     maxOutputTokens = p.usage.bounded().outputTokens), onText)) {
                     is FunctionResult.Reply -> {

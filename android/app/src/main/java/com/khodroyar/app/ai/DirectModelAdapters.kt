@@ -126,6 +126,7 @@ class DirectModelAdapter(
             require(evaluation || (request.tools.isEmpty() && request.messages.none { it.role == "tool" || it.calls.isNotEmpty() }))
             val decoder = GeminiTextStream(model.id, geminiAliases[model.id].orEmpty(), onText)
             val body = GeminiWire.request(request)
+            require(body.toString().toByteArray(Charsets.UTF_8).size + 128 <= selected.capability.contextLength)
             val url = base(s) + "/models/${model.id}:" + if (request.stream) "streamGenerateContent?alt=sse" else "generateContent"
             val response = request(s, key, url, body, if (request.stream) ({ event -> unchanged(s); decoder.accept(event) }) else null)
             if (request.stream && response.body.isBlank()) decoder.result() else GeminiWire.completion(response.body, model.id, geminiAliases[model.id].orEmpty())
@@ -135,6 +136,7 @@ class DirectModelAdapter(
             if (request.tools.isNotEmpty()) body.put("tools", OpenRouterToolSchemas.tools(request.tools, compact = true)).put("tool_choice", "auto")
             if (mode == AiMode.GROQ) { body.remove("max_tokens"); body.put("max_completion_tokens", request.maxOutputTokens) }
             if (request.stream) body.put("stream_options", JSONObject().put("include_usage", true))
+            require(body.toString().toByteArray(Charsets.UTF_8).size + 128 + request.maxOutputTokens <= selected.capability.contextLength)
             val decoder = OpenRouterStream(model.id, emptyList(), { text -> unchanged(s); onText(text) }, setOf(model.id))
             val url = base(s) + if (mode == AiMode.CLOUDFLARE) "/v1/chat/completions" else "/chat/completions"
             val response = request(s, key, url, body, if (request.stream) ({ event -> unchanged(s); decoder.accept(event) }) else null)

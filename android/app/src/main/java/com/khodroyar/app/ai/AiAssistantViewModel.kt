@@ -174,6 +174,7 @@ class AiAssistantViewModel @JvmOverloads constructor(
     /** Called only after the settings' separate usage-warning confirmation. One model, <=4 dummy POSTs. */
     fun testModels() {
         if (networkBusy || settings.mode == AiMode.LOCAL) return
+        if (settings.modelSelectionMode == AISelectionMode.MANUAL && settings.modelFor().isBlank()) { testMessage = "ابتدا یک مدل مشخص را پس از بررسی فراداده انتخاب و ذخیره کنید."; return }
         if (settings.usage.bounded().outputTokens < 384) { testMessage = "آزمون اختیاری به سقف خروجی حداقل۳۸۴ نیاز دارد؛ سقف انتخابی شما خودکار بالا نمی‌رود."; return }
         if (!settings.enabled || !hasOpenRouterKey) { testMessage = "ابتدا کلید و مدل همین اتصال را ذخیره کنید."; return }
         if (!settings.consented) { queuedText = null; queuedTest = false; queuedManualTest = true; needsConsent = true; return }

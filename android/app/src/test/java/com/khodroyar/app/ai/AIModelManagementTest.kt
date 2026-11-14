@@ -279,6 +279,34 @@ class AIModelManagementTest {
         provider.refresh(); assertEquals(2, provider.state.value.models.count { it.approved })
         assertNull(provider.state.value.active); assertTrue(adapter.requests.isEmpty())
     }
+    @Test fun anExplicitFallbackPermissionAllowsOnlyOneReplacementAcrossTheWholeToolTurn() = runBlocking {
+        preference = preference.copy(allowModelFallback = true)
+        val adapter = Adapter(); val c = AIModelKey("future-provider", "test/charlie"); adapter.records = listOf(model(), model(keyB), model(c))
+        adapter.handler = { key, _ -> if (key == keyB) FunctionResult.Reply(FunctionMessage("assistant", "پاسخ مدل دوم"), key.id)
+            else FunctionResult.Failed(AiResult.Failure(AiErrorKind.SERVER, "synthetic")) }
+        val provider = managed(adapter); val turn = listOf(FunctionMessage("user", "متن", turnId = "one-turn"))
+        assertTrue(provider.complete(turn) is FunctionResult.Reply)
+        adapter.handler = { _, _ -> FunctionResult.Failed(AiResult.Failure(AiErrorKind.SERVER, "synthetic")) }
+        assertTrue(provider.complete(turn) is FunctionResult.Failed)
+        assertEquals(listOf(keyA, keyB, keyB), adapter.requests.map { it.first })
+        assertTrue(adapter.requests.none { it.first == c })
+    }
+    @Test fun optionalManualEvaluationCannotSubstituteAnUnreadyRouterOrAnotherModel() = runBlocking {
+        for (manual in listOf<AIModelKey?>(null, AIModelKey("future-provider", OpenRouterFreePolicy.INITIAL_MODEL), AIModelKey("future-provider", "test/unavailable"))) {
+            preference = preference.copy(mode = AISelectionMode.MANUAL, manual = manual)
+            val adapter = Adapter(); val provider = managed(adapter)
+            provider.refresh(runTests = true)
+            assertTrue(adapter.requests.isEmpty())
+        }
+    }
+    @Test fun optionalEvaluationCannotRaiseAnOwnersLowerOutputLimit() = runBlocking {
+        preference = preference.copy(usage = AIUsageLimits(outputTokens = 128))
+        val adapter = Adapter(); val provider = managed(adapter)
+        provider.refresh(runTests = true); assertTrue(adapter.requests.isEmpty())
+        assertTrue(provider.state.value.message.orEmpty().contains("۳۸۴"))
+        assertTrue(provider.complete(chat) is FunctionResult.Reply)
+        assertEquals(128, adapter.requests.single().second.maxOutputTokens)
+    }
     @Test fun healthMonitorUsesOnlyBoundedViolationsAndCanBeResetAfterASuccessfulEvaluation() {
         val health = AIModelHealthMonitor()
         assertFalse(health.reject(keyA, NativeToolProtocolIssue.INVALID_ARGUMENTS))

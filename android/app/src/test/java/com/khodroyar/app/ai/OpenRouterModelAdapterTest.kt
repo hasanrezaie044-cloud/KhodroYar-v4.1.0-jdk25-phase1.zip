@@ -9,7 +9,7 @@ import org.junit.Test
 class OpenRouterModelAdapterTest {
     private val f = OpenRouterFixture
     private var now = 1_800_000_000_000L
-    private val query = AIModelRequest(listOf(FunctionMessage("user", "سلام")), AgentToolRegistry.tools, stream = false)
+    private val query = AIModelRequest(listOf(FunctionMessage("user", "سلام")), emptyList(), maxOutputTokens = 512, stream = false)
     private fun catalog(vararg rows: JSONObject) = JSONObject().put("data", JSONArray(rows.toList())).toString()
     private fun row(id: String = f.FREE) = f.row(id).put("canonical_slug", id)
     private fun endpoint(model: String = f.FREE, price: String = "0", status: Any = 0) = JSONObject().put("data", JSONObject().put("id", model)
@@ -85,6 +85,19 @@ class OpenRouterModelAdapterTest {
         assertEquals(f.FREE, body.getString("model")); assertFalse(body.has("models")); assertFalse(body.has("plugins"))
         assertFalse(body.getJSONObject("provider").getBoolean("allow_fallbacks"))
         assertEquals(0, body.getJSONObject("provider").getJSONObject("max_price").getInt("prompt"))
+    }
+    @Test fun aLargerRequestedOutputCannotRaiseTheOwnersDefaultCeilingOrDispatchInference() = runBlocking {
+        val http = Http()
+        val failure = adapter(http).infer(AIModelKey("openrouter", f.FREE), query.copy(maxOutputTokens = 1536)) as FunctionResult.Failed
+        assertEquals(AiErrorKind.BAD_REQUEST, failure.error.kind)
+        assertTrue(http.requests.none { it.method == "POST" })
+    }
+    @Test fun modelContextIsCheckedAgainstTheConservativeInputAndOutputBeforeDispatch() = runBlocking {
+        val http = Http(); http.public = catalog(row().put("context_length", 8192)); http.user = http.public
+        val longQuery = query.copy(messages = listOf(FunctionMessage("user", "a".repeat(8000))))
+        val failure = adapter(http).infer(AIModelKey("openrouter", f.FREE), longQuery) as FunctionResult.Failed
+        assertEquals(AiErrorKind.BAD_REQUEST, failure.error.kind)
+        assertTrue(http.requests.none { it.method == "POST" })
     }
     @Test fun minuteCacheExpiresAndAPriceChangeStopsAllFurtherPostsIncludingFormerlyApprovedModel() = runBlocking {
         val http = Http(); val adapter = adapter(http); val key = AIModelKey("openrouter", f.FREE)

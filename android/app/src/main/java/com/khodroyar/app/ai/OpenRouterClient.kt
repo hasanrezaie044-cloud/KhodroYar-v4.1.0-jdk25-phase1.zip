@@ -121,6 +121,7 @@ class OpenRouterClient(
             .put("stream", streaming).put("max_tokens", query.maxOutputTokens).put("provider", OpenRouterFreePolicy.routing())
         if (query.tools.isNotEmpty()) body.put("tools", OpenRouterToolSchemas.tools(query.tools, compact = true)).put("tool_choice", "auto")
         if (streaming) body.put("stream_options", JSONObject().put("include_usage", true))
+        require(body.toString().toByteArray(Charsets.UTF_8).size + 128 + query.maxOutputTokens <= model.capability.contextLength)
         attempts.addLast(clock())
         val context = currentCoroutineContext()
         val decoder = OpenRouterStream(model.key.id, emptyList(), { text -> context.ensureActive(); requireScope(expectedScope); onText(text) }, responseIds)

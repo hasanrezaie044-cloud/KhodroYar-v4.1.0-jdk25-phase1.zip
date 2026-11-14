@@ -309,6 +309,7 @@ class OrbitUiSmokeTest {
     @Test fun versionTwoAcceptanceCannotBypassOpenRouterPolicyEvenWithLockOff() = assertPreviousPolicy(2)
 
     @Test fun versionThreeAcceptanceCannotBypassAutomaticModelPolicy() = assertPreviousPolicy(3)
+    @Test fun versionFourAcceptanceCannotBypassMultiProviderCostAndDataPolicy() = assertPreviousPolicy(4)
 
     private fun assertPreviousPolicy(previous: Int) {
         val settings = SettingsStore.get(context)
