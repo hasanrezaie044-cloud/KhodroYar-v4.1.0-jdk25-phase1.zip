@@ -31,10 +31,16 @@ class NativeJsonTest {
         assertEquals("سلام", json.getString("b"))
     }
     @Test fun evenSubEpsilonFractionalIntegersAreNotRoundedIntoDifferentNativeArguments() {
-        for (args in listOf("""{"month":1.0000000001}""", """{"month":null}""", """{"month":"1"}""", """{"month":true}""")) {
+        for (args in listOf("""{"month":1.0000000001}""", """{"month":1.0000000000000000001}""", """{"month":1e-1000}""", """{"month":null}""", """{"month":"1"}""", """{"month":true}""")) {
             assertTrue(FunctionToolSchemas.validate(FunctionCall("test", "get_monthly_report", args)) is ValidationResult.Invalid)
         }
         assertTrue(FunctionToolSchemas.validate(FunctionCall("test", "get_monthly_report", """{"month":1}""")) is ValidationResult.Ok)
+    }
+    @Test fun decimalPricesAreNeverRoundedOrUnderflowedThroughADouble() {
+        val json = NativeJson.objectValue("""{"tiny":1e-1000,"fraction":1.0000000000000000001,"zero":0.0}""", 1024)
+        assertEquals(1, (json.get("tiny") as java.math.BigDecimal).signum())
+        assertEquals("1.0000000000000000001", json.get("fraction").toString())
+        assertEquals(0, (json.get("zero") as java.math.BigDecimal).signum())
     }
     @Test fun payloadLengthAndCredentialRedactionAreBoundedAtTheWireBoundary() {
         assertTrue(runCatching { NativeJson.objectValue("{\"x\":\"" + "a".repeat(100) + "\"}", 20) }.isFailure)

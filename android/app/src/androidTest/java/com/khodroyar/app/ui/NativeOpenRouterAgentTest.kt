@@ -393,9 +393,18 @@ class NativeOpenRouterAgentTest {
     }
     @Test fun nativeAndroidJsonCannotCoerceNonstandardSyntaxOrRoundFractionalIntegerArguments() {
         for (args in listOf("{month:1}", "{'month':1}", "{\"month\":1,}", "{\"month\":1,\"month\":2}",
-            "{\"month\":1.0000000001}", "{\"month\":true}", "{\"month\":null}")) {
+            "{\"month\":1.0000000001}", "{\"month\":1.0000000000000000001}", "{\"month\":true}", "{\"month\":null}")) {
             assertTrue(args, FunctionToolSchemas.validate(FunctionCall("validate", "get_monthly_report", args)) is ValidationResult.Invalid)
         }
+    }
+    @Test fun nativeAndroidCannotUnderflowAnyPositivePriceOrReportedCostIntoFreeZero() {
+        val verified = OpenRouterFreePolicy.catalog(catalog())
+        val underflow = catalog().replace("\"prompt\":\"0\"", "\"prompt\":1e-1000")
+        assertTrue(OpenRouterFreePolicy.catalog(underflow).isEmpty())
+        val priced = completion("متن مصنوعی").dropLast(1) + ",\"usage\":{\"cost\":1e-1000}}"
+        assertTrue(runCatching { OpenRouterWire.completion(priced, "openrouter/free", verified) }.isFailure)
+        val zero = completion("متن مصنوعی").dropLast(1) + ",\"usage\":{\"cost\":0.0}}"
+        assertEquals("متن مصنوعی", OpenRouterWire.completion(zero, "openrouter/free", verified).message.content)
     }
     @Test fun historyRedactsCredentialsInTitlesMessagesAndFilesAcrossRepositoryInstances() = runBlocking {
         val entry = ChatEntry("redaction", ChatRole.ASSISTANT, "پاسخ مصنوعی $syntheticKey پایان", 1L)

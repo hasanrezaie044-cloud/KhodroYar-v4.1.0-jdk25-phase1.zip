@@ -71,8 +71,7 @@ object FunctionToolSchemas {
             val value = args.opt(p.name)
             val valid = when (p.type) {
                 ParamType.NUMBER -> value is Number && value.toDouble().isFinite()
-                ParamType.INT -> value is Number && value.toDouble().isFinite() && value.toDouble() == Math.rint(value.toDouble()) &&
-                    value.toDouble() in Int.MIN_VALUE.toDouble()..Int.MAX_VALUE.toDouble()
+                ParamType.INT -> value is Number && runCatching { java.math.BigDecimal(value.toString()).intValueExact(); true }.getOrDefault(false)
                 else -> value is String && value.length <= (if (p.type == ParamType.TEXT) 80 else 100) && value.none { it.isISOControl() }
             }
             if (!valid) return ValidationResult.Invalid("نوع یا طول پارامتر ${p.name} با طرح ابزار تطابق ندارد؛ مقدار حدسی/بریده پذیرفته نمی‌شود.")

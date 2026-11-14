@@ -118,7 +118,10 @@ class OpenRouterClient(
         return when (val result = perform(listOf(FunctionMessage("user", "برای آزمایش اتصال، فقط connection_probe را با nonce برابر $nonce صدا بزن.")), probe, "connection_probe", {})) {
             is FunctionResult.Reply -> {
                 val c = result.message.calls.singleOrNull()
-                val ok = c != null && c.name == "connection_probe" && runCatching { JSONObject(c.arguments).getString("nonce") == nonce }.getOrDefault(false)
+                val ok = c != null && c.name == "connection_probe" && runCatching {
+                    val args = NativeJson.objectValue(c.arguments, PersianAgentLimits.ARGUMENT_CHARS)
+                    args.length() == 1 && args.opt("nonce") is String && args.getString("nonce") == nonce
+                }.getOrDefault(false)
                 AiProviderStatus(true, ok, ok, result.model, ok,
                     if (ok) "اتصال و function calling واقعی مدل رایگان تأیید شد: ${result.model}. هیچ ابزار برنامه یا دادهٔ مالی در تست استفاده نشد."
                     else "پاسخ رسید ولی ابزار آزمایشی درست نبود؛ این مدل فعلاً برای ایجنت تأیید عملی نشد.", if (ok) null else AiErrorKind.BAD_REQUEST)

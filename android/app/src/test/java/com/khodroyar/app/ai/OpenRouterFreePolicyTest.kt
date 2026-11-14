@@ -34,6 +34,10 @@ class OpenRouterFreePolicyTest {
         assertEquals(1, OpenRouterFreePolicy.catalog(f.catalog(f.row(prompt = "0E-100", completion = 0))).size)
         assertTrue(OpenRouterFreePolicy.catalog(f.catalog(f.row(prompt = "1E-1000"))).isEmpty())
     }
+    @Test fun bareNumericPositivePricesDoNotBecomeFreeByUnderflowOnAndroid() {
+        val json = f.catalog().replace("\"prompt\":\"0\"", "\"prompt\":1e-1000")
+        assertTrue(OpenRouterFreePolicy.catalog(json).isEmpty())
+    }
     @Test fun nativeToolSupportAndEnoughContextAreMandatory() {
         assertTrue(OpenRouterFreePolicy.catalog(f.catalog(f.row(tools = false))).isEmpty())
         assertTrue(OpenRouterFreePolicy.catalog(f.catalog(f.row().put("context_length", 8192))).isEmpty())
