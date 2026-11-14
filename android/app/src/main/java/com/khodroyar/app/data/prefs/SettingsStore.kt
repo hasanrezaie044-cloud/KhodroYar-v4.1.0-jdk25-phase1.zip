@@ -108,7 +108,7 @@ data class AppSettings(
         const val THEME_DARK = "dark"
         const val LANGUAGE_FA = "fa"
         const val LANGUAGE_EN = "en"
-        const val THEME_COLOR_DEFAULT = "indigo"
+        const val THEME_COLOR_DEFAULT = "orbit"
     }
 
     /** Full display name, trimmed. Empty when profile not set yet. */
@@ -283,7 +283,58 @@ class SettingsStore private constructor(context: Context) {
         _state.value = s
     }
 
+    @Synchronized
     fun update(transform: (AppSettings) -> AppSettings) = write(transform(_state.value))
+
+    /** A device-local quick-write journal. Never part of the user-exported settings JSON. */
+    val pendingQuickMileage: String? get() = prefs.getString("quick_mileage_journal", null)
+    private val _quickMileageNotice = MutableStateFlow(prefs.getString("quick_mileage_notice", null))
+    val quickMileageNotice: StateFlow<String?> = _quickMileageNotice.asStateFlow()
+
+    @Synchronized
+    fun stageQuickMileage(encoded: String, predicate: (AppSettings) -> Boolean) {
+        check(pendingQuickMileage.isNullOrBlank()) { "ثبت سریع قبلی هنوز بررسی نشده است." }
+        check(predicate(_state.value)) { "کیلومتر هم‌زمان تغییر کرد؛ خلاصه را دوباره بررسی کن." }
+        check(prefs.edit().putString("quick_mileage_journal", encoded).commit()) { "ذخیرهٔ امن ثبت سریع ممکن نشد؛ چیزی ثبت نشد." }
+    }
+
+    /** Only mileage fields + journal removal are committed together, preserving all other settings. */
+    @Synchronized
+    fun finishQuickMileage(predicate: (AppSettings) -> Boolean, notice: String? = null, transform: (AppSettings) -> AppSettings): Boolean {
+        if (!predicate(_state.value)) return false
+        val next = transform(_state.value)
+        val editor = prefs.edit().putFloat(K_VEHICLE_KM, next.vehicleCurrentKm.toFloat())
+            .putFloat(K_OIL_CURRENT, next.oilCurrentKm.toFloat()).putFloat(K_OIL_NEXT, next.oilNextKm.toFloat())
+            .putFloat(K_BELT_CURRENT, next.beltCurrentKm.toFloat()).putFloat(K_BELT_NEXT, next.beltNextKm.toFloat())
+            .putFloat(K_SPARK_CURRENT, next.sparkCurrentKm.toFloat()).putFloat(K_SPARK_NEXT, next.sparkNextKm.toFloat())
+            .putFloat(K_BRAKE_CURRENT, next.brakeCurrentKm.toFloat()).putFloat(K_BRAKE_NEXT, next.brakeNextKm.toFloat())
+            .putFloat(K_FILTER_CURRENT, next.filterCurrentKm.toFloat()).putFloat(K_FILTER_NEXT, next.filterNextKm.toFloat())
+            .remove("quick_mileage_journal")
+        if (notice != null) editor.putString("quick_mileage_notice", notice)
+        check(editor.commit()) { "ثبت را از فهرست بررسی کن؛ ذخیرهٔ کیلومتر کامل نشد." }
+        _state.value = next
+        if (notice != null) _quickMileageNotice.value = notice
+        return true
+    }
+
+    @Synchronized
+    fun acknowledgeQuickMileageNotice() {
+        check(prefs.edit().remove("quick_mileage_notice").commit())
+        _quickMileageNotice.value = null
+    }
+
+    /** Commit odometer + dedup marker together; safe to replay after Room has committed. */
+    @Synchronized
+    fun applyScheduledMileageOnce(id: String, km: Double) {
+        require(km.isFinite() && km in 0.0..3000.0)
+        val key = "agent_mileage_occurrences"
+        val applied = (prefs.getString(key, "") ?: "").split(',').filter { it.isNotBlank() }
+        if (id in applied) return
+        val value = (_state.value.vehicleCurrentKm + km).toFloat()
+        check(prefs.edit().putFloat(K_VEHICLE_KM, value)
+            .putString(key, (applied.takeLast(2047) + id).joinToString(",")).commit())
+        _state.value = _state.value.copy(vehicleCurrentKm = value.toDouble())
+    }
 
     fun markBackupDone() = update { it.copy(lastBackupAt = System.currentTimeMillis()) }
 

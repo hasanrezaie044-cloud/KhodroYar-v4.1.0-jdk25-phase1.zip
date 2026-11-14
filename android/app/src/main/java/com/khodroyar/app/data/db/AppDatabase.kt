@@ -16,6 +16,7 @@ import androidx.room.RoomDatabase
     exportSchema = false,
 )
 abstract class AppDatabase : RoomDatabase() {
+    abstract fun insights(): InsightsDao
     abstract fun services(): ServiceDao
     abstract fun fuels(): FuelDao
     abstract fun maintenances(): MaintenanceDao

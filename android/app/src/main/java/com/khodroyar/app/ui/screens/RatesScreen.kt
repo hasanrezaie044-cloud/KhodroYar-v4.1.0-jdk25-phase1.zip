@@ -270,7 +270,7 @@ fun RatesScreen(repository: AppRepository) {
                             toast.show("نرخ‌های سال $year ذخیره شد")
                         }
                     },
-                    modifier = Modifier.fillMaxWidth().height(AppDimens.buttonHeight),
+                    modifier = Modifier.fillMaxWidth().heightIn(min = AppDimens.buttonHeight),
                     shape = FieldShape,
                 ) { Icon(Icons.Outlined.Save, null); Spacer(Modifier.width(8.dp)); Text("ذخیره نرخ‌های سال $year") }
 
@@ -281,7 +281,7 @@ fun RatesScreen(repository: AppRepository) {
                             confirmRecalculate = true
                         }
                     },
-                    modifier = Modifier.fillMaxWidth().height(AppDimens.buttonHeight),
+                    modifier = Modifier.fillMaxWidth().heightIn(min = AppDimens.buttonHeight),
                     shape = FieldShape,
                 ) { Icon(Icons.Outlined.Calculate, null); Spacer(Modifier.width(8.dp)); Text(tr("ذخیره و محاسبه مجدد", "Save & recalculate")) }
 

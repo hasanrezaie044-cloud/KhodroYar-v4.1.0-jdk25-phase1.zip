@@ -2,11 +2,11 @@
 
 const http = require('node:http');
 const crypto = require('node:crypto');
-const { RateLimiter, UsageBudget } = require('./limits');
+const { UsageAccounting } = require('./limits');
 const { validateChat, HttpError } = require('./validate');
 const { GapGptProvider } = require('./provider');
 
-const MAX_BODY_BYTES = 128 * 1024;
+const MAX_BODY_BYTES = 32 * 1024 * 1024; // hostile-body/heap safety, never a token or usage allowance.
 
 function safeEqual(a, b) {
   const ba = Buffer.from(String(a));
@@ -56,19 +56,8 @@ function readJson(req) {
  */
 function createApp(cfg, deps = {}) {
   const provider = deps.provider || new GapGptProvider(cfg);
-  const limiter = deps.limiter || new RateLimiter({ perMinute: cfg.rateLimitPerMinute, perDay: cfg.rateLimitPerDay });
-  const budget = deps.budget || new UsageBudget({ requestBudget: cfg.dailyRequestBudget, tokenBudget: cfg.dailyTokenBudget });
+  const budget = deps.budget || new UsageAccounting();
   const log = deps.log || ((line) => console.log(JSON.stringify(line)));
-
-  function clientKey(req) {
-    const id = String(req.headers['x-client-id'] || '').slice(0, 64).replace(/[^\w-]/g, '');
-    let ip = req.socket.remoteAddress || 'unknown';
-    if (cfg.trustProxy) {
-      const xff = String(req.headers['x-forwarded-for'] || '').split(',')[0].trim();
-      if (xff) ip = xff;
-    }
-    return `${ip}|${id}`;
-  }
 
   function requireClient(req) {
     if (!cfg.clientToken) return;
@@ -82,12 +71,7 @@ function createApp(cfg, deps = {}) {
   function guard(req) {
     if (!cfg.enabled) throw new HttpError(503, 'assistant_disabled', 'The assistant is currently disabled by the administrator');
     requireClient(req);
-    const r = limiter.take(clientKey(req));
-    if (!r.ok) {
-      throw new HttpError(429, 'rate_limited', r.scope === 'minute' ? 'Too many requests, slow down' : 'Daily request limit reached', {
-        retryAfterSec: r.retryAfterSec,
-      });
-    }
+
   }
 
   async function handle(req, res) {
@@ -105,14 +89,7 @@ function createApp(cfg, deps = {}) {
         configured: Boolean(cfg.apiKey),
         defaultModel: cfg.defaultModel,
         allowedModels: cfg.allowedModels,
-        limits: {
-          maxMessageChars: cfg.maxMessageChars,
-          maxMessages: cfg.maxMessages,
-          maxTotalChars: cfg.maxTotalChars,
-          maxOutputTokens: cfg.maxOutputTokens,
-          ratePerMinute: cfg.rateLimitPerMinute,
-          ratePerDay: cfg.rateLimitPerDay,
-        },
+        requestBodyMaxBytes: MAX_BODY_BYTES,
       });
     }
 
@@ -130,8 +107,6 @@ function createApp(cfg, deps = {}) {
     if (route === 'POST /v1/chat') {
       guard(req);
       if (!cfg.apiKey) throw new HttpError(503, 'not_configured', 'GAPGPT_API_KEY is not set on the server');
-      const over = budget.exceeded();
-      if (over) throw new HttpError(402, 'budget_exceeded', 'The daily AI usage budget has been reached. Try again tomorrow.');
       const input = validateChat(await readJson(req), cfg);
       budget.recordRequest();
       const out = await provider.chat(input);
@@ -184,14 +159,10 @@ function createApp(cfg, deps = {}) {
       ...(u ? { pt: u.prompt_tokens, ct: u.completion_tokens } : {}),
     });
   });
-  server.requestTimeout = cfg.timeoutMs * (cfg.maxRetries + 2);
+  server.requestTimeout = cfg.timeoutMs + 5000;
   server.headersTimeout = 15000;
+  return { server, budget };
 
-  const sweeper = setInterval(() => limiter.sweep(), 10 * 60 * 1000);
-  sweeper.unref();
-  server.on('close', () => clearInterval(sweeper));
-
-  return { server, limiter, budget };
 }
 
 module.exports = { createApp };

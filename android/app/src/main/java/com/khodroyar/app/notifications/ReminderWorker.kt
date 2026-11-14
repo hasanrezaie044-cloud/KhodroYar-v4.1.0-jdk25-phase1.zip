@@ -4,6 +4,8 @@ import android.content.Context
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
 import com.khodroyar.app.core.analytics.Analytics
+import com.khodroyar.app.core.analytics.MaintenanceForecast
+import kotlinx.coroutines.flow.first
 import com.khodroyar.app.core.finance.LoanCalculator
 import com.khodroyar.app.core.jalali.Jalali
 import com.khodroyar.app.data.prefs.SettingsStore
@@ -27,12 +29,13 @@ class ReminderWorker(context: Context, params: WorkerParameters) : CoroutineWork
         // health card is what tells the user this is why they saw nothing.
         if (!Notifications.canPost(ctx)) return Result.success()
 
-        val settings = SettingsStore.get(ctx).current
         val repo = AppRepository(ctx)
         val today = Jalali.todayString()
         val ymd = Jalali.parse(today) ?: return Result.success()
 
         try {
+            repo.quickEntries.recover()
+            val settings = SettingsStore.get(ctx).current
             if (settings.remindDailySummary) dailySummary(ctx, repo, today)
             if (settings.remindWeeklySummary && Jalali.dayOfWeek(ymd.year, ymd.month, ymd.day) == 6) {
                 weeklySummary(ctx, repo, today)
@@ -50,6 +53,8 @@ class ReminderWorker(context: Context, params: WorkerParameters) : CoroutineWork
                 expiry(ctx, Notifications.ID_INSPECTION, "معاینه فنی", settings.inspectionDate)
             }
             if (settings.remindBackup) backupReminder(ctx, settings.lastBackupAt, settings.backupIntervalDays)
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
         } catch (_: Exception) {
             // A reminder must never crash the app or lose the schedule. Unlike before,
             // an unexpected failure now asks WorkManager to retry with backoff instead
@@ -131,6 +136,10 @@ class ReminderWorker(context: Context, params: WorkerParameters) : CoroutineWork
         )
         val overdue = mutableListOf<String>()
         val soon = mutableListOf<String>()
+        val overdueTypes = mutableListOf<String>()
+        val soonTypes = mutableListOf<String>()
+        val today = Jalali.todayString()
+        val pace = repo.drivingPace(today).first()
         for ((wire, label, interval) in tracked) {
             if (interval <= 0 && settings.nextKmFor(wire) <= 0) continue
             val due = repo.maintenanceDue(
@@ -140,14 +149,21 @@ class ReminderWorker(context: Context, params: WorkerParameters) : CoroutineWork
             )
             val remaining = due.remainingKm ?: continue
             when {
-                due.isOverdue -> overdue += "$label: از حد مجاز ${Analytics.formatNumber(-remaining)} کیلومتر گذشته است"
-                due.isDueSoon -> soon += "$label: ${Analytics.formatNumber(remaining)} کیلومتر تا موعد باقی مانده"
+                due.isOverdue -> {
+                    overdue += "$label: از حد مجاز ${Analytics.formatNumber(-remaining)} کیلومتر گذشته است"
+                    overdueTypes += wire
+                }
+                due.isDueSoon -> {
+                    soonTypes += wire
+                    val eta = MaintenanceForecast.eta(remaining, pace, today, due.nextKm > 0 && (due.baseCurrentKm > 0 || settings.nextKmFor(wire) > 0))
+                    soon += "$label: ${Analytics.formatNumber(remaining)} کیلومتر تا موعد" + (eta?.let { " · حدود ${it.days} روز" } ?: "")
+                }
             }
         }
         if (overdue.isEmpty() && soon.isEmpty()) return
         val title = if (overdue.isNotEmpty()) "هشدار: عبور از حد کیلومتر سرویس" else "یادآور سرویس دوره‌ای"
         val body = (overdue + soon).joinToString("\n")
-        Notifications.post(ctx, Notifications.ID_OIL, Notifications.CHANNEL_REMINDER, title, body)
+        Notifications.post(ctx, Notifications.ID_OIL, Notifications.CHANNEL_REMINDER, title, body, maintenanceTypes = overdueTypes + soonTypes)
     }
 
     /** 14 days before, 3 days before, and after expiry — the legacy thresholds. */
