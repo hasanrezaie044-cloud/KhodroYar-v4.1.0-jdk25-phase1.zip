@@ -53,7 +53,7 @@ class OpenRouterHttp : AiHttpTransport, AiStreamingTransport {
     override fun stream(request: AiHttpRequest, onEvent: (String) -> Unit): AiHttpResponse = request(request, onEvent, Flight())
 
     private fun request(request: AiHttpRequest, callback: ((String) -> Unit)?, flight: Flight): AiHttpResponse {
-        require((request.url == OpenRouterFreePolicy.MODELS_URL && request.method == "GET" && request.body == null) ||
+        require(AIProviderRegistry.permittedEndpoint(request) || (request.url == OpenRouterFreePolicy.MODELS_URL && request.method == "GET" && request.body == null) ||
             (request.url == OpenRouterFreePolicy.CHAT_URL && request.method == "POST" && request.body != null) ||
             (request.method == "GET" && request.body == null && (request.url == OpenRouterModelMetadata.USER_MODELS_URL ||
                 request.url.startsWith(OpenRouterFreePolicy.MODELS_URL + "/") && request.url.endsWith("/endpoints") &&
@@ -84,7 +84,7 @@ class OpenRouterHttp : AiHttpTransport, AiStreamingTransport {
                 } else boundedText(reader, if (request.method == "GET") 4 * 1024 * 1024 else 256 * 1024, flight::check)
             }
             flight.check()
-            return AiHttpResponse(code, body, c.getHeaderField("Retry-After"))
+            return AiHttpResponse(code, body, c.getHeaderField("Retry-After"), listOf("x-ratelimit-remaining-requests", "x-ratelimit-remaining-tokens").mapNotNull { k -> c.getHeaderField(k)?.takeIf { it.length <= 40 }?.let { k to it } }.toMap())
         } catch (e: Exception) {
             if (flight.expired) throw SocketTimeoutException("Request deadline exceeded")
             throw e

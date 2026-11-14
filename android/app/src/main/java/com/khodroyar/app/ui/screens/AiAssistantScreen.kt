@@ -184,7 +184,7 @@ fun AiAssistantScreen(vm: AiAssistantViewModel = viewModel(), onNavigate: (Agent
                         item(key = "failure") {
                             ErrorCard(
                                 f.message,
-                                retryable = f.kind !in setOf(AiErrorKind.NOT_CONFIGURED, AiErrorKind.NOT_FOUND),
+                                retryable = !vm.networkBusy && f.kind !in (setOf(AiErrorKind.NOT_CONFIGURED, AiErrorKind.NOT_FOUND) + com.khodroyar.app.ai.ProviderFailurePolicy.NEVER_RETRY),
                                 onRetry = vm::retry, onSettings = { showSettings = true },
                                 onLocal = null,
                                 onDirect = null,
@@ -201,7 +201,7 @@ fun AiAssistantScreen(vm: AiAssistantViewModel = viewModel(), onNavigate: (Agent
             value = input,
             onChange = { input = it.take(if (settings.mode == AiMode.LOCAL) AiLimits.MAX_USER_CHARS else PersianAgentLimits.USER_CHARS) },
             maxChars = if (settings.mode == AiMode.LOCAL) AiLimits.MAX_USER_CHARS else PersianAgentLimits.USER_CHARS,
-            enabled = settings.enabled && (vm.pending == null || settings.mode == AiMode.LOCAL) && !vm.savingSettings,
+            enabled = settings.enabled && !vm.networkBusy && (vm.pending == null || settings.mode == AiMode.LOCAL) && !vm.savingSettings,
             busy = vm.busy,
             placeholder = if (settings.mode == AiMode.LOCAL) "پیام شما…" else if (vm.pending != null) "ابتدا عملیات بالا را تأیید یا لغو کنید" else "پیام خود را بنویسید…",
             onSend = {
@@ -238,17 +238,19 @@ fun AiAssistantScreen(vm: AiAssistantViewModel = viewModel(), onNavigate: (Agent
         onNavigate(section)
     }, onDismiss = { showSections = false })
 
-    if (vm.needsConsent) ConsentDialog( onAccept = { vm.acceptConsent(); input = "" }, onDecline = vm::declineConsent)
+    if (vm.needsConsent) ConsentDialog(settings = settings, onAccept = { vm.acceptConsent(); input = "" }, onDecline = vm::declineConsent)
 
     if (showSettings && !vm.needsConsent) {
-        SettingsDialog(
+        AIProviderSettingsDialog(
             current = settings,
-            testMessage = vm.testMessage,
-            hasOpenRouterKey = vm.hasOpenRouterKey,
+            message = vm.testMessage,
+            hasKey = vm.hasOpenRouterKey,
             models = vm.modelState,
             onRefresh = vm::refreshModels,
-            saving = vm.savingSettings || vm.busy,
-            settingsError = vm.settingsError,
+            saving = vm.networkBusy,
+            error = vm.settingsError, diagnostics = vm.diagnostics, ledger = vm.usageLedger,
+            onClearHistory = { showSettings = false; confirmClear = true },
+            onEvaluate = { new, key, forget -> vm.configure(new, key, forget) { vm.testModels() } },
             onTest = { new, key, forget -> vm.configure(new, key, forget) { vm.testConnection() } },
             onSave = { new, key, forget -> vm.configure(new, key, forget) {
                 vm.clearTestMessage(); vm.clearSettingsError(); showSettings = false
@@ -439,7 +441,8 @@ private fun EmptyState(state: ConnectionState, mode: AiMode, onSettings: () -> U
                 AiMode.LOCAL -> "دستیار تخصصی خودرو · بدون API"
                 AiMode.ONLINE -> "بک‌اند خودرویار · آنلاین"
                 AiMode.GAPGPT_DIRECT -> "تاریخچهٔ اتصال قدیمی"
-                AiMode.OPENROUTER -> "ایجنت فارسی · OpenRouter رایگان"
+                AiMode.OPENROUTER -> "گفتگوی فارسی · اتصال انتخابی شما"
+                else -> "گفتگوی فارسی · ${com.khodroyar.app.ai.AIProviderRegistry.get(mode).title}"
             },
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -449,7 +452,7 @@ private fun EmptyState(state: ConnectionState, mode: AiMode, onSettings: () -> U
             OutlinedButton(onClick = { onExample(example) }, modifier = Modifier.fillMaxWidth()) { Text(example) }
         }
         if (state == ConnectionState.NOT_CONFIGURED) {
-            Button(onClick = onSettings) { Text("تنظیم کلید OpenRouter یا حالت داخلی") }
+            Button(onClick = onSettings) { Text("تنظیم اتصال یا حالت داخلی") }
         }
     }
 }
@@ -518,93 +521,16 @@ private fun InputBar(
 /* ----------------------------------------------------------------- dialogs */
 
 @Composable
-private fun ConsentDialog( onAccept: () -> Unit, onDecline: () -> Unit) {
-    AlertDialog(
-        onDismissRequest = onDecline,
-        title = { Text("اجازهٔ ارسال به OpenRouter") },
-        text = { Text(
-            "در حالت ایجنت آنلاین، پیام شما، حداکثر ۱۰ پیام اخیر و فقط خلاصهٔ لازمِ نتایج ابزار (مثل تاریخ، تعداد و مبلغ مرتبط) به OpenRouter و ارائه‌دهندهٔ مدل رایگان ارسال می‌شود. کل دیتابیس، اصل سند، عکس/PDF، شماره بیمه‌نامه، اطلاعات پرسنل، موقعیت، مخاطبین و فایل‌های دیگر ارسال نمی‌شوند. اطلاعات حساس را در پیام ننویسید.\n\n" +
-            "فقط قیمت صفر و پشتیبانی ابزار از فهرست تازهٔ سرویس پذیرفته می‌شود؛ سقف قیمت صفر و منع fallback پولی اعمال می‌شود. دسترسی/محدودیت روزانه و سیاست پردازش داده را OpenRouter و ارائه‌دهنده کنترل می‌کنند؛ برنامه سهمیه یا کیفیت پاسخ را تضمین نمی‌کند. مسیرهایی که طبق فرادادهٔ سرویس جمع‌آوری داده دارند مجاز نیستند، اما این جایگزین مطالعهٔ سیاست سرویس نیست.\n\n" +
-            "مدیریت خودکار می‌تواند میان مدل‌های مشخصِ مجاز، قیمت‌صفر و قبول‌شده جابه‌جا شود و این تغییر را اعلام می‌کند. فهرست عمومی و فهرست مجازِ کلید/Guardrail تازه می‌شوند؛ تنظیم Guardrail تغییر نمی‌کند. آزمون‌های فارسی/شمسی/مالی/ابزار فقط دادهٔ ساختگی دارند و هرگز ابزار واقعی را اجرا نمی‌کنند. سقف خودکار ۸ و سقف کل آزمون ۱۶ درخواست در روز است؛ از سهمیهٔ رایگان استفاده می‌کند. در پس‌زمینه فقط فراداده هر ۶ ساعت بررسی می‌شود، نه inference. کلید فقط در هدر HTTPS همان سرویس است. پرداخت، خرید اعتبار و مدل پولی خودکار وجود ندارد.\n\n" +
-            "تمام ثبت/ویرایش/حذف‌ها پیش‌نمایش و دکمهٔ تأیید جدا دارند. گفتگو روی گوشی ذخیره می‌شود و قابل پاک‌کردن است. تعویض کلید/ارائه‌دهنده رضایت تازه می‌خواهد؛ جایگزینی خودکار فقط داخل فهرست مجاز و آزموده‌شده است. امکانات دستی و حالت داخلی آفلاین مستقل می‌مانند.",
+private fun ConsentDialog(settings: AiSettings, onAccept: () -> Unit, onDecline: () -> Unit) {
+    val provider = com.khodroyar.app.ai.AIProviderRegistry.get(settings.mode)
+    AlertDialog(onDismissRequest = onDecline, title = { Text("اجازهٔ ارسال به ${provider.title}") },
+        text = { Text("پیام و حداکثر ${settings.usage.historyMessages} پیام قبلی در سقف محلی به همین ارائه‌دهنده ارسال می‌شود. کل دیتابیس، اصل سند، عکس/PDF و اطلاعات نامرتبط ارسال نمی‌شود. کلید فقط در هدر HTTPS همان اتصال است و در تاریخچه/عیب‌یابی نمایش داده نمی‌شود.\n\n" +
+            provider.conditions + "\n\n" + provider.iran + "\n\n" +
+            "آزمون مدل اختیاری است و در گفتگوی عادی، سلام یا پس‌زمینه اجرا نمی‌شود. بررسی اتصال فقط فراداده است؛ ارزیابی جداگانه حداکثر۴ درخواست ساختگی و هشدار مصرف مستقل دارد. رایگان‌بودن نامحدود یا دائمی نیست و برنامه طرح حساب/صورتحساب ثالث را تضمین نمی‌کند. پرداخت، خرید اعتبار و ارتقای حساب انجام نمی‌شود.\n\n" +
+            "فقط خلاصهٔ لازمِ ابزارِ فعال ممکن است برای همین درخواست ارسال شود. هر ثبت/ویرایش/حذف واقعی پیش‌نمایش و تأیید جداگانه دارد. ارائه‌دهنده هرگز خودکار عوض نمی‌شود؛ تعویض اتصال/کلید رضایت تازه می‌خواهد و تاریخچهٔ اتصال دیگر خودکار ارسال نمی‌شود. امکانات داخلی و ثبت دستی آفلاین مستقل‌اند.",
             modifier = Modifier.verticalScroll(rememberScrollState()).testTag("openrouter-consent")) },
         confirmButton = { Button(onClick = onAccept) { Text("موافقم و ادامه") } },
-        dismissButton = { TextButton(onClick = onDecline) { Text("انصراف") } },
-    )
-}
-
-@Composable
-private fun SettingsDialog(
-    current: AiSettings,
-    testMessage: String?,
-    hasOpenRouterKey: Boolean,
-    models: AIModelState,
-    onRefresh: () -> Unit,
-    saving: Boolean,
-    settingsError: String?,
-    onTest: (AiSettings, String, Boolean) -> Unit,
-    onSave: (AiSettings, String, Boolean) -> Unit,
-    onDismiss: () -> Unit,
-) {
-    var enabled by remember { mutableStateOf(current.enabled) }
-    var mode by remember { mutableStateOf(if (current.mode == AiMode.LOCAL) AiMode.LOCAL else AiMode.OPENROUTER) }
-    var model by remember { mutableStateOf(current.openRouterModel) }
-    var selection by remember { mutableStateOf(current.modelSelectionMode) }
-    // Never rememberSaveable: credentials must not enter saved-instance state.
-    var apiKey by remember { mutableStateOf("") }
-    var showKey by remember { mutableStateOf(false) }
-    var forgetKey by remember { mutableStateOf(false) }
-    val ltr = LocalTextStyle.current.copy(textDirection = TextDirection.Ltr)
-    val valid = apiKey.isBlank() || OpenRouterFreePolicy.normalizeKey(apiKey) != null
-    fun candidate() = current.copy(enabled = enabled, mode = mode, openRouterModel = model, modelSelectionMode = selection)
-    AlertDialog(
-        onDismissRequest = { if (!saving) onDismiss() },
-        properties = DialogProperties(securePolicy = SecureFlagPolicy.SecureOn),
-        title = { Text("تنظیمات ایجنت فارسی") },
-        text = {
-            Column(Modifier.verticalScroll(rememberScrollState()).testTag("ai-settings"), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("فعال بودن گفتگو", Modifier.weight(1f)); Switch(checked = enabled, onCheckedChange = { enabled = it }, enabled = !saving)
-                }
-                listOf(AiMode.OPENROUTER to "OpenRouter — فقط رایگان", AiMode.LOCAL to "دستیار داخلی — بدون مدل/شبکه").forEach { (choice, label) ->
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        RadioButton(selected = mode == choice, onClick = { mode = choice }, enabled = !saving)
-                        TextButton(onClick = { mode = choice }, enabled = !saving) { Text(label) }
-                    }
-                }
-                Text("کارهای خودکارِ قبلاً تأییدشده مستقل‌اند؛ توقف/حذفشان از همان بخش انجام می‌شود.", style = MaterialTheme.typography.labelSmall)
-                if (mode == AiMode.OPENROUTER) {
-                    Text("ارائه‌دهنده: OpenRouter · اتصال مستقیم با کلید خودتان؛ بدون سرور واسط", fontWeight = FontWeight.SemiBold)
-                    Text(OpenRouterFreePolicy.BASE_URL, style = MaterialTheme.typography.labelSmall.copy(textDirection = TextDirection.Ltr))
-                    OutlinedTextField(
-                        value = apiKey, onValueChange = { apiKey = it.take(512); if (it.isNotBlank()) forgetKey = false }, singleLine = true,
-                        label = { Text("API Key حساب OpenRouter") },
-                        placeholder = { Text(if (hasOpenRouterKey && !forgetKey) "خالی = حفظ کلید رمزنگاری‌شده" else "کلید را فقط اینجا وارد کنید") },
-                        supportingText = { Text(if (forgetKey) "با ذخیره، کلید حذف می‌شود." else if (hasOpenRouterKey) "کلید امن موجود است؛ مقدار ذخیره‌شده بازنمایش نمی‌شود. برای تعویض، کلید جدید وارد کنید." else "کلید با Android Keystore رمزنگاری می‌شود؛ در گفتگو ننویسید.") },
-                        isError = !valid, enabled = !saving,
-                        visualTransformation = if (showKey) VisualTransformation.None else PasswordVisualTransformation(),
-                        trailingIcon = { IconButton(onClick = { showKey = !showKey }) { Icon(if (showKey) Icons.Outlined.VisibilityOff else Icons.Outlined.Visibility, if (showKey) "پنهان کردن کلید" else "نمایش کلید واردشده") } },
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
-                        shape = FieldShape, colors = fieldColors(), textStyle = ltr, modifier = Modifier.fillMaxWidth().testTag("openrouter-key"),
-                    )
-                    if (hasOpenRouterKey && !forgetKey) TextButton(onClick = { forgetKey = true; apiKey = "" }, enabled = !saving) { Text("حذف کلید با ذخیرهٔ تنظیمات") }
-                    AIModelSettingsPanel(models, selection, model, enabled = !saving,
-                        onSelection = { selection = it }, onModel = { model = it }, onRefresh = onRefresh)
-                    Text("پیام و خلاصهٔ لازم به OpenRouter/ارائه‌دهندهٔ مدل می‌رود؛ اصل دیتابیس/سند ارسال نمی‌شود. کلید در APK، بکاپ، تاریخچه و متن ساده ذخیره نمی‌شود. محافظت اسکرین‌شات برای همین پنجره فعال است.", style = MaterialTheme.typography.labelSmall)
-                } else Text("قابلیت‌های داخلی و ثبت دستی آفلاین حفظ‌اند. این حالت مدل زبانی عمومی نیست و چیزی دانلود نمی‌کند. برای درک آزاد فارسی از ایجنت OpenRouter استفاده کنید.")
-                OutlinedButton(onClick = {
-                    onTest(candidate(), apiKey, forgetKey); apiKey = ""; showKey = false; forgetKey = false
-                }, enabled = valid && !saving && !models.checking && enabled && !(forgetKey && apiKey.isBlank()), modifier = Modifier.testTag("openrouter-test")) {
-                    Text(if (mode == AiMode.LOCAL) "ذخیره و بررسی داخلی" else "ذخیره و اجرای آزمون امن مدل‌ها")
-                }
-                if (saving) Text("در حال ذخیرهٔ امن…")
-                settingsError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-                testMessage?.let { Text(it, modifier = Modifier.testTag("openrouter-test-result"), style = MaterialTheme.typography.bodySmall.copy(textDirection = TextDirection.Content)) }
-            }
-        },
-        confirmButton = { Button(onClick = { onSave(candidate(), apiKey, forgetKey); apiKey = ""; showKey = false }, enabled = valid && !saving) { Text("ذخیره") } },
-        dismissButton = { TextButton(onClick = onDismiss, enabled = !saving) { Text("بستن") } },
-    )
+        dismissButton = { TextButton(onClick = onDecline) { Text("انصراف") } })
 }
 
 @Composable

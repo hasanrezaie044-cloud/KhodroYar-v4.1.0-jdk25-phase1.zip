@@ -20,6 +20,7 @@ class OpenRouterClient(
     private val credentials: AiApiKeyReader,
     private val transport: AiHttpTransport = OpenRouterHttp(),
     private val clock: () -> Long = System::currentTimeMillis,
+    private val runtime: AIRequestRuntime = AIRequestRuntime(transport, { configuration().usage }, { configuration().modelAccountScope }),
 ) {
     private val requestLock = Mutex()
     private val _models = MutableStateFlow<List<VerifiedFreeModel>>(emptyList())
@@ -62,9 +63,7 @@ class OpenRouterClient(
     }
     private suspend fun request(request: AiHttpRequest, onEvent: ((String) -> Unit)? = null): AiHttpResponse {
         currentCoroutineContext().ensureActive()
-        return if (transport is OpenRouterHttp) transport.await(request, onEvent)
-        else if (onEvent != null && transport is AiStreamingTransport) transport.stream(request, onEvent)
-        else transport.execute(request)
+        return runtime.send("openrouter", request, onEvent)
     }
 
     private fun checkLimit() {
@@ -78,14 +77,15 @@ class OpenRouterClient(
         requestLock.withLock {
             try { checkLimit(); work() }
             catch (e: CancellationException) { throw e }
-            catch (e: SafeFailure) { failure(e.failure) }
+            catch (e: AIRequestRejected) { failure(e.failure) }
+            catch (e: SafeFailure) { runtime.annotateFailure("openrouter", e.failure.kind); failure(e.failure) }
             catch (e: OpenRouterReplyFailure) {
                 if (e.failure.kind == AiErrorKind.RATE_LIMITED) blockedUntil = clock() + (e.failure.retryAfterSec ?: 60) * 1000L
-                failure(e.failure)
+                runtime.annotateFailure("openrouter", e.failure.kind); failure(e.failure)
             }
             catch (_: SocketTimeoutException) { failure(AiResult.Failure(AiErrorKind.TIMEOUT, "مهلت پاسخ OpenRouter تمام شد؛ عملیات تأییدنشده اجرا نمی‌شود.")) }
             catch (_: IOException) { failure(AiResult.Failure(AiErrorKind.OFFLINE, "اتصال امن به OpenRouter برقرار نشد. ثبت دستی و امکانات آفلاین همچنان کار می‌کنند.")) }
-            catch (_: Exception) { failure(AiResult.Failure(AiErrorKind.BAD_REQUEST, "پاسخ مدل ناقص یا ناسازگار با پروتکل ابزار بود؛ چیزی از این پاسخ اجرا نمی‌شود. مدل را دوباره آزمایش کنید یا از حالت خودکار استفاده کنید.")) }
+            catch (_: Exception) { runtime.annotateFailure("openrouter", AiErrorKind.BAD_REQUEST); failure(AiResult.Failure(AiErrorKind.BAD_REQUEST, "پاسخ مدل ناقص یا ناسازگار با پروتکل ابزار بود؛ چیزی از این پاسخ اجرا نمی‌شود. مدل را دوباره آزمایش کنید یا از حالت خودکار استفاده کنید.")) }
         }
     }
 
@@ -115,11 +115,12 @@ class OpenRouterClient(
         require(messages.isNotEmpty() && messages.size <= 80 && messages.sumOf { it.content.length + it.calls.sumOf { c -> c.arguments.length } } <= 160000)
         if (messages.any { AiTextSafety.containsCredential(it.content) || it.calls.any { c -> AiTextSafety.containsCredential(c.arguments) } })
             fail(AiErrorKind.BAD_REQUEST, "متن شبیه کلید API است؛ ارسال نمی‌شود. کلید فقط در تنظیمات امن وارد شود.")
-        require(query.maxOutputTokens in 128..PersianAgentLimits.OUTPUT_TOKENS)
+        require(query.maxOutputTokens in 128..configuration().usage.bounded().outputTokens)
         val streaming = query.stream && transport is AiStreamingTransport
         val body = JSONObject().put("model", model.key.id).put("messages", JSONArray().apply { messages.forEach { put(OpenRouterWire.messageJson(it)) } })
-            .put("tools", OpenRouterToolSchemas.tools(query.tools)).put("tool_choice", "auto").put("stream", streaming)
-            .put("max_tokens", query.maxOutputTokens).put("provider", OpenRouterFreePolicy.routing())
+            .put("stream", streaming).put("max_tokens", query.maxOutputTokens).put("provider", OpenRouterFreePolicy.routing())
+        if (query.tools.isNotEmpty()) body.put("tools", OpenRouterToolSchemas.tools(query.tools, compact = true)).put("tool_choice", "auto")
+        if (streaming) body.put("stream_options", JSONObject().put("include_usage", true))
         attempts.addLast(clock())
         val context = currentCoroutineContext()
         val decoder = OpenRouterStream(model.key.id, emptyList(), { text -> context.ensureActive(); requireScope(expectedScope); onText(text) }, responseIds)
@@ -136,7 +137,7 @@ class OpenRouterClient(
 
     /** Internal legacy wire regression hook; cannot be supplied to an agent. Production uses ManagedAIProvider. */
     internal suspend fun complete(messages: List<FunctionMessage>, onText: (String) -> Unit): FunctionResult =
-        perform(messages, OpenRouterToolSchemas.tools(), null, onText)
+        perform(messages, OpenRouterToolSchemas.tools(AIToolExposure.tools(messages, configuration().usage.toolsEnabled), compact = true), null, onText)
 
     private suspend fun perform(messages: List<FunctionMessage>, schemas: JSONArray, forcedTool: String?, onText: (String) -> Unit): FunctionResult = guarded({
         val (s, key) = account()
@@ -149,7 +150,7 @@ class OpenRouterClient(
         val streaming = forcedTool == null && transport is AiStreamingTransport
         val body = JSONObject().put("tool_choice", "auto").put("model", selected).put("messages", JSONArray().apply { messages.forEach { put(OpenRouterWire.messageJson(it)) } })
             .put("tools", schemas).put("provider", OpenRouterFreePolicy.routing()).put("stream", streaming)
-            .put("max_tokens", if (forcedTool != null) 256 else PersianAgentLimits.OUTPUT_TOKENS)
+            .put("max_tokens", if (forcedTool != null) 256 else s.usage.bounded().outputTokens)
         if (forcedTool != null) body.put("tool_choice", JSONObject().put("type", "function").put("function", JSONObject().put("name", forcedTool)))
         // No models array, plugins, web search, paid fallback, custom endpoint, or purchasing API exists here.
         attempts.addLast(clock())
@@ -161,27 +162,25 @@ class OpenRouterClient(
         if (streaming && response.body.isBlank()) decoder.result() else OpenRouterWire.completion(response.body, selected, catalog)
     }, { FunctionResult.Failed(it) })
 
-    /** Explicit user test: real free tool call, a synthetic nonce only; NEVER executes app tools. */
+    /** Metadata-only legacy API as well: connection checks NEVER dispatch a completion/probe. */
     suspend fun testConnection(): AiProviderStatus {
-        val nonce = java.util.UUID.randomUUID().toString()
-        val probe = JSONArray().put(JSONObject().put("type", "function").put("function", JSONObject().put("name", "connection_probe")
-            .put("description", "Return the supplied nonce; no database or application operation")
-            .put("parameters", JSONObject().put("type", "object").put("additionalProperties", false)
-                .put("required", JSONArray(listOf("nonce"))).put("properties", JSONObject().put("nonce", JSONObject().put("type", "string").put("enum", JSONArray(listOf(nonce))))))))
-        return when (val result = perform(listOf(FunctionMessage("user", "برای آزمایش اتصال، فقط connection_probe را با nonce برابر $nonce صدا بزن.")), probe, "connection_probe", {})) {
-            is FunctionResult.Reply -> {
-                val c = result.message.calls.singleOrNull()
-                val ok = c != null && c.name == "connection_probe" && runCatching {
-                    val args = NativeJson.objectValue(c.arguments, PersianAgentLimits.ARGUMENT_CHARS)
-                    args.length() == 1 && args.opt("nonce") is String && args.getString("nonce") == nonce
-                }.getOrDefault(false)
-                AiProviderStatus(true, ok, ok, result.model, ok,
-                    if (ok) "اتصال و function calling واقعی مدل رایگان تأیید شد: ${result.model}. هیچ ابزار برنامه یا دادهٔ مالی در تست استفاده نشد."
-                    else "پاسخ رسید ولی ابزار آزمایشی درست نبود؛ این مدل فعلاً برای ایجنت تأیید عملی نشد.", if (ok) null else AiErrorKind.BAD_REQUEST)
+        val adapter = OpenRouterModelAdapter(this)
+        return when (val found = adapter.discover(force = true)) {
+            is AIModelDiscovery.Failed -> AiProviderStatus(false, message = found.error.message, errorKind = found.error.kind)
+            is AIModelDiscovery.Found -> {
+                val s = configuration()
+                val eligible = found.models.filter { AIRequestPolicy.eligibleMetadata(it, clock()) }
+                val model = if (s.modelSelectionMode == AISelectionMode.MANUAL) eligible.firstOrNull { it.key.id == s.openRouterModel } else eligible.firstOrNull()
+                val health = model?.let { adapter.availability(it, force = true) }
+                val ok = health?.available == true
+                AiProviderStatus(true, ok, ok, model?.key?.id.orEmpty(), false,
+                    if (ok) "کلید/فهرست/endpoint پاسخ داد؛ بدون درخواست تولید متن یا آزمون مدل."
+                    else health?.explanation ?: "مدل مجاز آماده نیست؛ هیچ پیام AI ارسال نشد.",
+                    if (ok) null else health?.errorKind ?: AiErrorKind.NOT_FOUND)
             }
-            is FunctionResult.Failed -> AiProviderStatus(false, message = result.error.message, errorKind = result.error.kind)
         }
     }
+
 }
 
 internal sealed interface OpenRouterMetadataResult {

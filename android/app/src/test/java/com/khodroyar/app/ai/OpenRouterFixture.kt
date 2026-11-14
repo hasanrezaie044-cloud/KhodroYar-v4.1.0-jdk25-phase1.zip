@@ -14,6 +14,8 @@ internal object OpenRouterFixture {
         .put("supported_parameters", JSONArray(if (tools) listOf("tools", "tool_choice", "max_tokens") else listOf("max_tokens")))
     fun catalog(vararg rows: JSONObject): String = JSONObject().put("data", JSONArray(rows.toList())).toString()
     fun catalog(): String = catalog(row(OpenRouterFreePolicy.INITIAL_MODEL), row())
+    fun endpoints(id: String = FREE): String = JSONObject().put("data", JSONObject().put("id", id).put("endpoints", JSONArray().put(row(id)
+        .put("status", 0).put("provider_name", "Synthetic provider").put("uptime_last_30m", 100)))).toString()
     fun completion(content: String = "سلام!", calls: List<FunctionCall> = emptyList(), model: String = FREE, finish: String = if (calls.isEmpty()) "stop" else "tool_calls"): String =
         JSONObject().put("model", model).put("usage", JSONObject().put("cost", 0))
             .put("choices", JSONArray().put(JSONObject().put("finish_reason", finish).put("message", OpenRouterWire.messageJson(FunctionMessage("assistant", content, calls))))).toString()

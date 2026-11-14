@@ -27,7 +27,7 @@ class OpenRouterClientTest {
         assertEquals(listOf(OpenRouterFreePolicy.MODELS_URL, OpenRouterFreePolicy.CHAT_URL), http.requests.map { it.url })
         val post = http.requests.last(); val body = JSONObject(requireNotNull(post.body))
         assertEquals("openrouter/free", body.getString("model")); assertFalse(body.has("models")); assertFalse(body.has("plugins"))
-        assertEquals("auto", body.getString("tool_choice")); assertFalse(body.getJSONObject("provider").getBoolean("allow_fallbacks"))
+        assertEquals(0, body.getJSONArray("tools").length()); assertFalse(body.getJSONObject("provider").getBoolean("allow_fallbacks"))
         assertEquals(0, body.getJSONObject("provider").getJSONObject("max_price").getInt("request"))
         assertEquals("Bearer ${f.key}", post.headers["Authorization"])
         assertFalse(http.requests.first().headers.containsKey("Authorization"))
@@ -74,22 +74,22 @@ class OpenRouterClientTest {
         val result = OpenRouterClient(f::settings, Key(f.key), http).complete(messages) {} as FunctionResult.Failed
         assertEquals(AiErrorKind.OFFLINE, result.error.kind); assertFalse(result.error.message.contains(f.key)); assertEquals(1, http.requests.size)
     }
-    @Test fun actualTestRequiresNativeNonceProbeAndSendsNoRealDatabaseData() = runBlocking {
+    @Test fun connectionChecksUseOnlyOfficialMetadataAndNeverProbeInference() = runBlocking {
         val http = FakeHttp(""); http.handler = { request ->
-            if (request.method == "GET") AiHttpResponse(200, f.catalog()) else {
-                val wire = JSONObject(requireNotNull(request.body)); val text = wire.getJSONArray("messages").getJSONObject(0).getString("content")
-                val nonce = text.substringAfter("nonce برابر ").substringBefore(" صدا")
-                assertEquals(1, wire.getJSONArray("tools").length()); assertEquals("connection_probe", wire.getJSONObject("tool_choice").getJSONObject("function").getString("name"))
-                assertFalse(request.body.orEmpty().contains("get_monthly"))
-                AiHttpResponse(200, f.completion("", listOf(f.call("connection_probe", JSONObject().put("nonce", nonce).toString()))))
-            }
+            assertEquals("GET", request.method); assertNull(request.body)
+            AiHttpResponse(200, if (request.url.endsWith("/endpoints")) f.endpoints() else f.catalog())
         }
         val status = OpenRouterClient(f::settings, Key(f.key), http).testConnection()
         assertTrue(status.reachable); assertEquals(f.FREE, status.defaultModel)
+        assertTrue(http.requests.all { it.method == "GET" })
+        assertTrue(http.requests.none { it.url == OpenRouterFreePolicy.CHAT_URL })
     }
-    @Test fun a200WithoutNativeProbeIsNotAConnectionSuccess() = runBlocking {
-        val status = OpenRouterClient(f::settings, Key(f.key), FakeHttp(f.completion("ابزار کار می‌کند"))).testConnection()
+    @Test fun metadataConnectionCheckRejectsAnUnavailableEndpointWithoutSendingAProbe() = runBlocking {
+        val http = FakeHttp(""); http.handler = { request -> AiHttpResponse(200,
+            if (request.url.endsWith("/endpoints")) "{\"data\":{\"id\":\"${f.FREE}\",\"endpoints\":[]}}" else f.catalog()) }
+        val status = OpenRouterClient(f::settings, Key(f.key), http).testConnection()
         assertNotNull(status.errorKind); assertFalse(status.configured)
+        assertTrue(http.requests.all { it.method == "GET" })
     }
     @Test fun rawKeyInUserTextIsBlockedBeforeEvenCatalogFetch() = runBlocking {
         val http = FakeHttp(f.completion())

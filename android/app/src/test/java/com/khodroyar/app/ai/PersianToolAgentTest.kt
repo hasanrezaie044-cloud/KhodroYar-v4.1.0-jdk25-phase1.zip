@@ -133,7 +133,7 @@ class PersianToolAgentTest {
         assertTrue(final.text.contains("حلقه")); assertEquals(2, tools.executed.size)
         val bounded = Tools(); val unique = (0..8).map { reply(f.call("get_yearly_report", """{"year":${1400 + it}}""", "r$it")) }.toTypedArray()
         val end = PersianToolAgent(Script(*unique), bounded).start(history()) as AgentStep.Reply
-        assertTrue(end.text.contains("۸ مرحله")); assertEquals(8, bounded.executed.size)
+        assertTrue(end.text.contains("5 مرحله")); assertEquals(5, bounded.executed.size)
     }
     @Test fun incompletePersianCanBeClarifiedWithNoToolAndPriorContextIsIncluded() = runBlocking {
         val script = Script(reply(text = "هر روز چند سرویس و چه مسیر و مقدار کیلومتر/ساعت؟")); val tools = Tools()

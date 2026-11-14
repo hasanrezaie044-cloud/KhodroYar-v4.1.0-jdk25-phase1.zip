@@ -30,13 +30,21 @@ class AiAssistantViewModel @JvmOverloads constructor(
     private val conversations = ConversationRepository(app)
     private val automationStore = AutomationStore.get(app)
     private val tools = toolRunner ?: AppAgentTools(app, AppRepository(app))
-    private val keyStore = OpenRouterApiKeyStore(app)
-    private val openRouter = OpenRouterClient(settingsStore::load, keyStore, http)
-    private val managedModels = ManagedAIProvider(OpenRouterModelAdapter(openRouter), {
-        settingsStore.load().let { s -> AISelectionSettings(s.enabled && s.mode == AiMode.OPENROUTER, s.consented,
-            s.modelAccountScope, s.modelSelectionMode, AIModelKey(OpenRouterModelMetadata.PROVIDER, s.openRouterModel)) }
+    private val usageStore = AndroidAIUsageStore(app)
+    private val requestRuntime = AIRequestRuntime(http, { settingsStore.load().usage }, { settingsStore.load().modelAccountScope }, usageStore)
+    private fun keyStore(mode: AiMode = settingsStore.load().mode) = ProviderApiKeyStore(getApplication(), mode)
+    private val openRouter = OpenRouterClient(settingsStore::load, OpenRouterApiKeyStore(app), http, runtime = requestRuntime)
+    private val selectedAdapter = SelectedAIModelAdapter({ settingsStore.load().mode }, mapOf(
+        AiMode.OPENROUTER to OpenRouterModelAdapter(openRouter),
+        *listOf(AiMode.GEMINI, AiMode.GROQ, AiMode.CLOUDFLARE).map { mode ->
+            mode to DirectModelAdapter(mode, settingsStore::load, ProviderApiKeyStore(app, mode), requestRuntime)
+        }.toTypedArray()))
+    private val managedModels = ManagedAIProvider(selectedAdapter, {
+        settingsStore.load().let { s -> AISelectionSettings(s.enabled && s.mode != AiMode.LOCAL, s.consented,
+            s.modelAccountScope, s.modelSelectionMode, AIModelKey(AIProviderRegistry.get(s.mode).id, s.modelFor()),
+            s.allowModelFallback && s.mode == AiMode.OPENROUTER, s.effectiveUsage()) }
     }, AndroidModelEvaluationStore(app))
-    private val agent = PersianToolAgent(managedModels, tools)
+    private val agent = PersianToolAgent(managedModels, tools) { settingsStore.load().effectiveUsage() }
     private val local = LocalAssistant(tools, dialogue = LocalDialogueEngine(rules = { automationStore.rules.value }))
 
     var localContext by mutableStateOf(LocalDialogueContext())
@@ -78,6 +86,11 @@ class AiAssistantViewModel @JvmOverloads constructor(
 
     var modelState by mutableStateOf(AIModelState())
         private set
+    var diagnostics by mutableStateOf<List<AIRequestDiagnostic>>(emptyList())
+        private set
+    var usageLedger by mutableStateOf(usageStore.read())
+        private set
+    val networkBusy: Boolean get() = busy || savingSettings || testJob?.isActive == true || statusJob?.isActive == true || modelState.checking
     var streamingText by mutableStateOf("")
         private set
 
@@ -85,6 +98,8 @@ class AiAssistantViewModel @JvmOverloads constructor(
     private var createdAt = System.currentTimeMillis()
     private var queuedText: String? = null
     private var queuedTest = false
+    private var queuedManualTest = false
+    private var foreignHistory = false
     private var job: Job? = null
     private var historySave: Job? = null
     private var historySaveConversationId: String? = null
@@ -94,19 +109,20 @@ class AiAssistantViewModel @JvmOverloads constructor(
     private var keyRevision = 0
     private var pendingFromAgent = false
 
-    val activeModel: String get() = if (settings.mode == AiMode.LOCAL) "داخلی · بدون مدل/شبکه" else modelState.active?.let { "OpenRouter · ${it.id}" } ?: "در انتظار مدلِ مجاز و ارزیابی‌شده"
+    val activeModel: String get() = if (settings.mode == AiMode.LOCAL) "داخلی · بدون مدل/شبکه" else modelState.active?.let { "${AIProviderRegistry.get(settings.mode).title} · ${it.id}" } ?: "مدل را در تنظیمات انتخاب کنید"
 
     init {
         viewModelScope.launch { automationStore.rules.collect { automations = it } }
         viewModelScope.launch { managedModels.state.collect { modelState = it; serverModel = it.active?.id.orEmpty() } }
+        viewModelScope.launch { requestRuntime.diagnostics.collect { diagnostics = it; usageLedger = usageStore.read() } }
         viewModelScope.launch {
             val revision = keyRevision
             val storedKey = withContext(Dispatchers.IO) {
-                runCatching { keyStore.read()?.let(OpenRouterFreePolicy::normalizeKey) != null }.getOrDefault(false)
+                runCatching { keyStore().read()?.let { AIProviderRegistry.normalizeKey(settingsStore.load().mode, it) } != null }.getOrDefault(false)
             }
             if (revision == keyRevision) hasOpenRouterKey = storedKey
-            val last = conversations.load().filter { it.mode == settings.mode }.maxByOrNull { it.updatedAt }
-            if (last != null && messages.isEmpty() && !busy) openConversation(last)
+            val last = conversations.load().filter { it.mode == settings.mode && it.accountScope == settings.modelAccountScope }.maxByOrNull { it.updatedAt }
+            if (settings.usage.saveHistory && last != null && messages.isEmpty() && !busy) openConversation(last)
             refreshStatus(); AIModelCatalogScheduler.sync(app)
         }
     }
@@ -117,7 +133,7 @@ class AiAssistantViewModel @JvmOverloads constructor(
         connection = when {
             !settings.enabled -> ConnectionState.DISABLED
             settings.mode == AiMode.LOCAL -> ConnectionState.LOCAL
-            settings.mode != AiMode.OPENROUTER || !hasOpenRouterKey -> ConnectionState.NOT_CONFIGURED
+            !hasOpenRouterKey || AIProviderRegistry.barrier(settings, System.currentTimeMillis()) != null -> ConnectionState.NOT_CONFIGURED
             !settings.consented -> ConnectionState.NEEDS_CONSENT
             else -> ConnectionState.READY
         }
@@ -133,32 +149,47 @@ class AiAssistantViewModel @JvmOverloads constructor(
             else -> ConnectionState.ONLINE
         }
     }
+    /** Connection test is metadata-only: zero model/evaluation POSTs. */
     fun testConnection() {
-        testJob?.cancel()
-        if (settings.mode == AiMode.LOCAL) {
-            testMessage = "حالت داخلی و همهٔ ثبت‌های دستی بدون اینترنت یا مدل آفلاین کار می‌کنند. برای گفتگوی طبیعی و ایجنت چندمرحله‌ای OpenRouter رایگان را انتخاب کنید."
-            refreshStatus(); return
-        }
-        if (!settings.enabled || !hasOpenRouterKey) {
-            testMessage = "دستیار را فعال و کلید واقعی OpenRouter را در همین تنظیمات امن ذخیره کنید."; return
-        }
-        if (!settings.consented) { queuedTest = true; needsConsent = true; return }
+        if (networkBusy) return
+        if (settings.mode == AiMode.LOCAL) { testMessage = "حالت داخلی بدون شبکه است."; refreshStatus(); return }
+        if (!settings.enabled || !hasOpenRouterKey) { testMessage = "دستیار و کلید همین ارائه‌دهنده را در تنظیمات فعال کنید."; return }
+        if (!settings.consented) { queuedText = null; queuedManualTest = false; queuedTest = true; needsConsent = true; return }
+        testMessage = "بررسی کلید و فهرست رسمی؛ بدون تولید متن یا ارزیابی…"
         connection = ConnectionState.CHECKING
-        testMessage = "در حال بررسی فهرست رسمی/Guardrail و آزمون‌های امن؛ فقط دادهٔ ساختگی و حداکثر دو مدل…"
+        testJob = viewModelScope.launch {
+            try {
+                managedModels.refresh()
+                val ready = managedModels.state.value.models.any { it.approved }
+                connection = if (ready) ConnectionState.ONLINE else ConnectionState.ERROR
+                testMessage = if (ready) "کلید/فهرست رسمی پاسخ داد؛ ۰ درخواست تولید متن و ۰ آزمون مدل. این بررسی کیفیت یا inference زنده را اثبات نمی‌کند."
+                    else managedModels.state.value.message ?: "مدل/مجوز/طرح رایگان تأیید نشد؛ fallback انجام نمی‌شود."
+            } catch (e: CancellationException) { throw e }
+            catch (_: Exception) { connection = ConnectionState.ERROR; testMessage = "بررسی اتصال کامل نشد؛ خطای خام/کلید نمایش داده نمی‌شود." }
+        }
+    }
+    /** Called only after the settings' separate usage-warning confirmation. One model, <=4 dummy POSTs. */
+    fun testModels() {
+        if (networkBusy || settings.mode == AiMode.LOCAL) return
+        if (settings.usage.bounded().outputTokens < 384) { testMessage = "آزمون اختیاری به سقف خروجی حداقل۳۸۴ نیاز دارد؛ سقف انتخابی شما خودکار بالا نمی‌رود."; return }
+        if (!settings.enabled || !hasOpenRouterKey) { testMessage = "ابتدا کلید و مدل همین اتصال را ذخیره کنید."; return }
+        if (!settings.consented) { queuedText = null; queuedTest = false; queuedManualTest = true; needsConsent = true; return }
+        connection = ConnectionState.CHECKING
+        testMessage = "آزمون اختیاری یک مدل؛ حداکثر۴ درخواست ساختگی، خروجی هر درخواست حداکثر۳۸۴توکن؛ بدون ابزار/رکورد واقعی…"
         testJob = viewModelScope.launch {
             try {
                 managedModels.refresh(runTests = true)
                 val result = managedModels.state.value
-                val ready = result.models.firstOrNull { it.model.key == result.active && it.approved }
-                connection = if (ready != null) ConnectionState.ONLINE else ConnectionState.ERROR
-                testMessage = if (ready != null) "مدل مجاز و رایگان با ۴ آزمون ساختگی قبول شد: ${ready.model.key.id}. این آزمون کیفیت همهٔ مکالمات را تضمین نمی‌کند."
-                    else result.message ?: "مدلِ مجاز و قبول‌شده آماده نیست؛ جزئیات فهرست را بررسی کنید."
+                val checked = result.models.firstOrNull { it.model.key == result.active }?.evaluation
+                connection = if (result.active != null) ConnectionState.ONLINE else ConnectionState.ERROR
+                testMessage = checked?.let { "نتیجهٔ آزمون اختیاری: ${if (it.passed) "قبول" else "قبول نشد"}؛ ${it.explanation}" }
+                    ?: result.message ?: "آزمون کامل نشد؛ جزئیات مصرف و خطا را بررسی کنید."
             } catch (e: CancellationException) { throw e }
-            catch (_: Exception) { connection = ConnectionState.ERROR; testMessage = "بررسی کامل نشد؛ از مدل قدیمی/پولی استفاده نمی‌شود و کلید یا خطای خام نمایش داده نمی‌شود." }
+            catch (_: Exception) { connection = ConnectionState.ERROR; testMessage = "آزمون کامل نشد؛ تکرار خودکار نداریم." }
         }
     }
     fun refreshModels() {
-        if (busy || savingSettings || settings.mode != AiMode.OPENROUTER || !settings.consented || !hasOpenRouterKey) return
+        if (networkBusy || settings.mode == AiMode.LOCAL || !settings.consented || !hasOpenRouterKey) return
         statusJob?.cancel()
         statusJob = viewModelScope.launch {
             try { managedModels.refresh() }
@@ -172,18 +203,12 @@ class AiAssistantViewModel @JvmOverloads constructor(
 
     /** Key material never enters ordinary settings, history, SavedStateHandle or backups. */
     fun configure(new: AiSettings, apiKey: String, forgetKey: Boolean, afterSave: () -> Unit) {
-        if (busy || executingAction || savingSettings) return
+        if (networkBusy || executingAction) return
         settingsError = null
-        if (new.mode !in setOf(AiMode.LOCAL, AiMode.OPENROUTER)) {
-            settingsError = "فقط OpenRouter رایگانِ تأییدشده یا حالت داخلی مجاز است؛ اتصال پولی/قدیمی جایگزین نمی‌شود."; return
-        }
-        if (new.mode == AiMode.OPENROUTER && new.modelSelectionMode == AISelectionMode.MANUAL &&
-            modelState.models.none { it.readyAt(System.currentTimeMillis()) && it.model.key.id == new.openRouterModel }) {
-            settingsError = "انتخاب دستی فقط از مدل‌های مجاز، رایگان و قبول‌شدهٔ همین حساب ممکن است؛ ابتدا آزمون امن را اجرا کنید."; return
-        }
+        if (new.mode != AiMode.LOCAL && new.mode !in AIProviderRegistry.providers.map { it.mode }) return
         val typed = apiKey.trim()
-        if (typed.isNotEmpty() && OpenRouterFreePolicy.normalizeKey(typed) == null) {
-            settingsError = "قالب کلید OpenRouter معتبر نیست؛ کلید واقعی حساب را فقط همین‌جا وارد کنید، نه در گفتگو."; return
+        if (typed.isNotEmpty() && AIProviderRegistry.normalizeKey(new.mode, typed) == null) {
+            settingsError = "قالب کلید این ارائه‌دهنده معتبر نیست؛ فقط در همین تنظیمات امن وارد کنید."; return
         }
         val changed = typed.isNotEmpty() || forgetKey
         statusJob?.cancel(); testJob?.cancel(); stop()
@@ -196,11 +221,12 @@ class AiAssistantViewModel @JvmOverloads constructor(
             try {
                 hasOpenRouterKey = withContext(Dispatchers.IO) {
                     if (changed) settingsStore.revokeOpenRouterConsent()
-                    if (typed.isNotEmpty()) keyStore.save(typed) else if (forgetKey) keyStore.clear()
-                    keyStore.read()?.let(OpenRouterFreePolicy::normalizeKey) != null
+                    if (typed.isNotEmpty()) keyStore(new.mode).save(typed) else if (forgetKey) keyStore(new.mode).clear()
+                    keyStore(new.mode).read()?.let { AIProviderRegistry.normalizeKey(new.mode, it) } != null
                 }
-                val target = if (changed) new.copy(modelAccountScope = UUID.randomUUID().toString(), modelSelectionMode = AISelectionMode.AUTOMATIC) else new
+                val target = if (changed) new.copy(modelAccountScope = UUID.randomUUID().toString()) else new
                 saveSettings(target, forceNewConsent = changed)
+                savingSettings = false
                 afterSave()
             } catch (e: CancellationException) { throw e }
             catch (_: Exception) { settingsError = "ذخیره/خواندن امن کلید انجام نشد. هیچ متن ساده یا ذخیرهٔ جایگزین نداریم؛ دوباره تلاش کنید." }
@@ -209,14 +235,15 @@ class AiAssistantViewModel @JvmOverloads constructor(
     }
     fun saveSettings(new: AiSettings, forceNewConsent: Boolean = false) {
         if (executingAction) return
-        if (new.mode !in setOf(AiMode.LOCAL, AiMode.OPENROUTER)) return
-        val newAccount = new.mode != settings.mode || forceNewConsent
-        val changed = newAccount || new.openRouterModel != settings.openRouterModel || new.modelSelectionMode != settings.modelSelectionMode
+        if (new.mode != AiMode.LOCAL && new.mode !in AIProviderRegistry.providers.map { it.mode }) return
+        val newAccount = new.mode != settings.mode || forceNewConsent || new.cloudflareAccountId != settings.cloudflareAccountId
+        val changed = newAccount || new.modelFor() != settings.modelFor() || new.modelSelectionMode != settings.modelSelectionMode || new.usage != settings.usage
+        if (!new.usage.saveHistory) historySave?.cancel()
         if (changed) newChat() else if (!new.enabled) { stop(); pending = null; local.dialogue.reset(); localContext = local.dialogue.context }
         testJob?.cancel(); statusJob?.cancel()
-        settingsStore.save(new.copy(consented = !newAccount && new.consented))
+        settingsStore.save(new.copy(consented = !newAccount && new.consented, modelAccountScope = if (newAccount && !forceNewConsent) UUID.randomUUID().toString() else new.modelAccountScope))
         settings = settingsStore.load(); managedModels.invalidate(); AIModelCatalogScheduler.sync(getApplication())
-        needsConsent = false; queuedText = null; queuedTest = false; testMessage = null; failure = null
+        needsConsent = false; queuedText = null; queuedTest = false; queuedManualTest = false; testMessage = null; failure = null
         refreshStatus()
     }
     /** Explicit opt-in to the new provider; no network/fallback is triggered by this action. */
@@ -225,19 +252,21 @@ class AiAssistantViewModel @JvmOverloads constructor(
     fun acceptConsent() {
         val text = queuedText
         val test = queuedTest
+        val manual = queuedManualTest
         settingsStore.save(settings.copy(consented = true))
         settings = settingsStore.load(); AIModelCatalogScheduler.sync(getApplication())
         needsConsent = false
         queuedText = null
         queuedTest = false
-        if (test) testConnection() else refreshStatus()
-        if (text != null) send(text)
+        queuedManualTest = false
+        if (test) testConnection() else if (manual) testModels() else { refreshStatus(); if (text != null) send(text) }
     }
 
     fun declineConsent() {
         needsConsent = false
         queuedText = null
         queuedTest = false
+        queuedManualTest = false
     }
 
     /** Explicit user choice after an online error. The failed request is retried locally only. */
@@ -250,7 +279,7 @@ class AiAssistantViewModel @JvmOverloads constructor(
 
     fun send(raw: String) {
         val text = raw.trim()
-        if (text.isEmpty() || busy || savingSettings || !settings.enabled || text.length > (if (settings.mode == AiMode.LOCAL) AiLimits.MAX_USER_CHARS else PersianAgentLimits.USER_CHARS)) return
+        if (text.isEmpty() || networkBusy || !settings.enabled || text.length > (if (settings.mode == AiMode.LOCAL) AiLimits.MAX_USER_CHARS else PersianAgentLimits.USER_CHARS)) return
         if (OpenRouterFreePolicy.containsCredential(text)) {
             failure = AiResult.Failure(AiErrorKind.BAD_REQUEST, "این متن شبیه کلید API است؛ در تاریخچه ذخیره یا ارسال نشد. کلید را فقط در تنظیمات امن وارد کنید.")
             return
@@ -278,7 +307,9 @@ class AiAssistantViewModel @JvmOverloads constructor(
             runAgent()
             return
         }
+        if (foreignHistory) { newChat(); foreignHistory = false }
         if (settings.mode != AiMode.LOCAL && !settings.consented) {
+            queuedTest = false; queuedManualTest = false
             queuedText = text
             needsConsent = true
             return
@@ -290,11 +321,11 @@ class AiAssistantViewModel @JvmOverloads constructor(
     }
 
     fun retry() {
-        if (busy || savingSettings || pending != null || !settings.enabled) return
+        if (networkBusy || pending != null || !settings.enabled || failure?.kind in ProviderFailurePolicy.NEVER_RETRY) return
         if (settings.mode != AiMode.LOCAL && !settings.consented) return
         if (settings.mode == AiMode.LOCAL && messages.lastOrNull()?.role != ChatRole.USER) return
         failure = null
-        runAgent(retrying = settings.mode == AiMode.OPENROUTER && agent.canResume)
+        runAgent(retrying = settings.mode != AiMode.LOCAL && agent.canResume)
     }
     private fun textCallback(run: Int): (String) -> Unit = { text ->
         viewModelScope.launch { if (run == generation && busy) streamingText = OpenRouterFreePolicy.redactCredentials(text) }
@@ -309,7 +340,7 @@ class AiAssistantViewModel @JvmOverloads constructor(
         when (step) {
             is AgentStep.Reply -> add(ChatRole.ASSISTANT, step.text)
             is AgentStep.Result -> { add(ChatRole.RESULT, (if (step.outcome.ok) "" else "⚠️ ") + step.outcome.text); if (step.outcome.ok) navigation = step.outcome.section }
-            is AgentStep.Confirm -> { pendingFromAgent = settings.mode == AiMode.OPENROUTER; if (step.pending.lead.isNotBlank()) add(ChatRole.ASSISTANT, step.pending.lead); pending = step.pending }
+            is AgentStep.Confirm -> { pendingFromAgent = settings.mode != AiMode.LOCAL; if (step.pending.lead.isNotBlank()) add(ChatRole.ASSISTANT, step.pending.lead); pending = step.pending }
             is AgentStep.Failure -> {
                 failure = step.error
                 connection = when (step.error.kind) {
@@ -332,7 +363,7 @@ class AiAssistantViewModel @JvmOverloads constructor(
                 coroutineContext.ensureActive()
                 if (run != generation) return@launch
                 if (mode == AiMode.LOCAL) localContext = local.dialogue.context
-                if (mode == AiMode.OPENROUTER && step !is AgentStep.Failure) connection = ConnectionState.ONLINE
+                if (mode != AiMode.LOCAL && step !is AgentStep.Failure) connection = ConnectionState.ONLINE
                 applyStep(step)
             } catch (e: CancellationException) { throw e }
             catch (_: Exception) { if (run == generation) failure = AiResult.Failure(AiErrorKind.UNKNOWN, "دریافت پاسخ کامل نشد؛ عملیات تأییدنشده اجرا نمی‌شود.") }
@@ -346,7 +377,7 @@ class AiAssistantViewModel @JvmOverloads constructor(
         val run = ++generation
         job = viewModelScope.launch {
             try {
-                if (settings.mode == AiMode.OPENROUTER && pendingFromAgent) {
+                if (settings.mode != AiMode.LOCAL && pendingFromAgent) {
                     val step = agent.confirm(p, textCallback(run)) { name, out ->
                         toolResult(name, out); executingAction = false // The verified DB phase is finished; streaming can now be stopped.
                     }
@@ -389,9 +420,9 @@ class AiAssistantViewModel @JvmOverloads constructor(
     }
 
     private fun persist() {
-        if (messages.isEmpty()) return
+        if (messages.isEmpty() || !settings.usage.saveHistory) return
         val title = messages.firstOrNull { it.role == ChatRole.USER }?.text?.take(40) ?: "گفتگو"
-        val convo = Conversation(conversationId, title, createdAt, System.currentTimeMillis(), messages.toList(), settings.mode)
+        val convo = Conversation(conversationId, title, createdAt, System.currentTimeMillis(), messages.toList(), settings.mode, settings.modelAccountScope)
         historySave?.cancel()
         historySaveConversationId = convo.id
         historySave = viewModelScope.launch { conversations.save(convo) }
@@ -406,7 +437,7 @@ class AiAssistantViewModel @JvmOverloads constructor(
         pending = null
         failure = null
         declineConsent()
-        messages.clear()
+        messages.clear(); foreignHistory = false
         conversationId = UUID.randomUUID().toString()
         createdAt = System.currentTimeMillis()
     }
@@ -448,7 +479,8 @@ class AiAssistantViewModel @JvmOverloads constructor(
         if (executingAction) return
         newChat()
         messages.addAll(c.messages)
-        if (c.mode != settings.mode) {
+        if (c.mode != settings.mode || c.accountScope != settings.modelAccountScope) {
+            foreignHistory = true
             settingsStore.save(settings.copy(consented = false)); settings = settingsStore.load(); refreshStatus()
             // Viewing old history never changes providers or authorises a request. New sends fork it.
         } else { conversationId = c.id; createdAt = c.createdAt }

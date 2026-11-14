@@ -30,7 +30,7 @@ class SafePersianModelEvaluator(private val clock: () -> Long = System::currentT
         suspend fun ask(text: String, tools: List<ToolSpec>): FunctionMessage {
             if (!reserve()) throw EvaluationDeferred()
             history += FunctionMessage("user", text)
-            return when (val result = adapter.infer(model.key, AIModelRequest(history.toList(), tools, maxOutputTokens = 1536, stream = false))) {
+            return when (val result = adapter.infer(model.key, AIModelRequest(history.toList(), tools, maxOutputTokens = 384, stream = false))) {
                 is FunctionResult.Reply -> {
                     check(result.model == model.key.id)
                     history += result.message; result.message
@@ -78,7 +78,7 @@ class SafePersianModelEvaluator(private val clock: () -> Long = System::currentT
         } catch (e: CancellationException) { throw e }
         catch (_: EvaluationDeferred) { deferred = true; explanation = "بودجهٔ روزانهٔ آزمون تمام شده؛ نتیجهٔ قبلی حفظ می‌شود." }
         catch (e: EvaluationFailure) { explanation = e.error.message; errorKind = e.error.kind }
-        catch (_: Exception) { explanation = "آزمون کامل فارسی/ابزار/محاسبه/تأیید قبول نشد یا بودجهٔ آزمون تمام شد؛ این مدل فعال نمی‌شود." }
+        catch (_: Exception) { explanation = "آزمون کامل فارسی/ابزار/محاسبه/تأیید قبول نشد یا بودجهٔ آزمون تمام شد؛ هیچ عملیاتی در آزمون اجرا نشد." }
         if (cases.size < 4) cases += AIModelTestCase("مرحلهٔ لازمِ ناتمام/نامعتبر", false)
         return AIModelEvaluation(model.key, model.fingerprint, clock(), cases, if (cases.size == 4 && cases.all { it.passed }) 80 + bonus else 0,
             explanation = explanation.ifBlank { "۴ آزمون ساختگی قبول شد؛ تضمین کیفیت همهٔ مکالمات فارسی نیست." }, deferred = deferred, errorKind = errorKind)

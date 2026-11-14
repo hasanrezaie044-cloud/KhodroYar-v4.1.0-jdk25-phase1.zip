@@ -14,7 +14,7 @@ class AiHttpRequest(
     override fun toString(): String = "$method $url (headers and body redacted)"
 }
 
-class AiHttpResponse(val status: Int, val body: String, val retryAfter: String? = null) {
+class AiHttpResponse(val status: Int, val body: String, val retryAfter: String? = null, val headers: Map<String, String> = emptyMap()) {
     override fun toString(): String = "AI HTTP $status (body redacted)"
 }
 

@@ -4,7 +4,7 @@ package com.khodroyar.app.ai
 data class AiMessage(val role: String, val content: String)
 
 /** Local is an explicit command assistant, not a downloaded/generative language model. */
-enum class AiMode { LOCAL, ONLINE, GAPGPT_DIRECT, OPENROUTER }
+enum class AiMode { LOCAL, ONLINE, GAPGPT_DIRECT, OPENROUTER, GEMINI, GROQ, CLOUDFLARE, CEREBRAS, HUGGING_FACE, AVALAI }
 
 enum class AiErrorKind {
     OFFLINE, TIMEOUT, NOT_CONFIGURED, DISABLED, BAD_REQUEST, UNAUTHORIZED,
@@ -59,6 +59,8 @@ data class Conversation(
     val updatedAt: Long,
     val messages: List<ChatEntry>,
     val mode: AiMode = AiMode.ONLINE,
+    /** Legacy histories without a scope are view-only, never silently reused with a new key. */
+    val accountScope: String = "",
 )
 
 object AiLimits {

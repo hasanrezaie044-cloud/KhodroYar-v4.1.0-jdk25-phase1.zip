@@ -78,6 +78,7 @@ class NativeOpenRouterAgentTest {
             remindBodyInsurance = false, remindVehicleInsurance = false) }
         context.getSharedPreferences("khodroyar_ai", Context.MODE_PRIVATE).edit().clear().commit()
         context.getSharedPreferences("khodroyar_ai_models", Context.MODE_PRIVATE).edit().clear().commit()
+        context.getSharedPreferences("khodroyar_ai_usage", Context.MODE_PRIVATE).edit().clear().commit()
         AiSettingsStore(context).save(AiSettings())
         OpenRouterApiKeyStore(context).clear(); ConversationRepository(context).clearAll()
         File(context.noBackupFilesDir, "work-report").deleteRecursively()
@@ -267,8 +268,8 @@ class NativeOpenRouterAgentTest {
         publishSyntheticEvidence(context, "KhodroYar-UI-Smoke", name + ".png", "image/png", output.toByteArray())
     }
     private fun renderChat(http: AiHttpTransport, consented: Boolean = false, toolRunner: AgentToolRunner? = null,
-        modelCatalog: String = catalog(), approvedIds: List<String> = listOf(free)): AiAssistantViewModel {
-        AiSettingsStore(context).save(AiSettings(consented = consented))
+        modelCatalog: String = catalog(), approvedIds: List<String> = listOf(free), allowModelFallback: Boolean = false): AiAssistantViewModel {
+        AiSettingsStore(context).save(AiSettings(consented = consented, allowModelFallback = allowModelFallback))
         val receipts = AndroidModelEvaluationStore(context)
         val models = OpenRouterModelMetadata.parse(modelCatalog, modelCatalog, System.currentTimeMillis()).first
         approvedIds.forEachIndexed { index, id ->
@@ -331,6 +332,55 @@ class NativeOpenRouterAgentTest {
         // The production send callback explicitly clears focus/hides IME. Observe that real
         // transition before measuring the conversation or touching a newly opened consent card.
         compose.waitUntil(10000) { chatImeBottom == 0 }
+    }
+    @Test fun aColdGreetingWithoutEvaluationReceiptsMakesOneNormalPostEvenOnDuplicateSend() = runBlocking {
+        val posts = AtomicInteger(); val requests = java.util.Collections.synchronizedList(mutableListOf<AiHttpRequest>())
+        val release = java.util.concurrent.CountDownLatch(1)
+        val http = AiHttpTransport { request ->
+            requests += request
+            if (request.method == "GET") AiHttpResponse(200, catalog()) else {
+                posts.incrementAndGet()
+                check(release.await(20, java.util.concurrent.TimeUnit.SECONDS))
+                AiHttpResponse(200, JSONObject(completion("سلام، در خدمتم."))
+                    .put("usage", JSONObject().put("cost", 0).put("prompt_tokens", 40).put("completion_tokens", 9).put("total_tokens", 49)).toString())
+            }
+        }
+        val vm = renderChat(http, consented = true, approvedIds = emptyList())
+        assertTrue(AndroidModelEvaluationStore(context).load("initial").isEmpty())
+        try {
+            send("سلام")
+            compose.waitUntil(10000) { posts.get() == 1 && vm.busy }
+            compose.runOnIdle { vm.send("سلام") } // A duplicate callback cannot enqueue a second flight.
+            assertEquals(1, posts.get())
+        } finally { release.countDown() }
+        compose.waitUntil(10000) { !vm.busy && vm.messages.any { it.role == ChatRole.ASSISTANT } }
+        assertNull(vm.failure); assertEquals(1, posts.get())
+        val post = requests.single { it.method == "POST" }; val body = JSONObject(requireNotNull(post.body))
+        assertFalse(body.has("tools")); assertEquals(512, body.getInt("max_tokens"))
+        assertFalse(post.body.orEmpty().contains(SafePersianModelEvaluator.MARKER)); assertTrue(post.body.orEmpty().toByteArray().size < 2000)
+        assertTrue(AndroidModelEvaluationStore(context).load("initial").isEmpty())
+        assertEquals(1, vm.usageLedger.requests); assertEquals(49, vm.diagnostics.single { !it.metadata && it.dispatched }.actual?.total)
+        assertTrue(db.insights().expensesOn("1404/01/01").isEmpty())
+        screenshot("41-ai-one-request-greeting-320")
+        publishSyntheticEvidence(context, "KhodroYar-UI-Smoke", "ai-consumption-regression.json", "application/json",
+            JSONObject().put("environment", "Synthetic HTTP; real Compose, Keystore and durable usage; NOT live provider")
+                .put("passed", true).put("normal_inference_posts", 1).put("evaluation_posts", 0).put("duplicate_send_blocked", true)
+                .put("greeting_has_no_tool_schemas", true).put("actual_usage_from_fixture", 49).toString().toByteArray())
+    }
+    @Test fun providerKeysAndInstallWideUsagePersistEncryptedOrBoundedWithoutTouchingRecords() = runBlocking {
+        val values = mapOf(AiMode.GEMINI to ("AIza" + "x".repeat(35)), AiMode.GROQ to ("gsk_" + "y".repeat(48)), AiMode.CLOUDFLARE to "z".repeat(40))
+        values.forEach { (mode, key) -> ProviderApiKeyStore(context, mode).save(key) }
+        val file = File(context.applicationInfo.dataDir, "shared_prefs/khodroyar_provider_credentials.xml").readText()
+        values.forEach { (mode, key) -> assertEquals(key, ProviderApiKeyStore(context, mode).read()); assertFalse(file.contains(key)) }
+        val ledger = AIUsageLedger(day = 20000, requests = 7, reservedTokens = 3210, metadataRequests = 2)
+        AndroidAIUsageStore(context).write(ledger)
+        AiSettingsStore(context).save(AiSettings(mode = AiMode.GROQ, modelAccountScope = "new-key-scope"))
+        ConversationRepository(context).clearAll()
+        assertEquals(ledger, AndroidAIUsageStore(context).read())
+        ProviderApiKeyStore(context, AiMode.GROQ).clear(); assertNull(ProviderApiKeyStore(context, AiMode.GROQ).read())
+        assertEquals(values[AiMode.GEMINI], ProviderApiKeyStore(context, AiMode.GEMINI).read())
+        assertTrue(db.services().allOnce().isEmpty())
+        values.keys.forEach { ProviderApiKeyStore(context, it).clear() }
     }
     @Test fun rtlTextChatStreamsNativeToolsWaitsForButtonAndPreservesRealHistory() = runBlocking {
         val postCount = AtomicInteger(); val requests = mutableListOf<AiHttpRequest>()
@@ -548,7 +598,7 @@ class NativeOpenRouterAgentTest {
                 }
             }
         }
-        val vm = renderChat(http, consented = true, modelCatalog = source, approvedIds = listOf(free, alternative))
+        val vm = renderChat(http, consented = true, modelCatalog = source, approvedIds = listOf(free, alternative), allowModelFallback = true)
         send("یک هزینهٔ آزمایشی ۴۵ هزار تومانی ثبت کن و بعد نتیجه را بگو")
         compose.waitUntil(10000) { vm.pending != null && !vm.busy }
         val screenHeight = compose.onNodeWithTag("ai-agent-screen").fetchSemanticsNode().boundsInRoot.height
@@ -577,18 +627,20 @@ class NativeOpenRouterAgentTest {
         val model = OpenRouterModelMetadata.parse(catalog(), catalog(), now).first.single { it.key.id == free }
         store.save("initial", AIModelEvaluation(model.key, model.fingerprint, now, (1..4).map { AIModelTestCase("dummy$it", true) }, 95))
         store.setActive("initial", model.key)
-        repeat(8) { assertTrue(store.reserve("initial", now, automatic = true)) }
+        assertFalse(store.reserve("initial", now, automatic = true))
         assertFalse(AndroidModelEvaluationStore(context).reserve("initial", now, automatic = true))
-        repeat(8) { assertTrue(AndroidModelEvaluationStore(context).reserve("initial", now, automatic = false)) }
+        repeat(16) { assertTrue(AndroidModelEvaluationStore(context).reserve("initial", now, automatic = false)) }
         assertFalse(store.reserve("initial", now, automatic = false))
         assertFalse(store.reserve("initial", now - 86_400_000L, automatic = false))
-        assertTrue(store.reserve("initial", now + 86_400_000L, automatic = true))
+        assertFalse(store.reserve("initial", now + 86_400_000L, automatic = true))
+        assertTrue(store.reserve("initial", now + 86_400_000L, automatic = false))
         val restarted = AndroidModelEvaluationStore(context)
         assertTrue(restarted.load("initial").single().passed); assertEquals(model.key, restarted.active("initial"))
         settings.save(settings.load().copy(modelAccountScope = "rotated-account"))
         assertTrue(restarted.load("rotated-account").isEmpty()); assertNull(restarted.active("rotated-account"))
         assertFalse(restarted.reserve("initial", now + 86_400_000L, automatic = false))
-        assertTrue(restarted.reserve("rotated-account", now + 86_400_000L, automatic = true))
+        assertFalse(restarted.reserve("rotated-account", now + 86_400_000L, automatic = true))
+        assertTrue(restarted.reserve("rotated-account", now + 86_400_000L, automatic = false))
     }
     @Test fun nativeAndroidJsonCannotCoerceNonstandardSyntaxOrRoundFractionalIntegerArguments() {
         for (args in listOf("{month:1}", "{'month':1}", "{\"month\":1,}", "{\"month\":1,\"month\":2}",

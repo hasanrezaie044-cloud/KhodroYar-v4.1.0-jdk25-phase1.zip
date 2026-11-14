@@ -18,7 +18,7 @@ class AIModelCatalogWorker(context: Context, params: WorkerParameters) : Corouti
         val settings = store.load()
         if (!settings.enabled || settings.mode != AiMode.OPENROUTER || !settings.consented) return Result.success()
         try {
-            val client = OpenRouterClient(store::load, OpenRouterApiKeyStore(applicationContext))
+            val client = OpenRouterClient(store::load, OpenRouterApiKeyStore(applicationContext), runtime = AIRequestRuntime(OpenRouterHttp(), { store.load().usage }, { store.load().modelAccountScope }, AndroidAIUsageStore(applicationContext)))
             val adapter = OpenRouterModelAdapter(client)
             // Discovery includes both public pricing and the key-scoped /models/user guardrail view.
             when (val found = adapter.discover(force = true)) {

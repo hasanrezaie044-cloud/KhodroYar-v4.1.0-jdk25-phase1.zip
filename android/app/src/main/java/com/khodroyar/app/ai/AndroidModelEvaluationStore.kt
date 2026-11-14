@@ -40,8 +40,17 @@ class AndroidModelEvaluationStore(context: Context) : AIModelEvaluationStore {
         if (settings.load().modelAccountScope != scope) return@synchronized
         check(prefs.edit().putString("active_scope", scope).putString("active_provider", key?.provider.orEmpty()).putString("active_id", key?.id.orEmpty()).commit())
     }
+    override fun selected(scope: String): AIModelKey? = synchronized(lock) {
+        if (prefs.getString("selected_scope", "") != scope) return@synchronized null
+        val provider = prefs.getString("selected_provider", "").orEmpty(); val id = prefs.getString("selected_id", "").orEmpty()
+        if (provider.isBlank() || id.isBlank()) null else AIModelKey(provider, id)
+    }
+    override fun setSelected(scope: String, key: AIModelKey) = synchronized(lock) {
+        if (settings.load().modelAccountScope == scope) check(prefs.edit().putString("selected_scope", scope)
+            .putString("selected_provider", key.provider).putString("selected_id", key.id).commit())
+    }
     override fun reserve(scope: String, now: Long, automatic: Boolean): Boolean = synchronized(lock) {
-        if (now <= 0 || settings.load().modelAccountScope != scope) return@synchronized false
+        if (automatic || now <= 0 || settings.load().modelAccountScope != scope) return@synchronized false
         val day = now / 86_400_000L
         if (prefs.getString("budget_scope", "") == scope && day < prefs.getLong("budget_day", -1)) return@synchronized false
         val same = prefs.getString("budget_scope", "") == scope && prefs.getLong("budget_day", -1) == day

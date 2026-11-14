@@ -124,19 +124,20 @@ class OpenRouterStream(
 
 /** OpenRouter/OpenAI-compatible schema encoding; never part of the business/tool registry. */
 object OpenRouterToolSchemas {
-    fun tools(specs: List<ToolSpec> = AgentToolRegistry.tools): JSONArray = JSONArray().apply {
+    fun tools(specs: List<ToolSpec> = AgentToolRegistry.tools, compact: Boolean = false): JSONArray = JSONArray().apply {
         specs.forEach { spec ->
             val properties = JSONObject()
             spec.params.forEach { p ->
                 val type = when (p.type) { ParamType.NUMBER -> "number"; ParamType.INT -> "integer"; else -> "string" }
-                properties.put(p.name, JSONObject().put("type", type).put("description", p.desc).apply {
+                properties.put(p.name, JSONObject().put("type", type).apply {
+                    if (!compact) put("description", p.desc)
                     if (p.options.isNotEmpty()) put("enum", JSONArray(p.options))
                     if (p.type in setOf(ParamType.NUMBER, ParamType.INT)) { put("minimum", p.min); put("maximum", p.max) }
                     else put("maxLength", if (p.type == ParamType.TEXT) 80 else 100)
                 })
             }
             put(JSONObject().put("type", "function").put("function", JSONObject().put("name", spec.name)
-                .put("description", "[${spec.kind}] ${spec.desc}").put("parameters", JSONObject().put("type", "object")
+                .put("description", "[${spec.kind}] ${if (compact) spec.desc.take(90) else spec.desc}").put("parameters", JSONObject().put("type", "object")
                     .put("properties", properties).put("additionalProperties", false)
                     .put("required", JSONArray(spec.params.filter { it.required }.map { it.name })))))
         }

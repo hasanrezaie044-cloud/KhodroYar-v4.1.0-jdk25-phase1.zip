@@ -58,12 +58,12 @@ class AIModelManagementTest {
     private fun managed(adapter: Adapter, store: Store = Store()) = ManagedAIProvider(adapter, { preference }, store, SafePersianModelEvaluator { now }, { now })
     private val chat = listOf(FunctionMessage("user", "سلام، گزارشمو بگو"))
 
-    @Test fun selectionRanksTestedQualityBeforeContextAndNeverApprovesUntestedOrPaidModels() {
+    @Test fun selectionRanksOptionalQualityBeforeContextAndNeverRanksPaidModels() {
         val a = model(); val b = model(keyB).copy(capability = AIModelCapability(true, 262144))
         val paid = model(AIModelKey("future-provider", "test/paid")).copy(pricing = AIModelPricing(BigDecimal.ONE, BigDecimal.ZERO, false))
         val unknown = model(AIModelKey("future-provider", "test/unknown"))
         val sorted = AIModelSelector.ranked(listOf(b, paid, a, unknown), listOf(passed(a, 100), passed(b, 85), passed(paid, 100)), emptyMap(), now)
-        assertEquals(listOf(keyA, keyB), sorted.map { it.key })
+        assertEquals(listOf(keyA, keyB, unknown.key), sorted.map { it.key })
     }
     @Test fun checkpointSuiteOrExpiredReceiptsCannotAuthorizeANewModel() {
         val a = model(); val receipt = passed(a)
@@ -79,24 +79,23 @@ class AIModelManagementTest {
         val result = provider.complete(chat) as FunctionResult.Reply
         assertEquals(keyA.id, result.model); assertEquals(keyA, provider.state.value.active)
         assertTrue(adapter.requests.all { it.first.provider == "future-provider" })
-        assertEquals(AgentToolRegistry.tools, adapter.requests.single().second.tools)
+        assertEquals(AIToolExposure.tools(chat, true), adapter.requests.single().second.tools)
     }
-    @Test fun newModelsMustPassAllFourDummyCasesBeforeTheFirstUserRequest() = runBlocking {
+    @Test fun ordinaryGreetingWithoutReceiptsSendsExactlyOneNormalRequestAndZeroEvaluations() = runBlocking {
         val adapter = Adapter(); val store = Store(); val provider = managed(adapter, store)
-        assertTrue(provider.complete(chat) is FunctionResult.Reply)
-        assertEquals(8, adapter.requests.count { isEvaluation(it.second) })
-        assertEquals(1, adapter.requests.count { !isEvaluation(it.second) })
-        assertTrue(store.load(preference.scope).all { it.passed && it.cases.size == 4 })
-        assertTrue(adapter.requests.filter { isEvaluation(it.second) }.all { pair ->
-            pair.second.messages.none { it.content.contains("گزارشمو") } && !pair.second.stream
-        })
+        val greeting = listOf(FunctionMessage("user", "سلام"))
+        assertTrue(provider.complete(greeting) is FunctionResult.Reply)
+        assertEquals(0, adapter.requests.count { isEvaluation(it.second) }); assertEquals(1, adapter.requests.size)
+        assertTrue(adapter.requests.single().second.tools.isEmpty()); assertTrue(store.load(preference.scope).isEmpty())
+        assertEquals(0, store.auto); assertEquals(0, store.total)
     }
-    @Test fun incorrectJalaliArgumentsFailEvaluationAndNeverReceiveRealChat() = runBlocking {
+    @Test fun incorrectJalaliArgumentsFailOnlyExplicitEvaluationAndNeverReceiveUserData() = runBlocking {
         val adapter = Adapter(); adapter.records = listOf(model())
         adapter.handler = { key, _ -> FunctionResult.Reply(FunctionMessage("assistant", calls = listOf(FunctionCall("bad", "get_jalali_calendar", """{"year":1405}"""))), key.id) }
-        val provider = managed(adapter)
-        assertTrue(provider.complete(chat) is FunctionResult.Failed)
-        assertTrue(adapter.requests.all { isEvaluation(it.second) }); assertFalse(provider.state.value.models.any { it.approved })
+        val store = Store(); val provider = managed(adapter, store)
+        provider.refresh(runTests = true)
+        assertEquals(1, adapter.requests.size); assertTrue(adapter.requests.all { isEvaluation(it.second) })
+        assertFalse(store.load(preference.scope).single().passed)
     }
     @Test fun benchmarkWriteDeleteAttemptIsOnlyAnUnexecutedFailureWithNoRealExecutor() = runBlocking {
         val adapter = Adapter(); adapter.records = listOf(model())
@@ -108,7 +107,8 @@ class AIModelManagementTest {
         assertFalse(receipt.passed); assertEquals(0, receipt.score)
         assertEquals(4, adapter.requests.size); assertFalse(adapter.requests.any { !isEvaluation(it.second) })
     }
-    @Test fun automaticFailoverOnlyRetriesInferenceFromSameTranscriptAndNotAnyToolExecution() = runBlocking {
+    @Test fun explicitlyPermittedFailoverOnlyRetriesInferenceFromSameTranscriptAndNotAnyToolExecution() = runBlocking {
+        preference = preference.copy(allowModelFallback = true)
         val adapter = Adapter(); val store = Store(); adapter.records.forEach { store.save(preference.scope, passed(it)) }
         adapter.handler = { key, _ -> if (key == keyA) FunctionResult.Failed(AiResult.Failure(AiErrorKind.SERVER, "ساختگی: مدل در دسترس نیست"))
             else FunctionResult.Reply(FunctionMessage("assistant", "پاسخ جایگزین"), key.id) }
@@ -160,21 +160,24 @@ class AIModelManagementTest {
         preference = preference.copy(consented = false)
         provider.refresh(true); provider.complete(chat); assertEquals(1, adapter.discoveries); assertTrue(adapter.requests.isEmpty())
     }
-    @Test fun dailyEvaluationBudgetsAreBoundedAndDeferredRetestPreservesExistingPassedReceipts() = runBlocking {
+    @Test fun manualEvaluationIsOneModelFourRequestsAndDeferredRetestPreservesReceipts() = runBlocking {
         val adapter = Adapter(); val store = Store(); val provider = managed(adapter, store)
-        provider.complete(chat); assertEquals(8, store.auto)
+        provider.complete(chat); assertEquals(0, store.auto); assertEquals(0, store.total)
+        repeat(4) { provider.refresh(true) }; assertEquals(16, store.total)
         provider.refresh(true); assertEquals(16, store.total)
-        provider.refresh(true); assertEquals(16, store.total)
-        assertTrue(store.load(preference.scope).all { it.passed }); assertTrue(provider.state.value.models.any { it.approved })
+        assertEquals(0, store.auto); assertTrue(store.load(preference.scope).all { it.passed })
+        assertEquals(16, adapter.requests.count { isEvaluation(it.second) }); assertEquals(1, adapter.requests.count { !isEvaluation(it.second) })
+        assertTrue(adapter.requests.filter { isEvaluation(it.second) }.all { it.second.maxOutputTokens == 384 && !it.second.stream })
     }
-    @Test fun aRateLimitDuringBenchmarkStopsOtherModelTestsAndTheRealPrompt() = runBlocking {
+    @Test fun aRateLimitDuringExplicitBenchmarkStopsAllRemainingCasesWithoutUserPrompt() = runBlocking {
         val adapter = Adapter()
         adapter.handler = { _, _ -> FunctionResult.Failed(AiResult.Failure(AiErrorKind.RATE_LIMITED, "سقف ساختگی")) }
-        val result = managed(adapter).complete(chat) as FunctionResult.Failed
-        assertEquals(AiErrorKind.RATE_LIMITED, result.error.kind); assertEquals(1, adapter.requests.size)
+        val provider = managed(adapter); provider.refresh(true)
+        assertTrue(provider.state.value.message.orEmpty().contains("سقف ساختگی")); assertEquals(1, adapter.requests.size)
         assertTrue(isEvaluation(adapter.requests.single().second))
     }
-    @Test fun responseIdentitySubstitutionInvalidatesThatModelAndUsesOnlyApprovedAlternative() = runBlocking {
+    @Test fun responseIdentitySubstitutionUsesAlternativeOnlyWithExplicitPermission() = runBlocking {
+        preference = preference.copy(allowModelFallback = true)
         val adapter = Adapter(); val store = Store(); adapter.records.forEach { store.save(preference.scope, passed(it)) }
         adapter.handler = { key, _ -> FunctionResult.Reply(FunctionMessage("assistant", "نام اشتباه"), if (key == keyA) "unverified/substitution" else key.id) }
         assertEquals(keyB.id, (managed(adapter, store).complete(chat) as FunctionResult.Reply).model)
@@ -197,14 +200,14 @@ class AIModelManagementTest {
             assertEquals(kind, result.error.kind); assertTrue(adapter.requests.isEmpty()); assertEquals(1, adapter.availabilityChecks.size)
         }
     }
-    @Test fun unavailableEndpointsDoNotConsumeBothActualEvaluationSlots() = runBlocking {
-        val adapter = Adapter(); val c = AIModelKey("future-provider", "test/charlie"); val d = AIModelKey("future-provider", "test/delta")
-        adapter.records = listOf(model(), model(keyB), model(c), model(d))
-        adapter.healthHandler = { AIModelAvailability(it.key !in listOf(keyA, keyB), now) }
+    @Test fun anUnavailableSelectedModelNeverTriggersEvaluationOrUnpermittedFallback() = runBlocking {
+        val adapter = Adapter(); adapter.healthHandler = { AIModelAvailability(false, now) }
         val provider = managed(adapter)
-        assertTrue(provider.complete(chat) is FunctionResult.Reply)
-        assertEquals(8, adapter.requests.count { isEvaluation(it.second) })
-        assertTrue(adapter.requests.none { it.first in listOf(keyA, keyB) })
+        assertTrue(provider.complete(chat) is FunctionResult.Failed)
+        assertTrue(adapter.requests.isEmpty()); assertEquals(1, adapter.availabilityChecks.size)
+        preference = preference.copy(mode = AISelectionMode.MANUAL, manual = keyB)
+        provider.refresh(true)
+        assertTrue(adapter.requests.isEmpty()); assertEquals(keyB, adapter.availabilityChecks.last())
     }
     @Test fun explicitInvalidationDuringInferenceCannotRestoreStaleStateOrReturnCalls() = runBlocking {
         val adapter = Adapter(); val store = Store(); adapter.records.forEach { store.save(preference.scope, passed(it)) }
@@ -222,7 +225,8 @@ class AIModelManagementTest {
         assertEquals(1, adapter.requests.size)
     }
 
-    @Test fun repeatedInvalidNativeArgumentsDemoteTheModelAndTheAgentContinuesOnlyWithApprovedAlternative() = runBlocking {
+    @Test fun repeatedInvalidArgumentsDemoteModelAndContinuationRequiresExplicitFallbackPermission() = runBlocking {
+        preference = preference.copy(allowModelFallback = true)
         val adapter = Adapter(); val store = Store(); adapter.records.forEach { store.save(preference.scope, passed(it)) }
         var executions = 0
         val runner = object : AgentToolRunner {
@@ -231,8 +235,7 @@ class AIModelManagementTest {
             override suspend fun describeTarget(call: ValidatedCall): String? = null
         }
         adapter.handler = { key, _ -> if (key == keyA) FunctionResult.Reply(FunctionMessage("assistant", calls = listOf(
-            FunctionCall("bad_one", "invented_tool", "{}"), FunctionCall("bad_two", "get_monthly_report", "{\"month\":true}"),
-            FunctionCall("discard_read", "get_service_catalog", "{}"))), key.id)
+            FunctionCall("bad_one", "invented_tool", "{}"), FunctionCall("bad_two", "get_monthly_report", "{\"month\":true}"))), key.id)
             else FunctionResult.Reply(FunctionMessage("assistant", "برای ادامه سؤال روشن‌تری بپرسید؛ چیزی تغییر نکرد."), key.id) }
         val provider = managed(adapter, store)
         val result = PersianToolAgent(provider, runner).start(listOf(ChatEntry("user", ChatRole.USER, "سؤال ساختگی", now)))
@@ -240,7 +243,7 @@ class AIModelManagementTest {
         assertEquals(listOf(keyA, keyB), adapter.requests.map { it.first }); assertEquals(keyB, provider.state.value.active)
         assertFalse(store.load(preference.scope).single { it.key == keyA }.passed)
         val continued = adapter.requests.last().second.messages
-        assertTrue(continued.any { it.role == "tool" && it.toolCallId == "discard_read" && it.content.contains("کنار گذاشته شد") })
+        assertEquals(setOf("bad_one", "bad_two"), continued.filter { it.role == "tool" }.map { it.toolCallId }.toSet())
     }
     @Test fun invalidNativeToolsInManualModeCannotTriggerSilentInferenceWithAnotherModel() = runBlocking {
         preference = preference.copy(mode = AISelectionMode.MANUAL, manual = keyA)
@@ -254,6 +257,27 @@ class AIModelManagementTest {
         }
         val result = PersianToolAgent(managed(adapter, store), runner).start(listOf(ChatEntry("user", ChatRole.USER, "سؤال ساختگی", now)))
         assertTrue(result is AgentStep.Failure); assertEquals(listOf(keyA), adapter.requests.map { it.first })
+    }
+    @Test fun aFailedAutomaticModelDoesNotSilentlyChangeOnTheNextTurnWithoutPermission() = runBlocking {
+        val adapter = Adapter(); val provider = managed(adapter)
+        adapter.handler = { _, _ -> FunctionResult.Failed(AiResult.Failure(AiErrorKind.SERVER, "synthetic")) }
+        assertTrue(provider.complete(listOf(FunctionMessage("user", "سلام", turnId = "turn-one"))) is FunctionResult.Failed)
+        assertEquals(listOf(keyA), adapter.requests.map { it.first })
+        assertTrue(provider.complete(listOf(FunctionMessage("user", "سلام دوباره", turnId = "turn-two"))) is FunctionResult.Failed)
+        assertEquals(listOf(keyA), adapter.requests.map { it.first })
+        provider.refresh(); assertNull(provider.state.value.active)
+    }
+    @Test fun turnBudgetAlsoCapsExplicitInferenceFailover() = runBlocking {
+        preference = preference.copy(allowModelFallback = true, usage = AIUsageLimits(requestsPerTurn = 1))
+        val adapter = Adapter(); adapter.handler = { _, _ -> FunctionResult.Failed(AiResult.Failure(AiErrorKind.SERVER, "synthetic")) }
+        assertTrue(managed(adapter).complete(listOf(FunctionMessage("user", "متن", turnId = "same-turn"))) is FunctionResult.Failed)
+        assertEquals(1, adapter.requests.size)
+    }
+    @Test fun manualProviderWithoutModelCanPopulatePickerUsingOnlyMetadata() = runBlocking {
+        preference = preference.copy(mode = AISelectionMode.MANUAL, manual = AIModelKey("future-provider", ""))
+        val adapter = Adapter(); val provider = managed(adapter)
+        provider.refresh(); assertEquals(2, provider.state.value.models.count { it.approved })
+        assertNull(provider.state.value.active); assertTrue(adapter.requests.isEmpty())
     }
     @Test fun healthMonitorUsesOnlyBoundedViolationsAndCanBeResetAfterASuccessfulEvaluation() {
         val health = AIModelHealthMonitor()
@@ -269,7 +293,8 @@ class AIModelManagementTest {
         val view = AIModelView(m, e, AIModelAvailability(true, now), true, "قبول")
         assertTrue(view.readyAt(now)); assertFalse(view.readyAt(now + AIRequestPolicy.METADATA_TTL_MS))
         assertFalse(view.copy(availability = AIModelAvailability(true, now - AIRequestPolicy.METADATA_TTL_MS)).readyAt(now))
-        assertFalse(view.copy(evaluation = e.copy(checkedAt = now - AIRequestPolicy.EVALUATION_TTL_MS)).readyAt(now))
+        assertTrue(view.copy(evaluation = e.copy(checkedAt = now - AIRequestPolicy.EVALUATION_TTL_MS)).readyAt(now))
+        assertTrue(view.copy(evaluation = null).readyAt(now)) // Optional evaluation is not a hidden chat prerequisite.
     }
 
 }
