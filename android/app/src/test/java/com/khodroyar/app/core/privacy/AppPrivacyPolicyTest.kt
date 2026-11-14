@@ -17,7 +17,7 @@ class AppPrivacyPolicyTest {
         assertFalse(text.contains("هیچ داده‌ای"))
     }
     @Test fun freeAgentDisclosesModelProviderConsentAndVerifiedWriteBoundary() {
-        for (term in listOf("OpenRouter", "ارائه‌دهندهٔ مدل", "رضایت جداگانه", "قیمت‌صفر", "منع جایگزینی پولی", "Android Keystore", "بازخوانی‌شده", "پیش‌نمایش و تأیید صریح", "ثبت دستی")) assertTrue(term, text.contains(term))
+        for (term in listOf("OpenRouter", "ارائه‌دهندهٔ مدل", "رضایت جداگانه", "قیمت‌صفر", "منع جایگزینی پولی", "Android Keystore", "بازخوانی‌شده", "پیش‌نمایش و تأیید صریح", "ثبت دستی", "Guardrail", "ساختگی", "سقف روزانه", "جابه‌جا", "در پس‌زمینه اجرا نمی‌شود")) assertTrue(term, text.contains(term))
     }
     @Test fun inputOcrThirdPartyDecisionsAndUnofficialDocumentRisksAreCovered() {
         for (term in listOf("کیلومترشمار", "پیمایش", "فواصل نگهداری", "ارقام گزارش شرکت", "یادآورها", "مقایسه‌ها", "برآورد هزینه", "پیشنهادهای نگهداری",

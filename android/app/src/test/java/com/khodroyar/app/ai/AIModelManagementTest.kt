@@ -27,12 +27,17 @@ class AIModelManagementTest {
         override val providerId = "future-provider"
         var records = listOf(model(), model(keyB))
         var available = true
+        val availabilityChecks = mutableListOf<AIModelKey>()
+        var healthHandler: ((AIModel) -> AIModelAvailability)? = null
         var discoveries = 0
         val requests = mutableListOf<Pair<AIModelKey, AIModelRequest>>()
         var handler: ((AIModelKey, AIModelRequest) -> FunctionResult)? = null
         override fun invalidate() = Unit
         override suspend fun discover(force: Boolean): AIModelDiscovery { discoveries++; return AIModelDiscovery.Found(records.map { it.copy(checkedAt = now) }, now) }
-        override suspend fun availability(model: AIModel, force: Boolean) = AIModelAvailability(available, now, listOf("Synthetic"), 99.0)
+        override suspend fun availability(model: AIModel, force: Boolean): AIModelAvailability {
+            availabilityChecks += model.key
+            return healthHandler?.invoke(model) ?: AIModelAvailability(available, now, listOf("Synthetic"), 99.0)
+        }
         override suspend fun infer(model: AIModelKey, request: AIModelRequest, onText: (String) -> Unit): FunctionResult {
             requests += model to request
             return handler?.invoke(model, request) ?: if (isEvaluation(request)) dummy(model, request) else FunctionResult.Reply(FunctionMessage("assistant", "پاسخ ساختگی"), model.id)
@@ -175,4 +180,46 @@ class AIModelManagementTest {
         assertEquals(keyB.id, (managed(adapter, store).complete(chat) as FunctionResult.Reply).model)
         assertFalse(store.load(preference.scope).single { it.key == keyA }.passed)
     }
+    @Test fun aManualModelBelowTheFirstSixRanksStillGetsItsOwnFreshEndpointCheck() = runBlocking {
+        val adapter = Adapter(); adapter.records = (1..8).map { model(AIModelKey("future-provider", "test/model$it")) }
+        val store = Store(); adapter.records.forEachIndexed { index, m -> store.save(preference.scope, passed(m, 100 - index)) }
+        preference = preference.copy(mode = AISelectionMode.MANUAL, manual = adapter.records.last().key)
+        val provider = managed(adapter, store); provider.refresh()
+        assertEquals(preference.manual, provider.state.value.active)
+        assertEquals(listOf(preference.manual), adapter.availabilityChecks)
+        assertTrue(adapter.requests.isEmpty())
+    }
+    @Test fun metadataAccountErrorsStopBeforeBenchmarkOrTryingAnotherApprovedModel() = runBlocking {
+        for (kind in listOf(AiErrorKind.RATE_LIMITED, AiErrorKind.UNAUTHORIZED, AiErrorKind.OFFLINE)) {
+            val adapter = Adapter(); val store = Store(); adapter.records.forEach { store.save(preference.scope, passed(it)) }
+            adapter.healthHandler = { AIModelAvailability(false, now, explanation = "محدودیت حساب ساختگی", errorKind = kind) }
+            val result = managed(adapter, store).complete(chat) as FunctionResult.Failed
+            assertEquals(kind, result.error.kind); assertTrue(adapter.requests.isEmpty()); assertEquals(1, adapter.availabilityChecks.size)
+        }
+    }
+    @Test fun unavailableEndpointsDoNotConsumeBothActualEvaluationSlots() = runBlocking {
+        val adapter = Adapter(); val c = AIModelKey("future-provider", "test/charlie"); val d = AIModelKey("future-provider", "test/delta")
+        adapter.records = listOf(model(), model(keyB), model(c), model(d))
+        adapter.healthHandler = { AIModelAvailability(it.key !in listOf(keyA, keyB), now) }
+        val provider = managed(adapter)
+        assertTrue(provider.complete(chat) is FunctionResult.Reply)
+        assertEquals(8, adapter.requests.count { isEvaluation(it.second) })
+        assertTrue(adapter.requests.none { it.first in listOf(keyA, keyB) })
+    }
+    @Test fun explicitInvalidationDuringInferenceCannotRestoreStaleStateOrReturnCalls() = runBlocking {
+        val adapter = Adapter(); val store = Store(); adapter.records.forEach { store.save(preference.scope, passed(it)) }
+        lateinit var provider: ManagedAIProvider
+        adapter.handler = { key, _ -> provider.invalidate(); FunctionResult.Reply(FunctionMessage("assistant", calls = listOf(FunctionCall("stale", "add_expense", "{\"amount\":100}"))), key.id) }
+        provider = managed(adapter, store)
+        assertTrue(provider.complete(chat) is FunctionResult.Failed)
+        assertNull(provider.state.value.active); assertTrue(provider.state.value.models.isEmpty())
+        assertEquals(1, adapter.requests.size); assertTrue(store.load(preference.scope).all { it.passed })
+    }
+    @Test fun aConcurrentManualModeChangeDropsTheOldAutomaticResponseWithoutFailover() = runBlocking {
+        val adapter = Adapter(); val store = Store(); adapter.records.forEach { store.save(preference.scope, passed(it)) }
+        adapter.handler = { key, _ -> preference = preference.copy(mode = AISelectionMode.MANUAL, manual = keyB); FunctionResult.Reply(FunctionMessage("assistant", "قدیمی"), key.id) }
+        assertTrue(managed(adapter, store).complete(chat) is FunctionResult.Failed)
+        assertEquals(1, adapter.requests.size)
+    }
+
 }

@@ -16,6 +16,6 @@ internal object OpenRouterFixture {
     fun catalog(): String = catalog(row(OpenRouterFreePolicy.INITIAL_MODEL), row())
     fun completion(content: String = "سلام!", calls: List<FunctionCall> = emptyList(), model: String = FREE, finish: String = if (calls.isEmpty()) "stop" else "tool_calls"): String =
         JSONObject().put("model", model).put("usage", JSONObject().put("cost", 0))
-            .put("choices", JSONArray().put(JSONObject().put("finish_reason", finish).put("message", FunctionMessage("assistant", content, calls).json()))).toString()
+            .put("choices", JSONArray().put(JSONObject().put("finish_reason", finish).put("message", OpenRouterWire.messageJson(FunctionMessage("assistant", content, calls))))).toString()
     fun call(name: String, args: String = "{}", id: String = "call_1") = FunctionCall(id, name, args)
 }

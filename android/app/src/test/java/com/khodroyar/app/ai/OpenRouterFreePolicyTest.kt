@@ -72,7 +72,7 @@ class OpenRouterFreePolicyTest {
         assertFalse(OpenRouterFreePolicy.containsCredential("سرویس شب را از اول فروردین تا آخر اسفند ثبت کن"))
     }
     @Test fun schemasAreAllowlistedTypedAndRejectUnknownInternalFields() {
-        val schema = FunctionToolSchemas.tools(listOf(requireNotNull(AgentToolRegistry.find("bulk_register_services")))).getJSONObject(0).getJSONObject("function")
+        val schema = OpenRouterToolSchemas.tools(listOf(requireNotNull(AgentToolRegistry.find("bulk_register_services")))).getJSONObject(0).getJSONObject("function")
         val params = schema.getJSONObject("parameters")
         assertFalse(params.getBoolean("additionalProperties"))
         assertEquals("integer", params.getJSONObject("properties").getJSONObject("per_day").getString("type"))

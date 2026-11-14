@@ -23,7 +23,7 @@ data class AIModel(
 )
 data class AIModelAvailability(
     val available: Boolean, val checkedAt: Long, val providers: List<String> = emptyList(),
-    val uptime: Double = 0.0, val explanation: String = "",
+    val uptime: Double = 0.0, val explanation: String = "", val errorKind: AiErrorKind? = null,
 )
 sealed interface AIModelDiscovery {
     data class Found(val models: List<AIModel>, val checkedAt: Long) : AIModelDiscovery
@@ -102,6 +102,10 @@ class ManagedAIProvider(
     private val clock: () -> Long = System::currentTimeMillis,
 ) : FunctionCallingProvider {
     private val lock = Mutex()
+    private val invalidations = java.util.concurrent.atomic.AtomicLong()
+    private var operationRevision = 0L
+    private val accountErrors = setOf(AiErrorKind.RATE_LIMITED, AiErrorKind.UNAUTHORIZED, AiErrorKind.CREDIT_EXHAUSTED,
+        AiErrorKind.OFFLINE, AiErrorKind.DISABLED, AiErrorKind.NOT_CONFIGURED)
     private val mutable = MutableStateFlow(AIModelState())
     val state = mutable.asStateFlow()
     private var scope = ""
@@ -113,18 +117,20 @@ class ManagedAIProvider(
     private var catalogFailure: AiResult.Failure? = null
     private var evaluationStop: AiResult.Failure? = null
     fun dismissNotice() { mutable.value = mutable.value.copy(notice = null) }
-    fun invalidate() { adapter.invalidate(); mutable.value = AIModelState(); scope = "" }
+    fun invalidate() { invalidations.incrementAndGet(); adapter.invalidate(); mutable.value = AIModelState(); scope = "" }
     private fun account(): AISelectionSettings? {
+        operationRevision = invalidations.get()
         val p = preferences()
         if (!p.enabled || !p.consented) return null
         if (scope != p.scope) {
             scope = p.scope; models = emptyList(); health.clear(); blocked.clear(); lastSelection = store.active(scope)
-            evaluations = store.load(scope); adapter.invalidate(); mutable.value = AIModelState()
+            evaluations = store.load(scope); catalogFailure = null; evaluationStop = null; adapter.invalidate(); mutable.value = AIModelState()
         }
         return p
     }
-    private fun stillAuthorized(p: AISelectionSettings) = preferences().let { it.enabled && it.consented && it.scope == p.scope }
+    private fun stillAuthorized(p: AISelectionSettings) = operationRevision == invalidations.get() && preferences() == p
     private fun publish(message: String? = null) {
+        if (operationRevision != invalidations.get()) return
         val now = clock()
         val results = evaluations.associateBy { it.key }
         mutable.value = mutable.value.copy(models = models.map { model ->
@@ -155,6 +161,7 @@ class ManagedAIProvider(
         if (p.mode == AISelectionMode.MANUAL) list.filter { it.key == p.manual } else list
     }
     private fun select(key: AIModelKey?, reason: String) {
+        if (operationRevision != invalidations.get()) return
         if (lastSelection != key) {
             val previous = lastSelection
             val notice = when {
@@ -167,16 +174,23 @@ class ManagedAIProvider(
         }
         mutable.value = mutable.value.copy(active = key)
     }
-    private suspend fun discover(force: Boolean): Boolean = when (val result = adapter.discover(force)) {
-        is AIModelDiscovery.Found -> {
-            catalogFailure = null; models = result.models; mutable.value = mutable.value.copy(checkedAt = result.checkedAt)
-            if (lastSelection != null && models.none { it.key == lastSelection && AIRequestPolicy.eligibleMetadata(it, clock()) }) select(null, "قیمت/دسترسی معتبر نیست")
-            true
+    private suspend fun discover(force: Boolean): Boolean {
+        val result = adapter.discover(force)
+        if (operationRevision != invalidations.get()) return false
+        return when (result) {
+            is AIModelDiscovery.Found -> {
+                catalogFailure = null; models = result.models; mutable.value = mutable.value.copy(checkedAt = result.checkedAt)
+                if (lastSelection != null && models.none { it.key == lastSelection && AIRequestPolicy.eligibleMetadata(it, clock()) }) select(null, "قیمت/دسترسی معتبر نیست")
+                true
+            }
+            is AIModelDiscovery.Failed -> { catalogFailure = result.error; models = emptyList(); select(null, "بررسی ممکن نشد"); publish(result.error.message); false }
         }
-        is AIModelDiscovery.Failed -> { catalogFailure = result.error; models = emptyList(); select(null, "بررسی ممکن نشد"); publish(result.error.message); false }
     }
     private suspend fun inspect(model: AIModel, force: Boolean = false): Boolean {
-        val availability = adapter.availability(model, force); health[model.key] = availability
+        val availability = adapter.availability(model, force)
+        if (operationRevision != invalidations.get()) return false
+        health[model.key] = availability
+        if (availability.errorKind in accountErrors) evaluationStop = AiResult.Failure(requireNotNull(availability.errorKind), availability.explanation)
         return availability.available && AIRequestPolicy.fresh(availability.checkedAt, clock(), AIRequestPolicy.METADATA_TTL_MS)
     }
     private suspend fun tests(p: AISelectionSettings, automatic: Boolean, retest: Boolean) {
@@ -184,11 +198,17 @@ class ManagedAIProvider(
         evaluationStop = null
         val now = clock()
         val todo = models.filter { AIRequestPolicy.eligibleMetadata(it, now) && (blocked[it.key] ?: 0) <= now }
-            .filter { retest || evaluations.none { e -> e.key == it.key && e.fingerprint == it.fingerprint && AIRequestPolicy.fresh(e.checkedAt, now, if (e.passed) AIRequestPolicy.EVALUATION_TTL_MS else 24 * 60 * 60_000L) } }
+            .filter { retest || evaluations.none { e -> e.key == it.key && e.fingerprint == it.fingerprint && e.suiteVersion == SafePersianModelEvaluator.VERSION && AIRequestPolicy.fresh(e.checkedAt, now, if (e.passed) AIRequestPolicy.EVALUATION_TTL_MS else 24 * 60 * 60_000L) } }
             .sortedWith(compareByDescending<AIModel> { it.capability.contextLength }.thenBy { it.key.id })
-        for (model in todo) {
-            if (count++ >= 2 || !stillAuthorized(p)) break
-            if (!inspect(model, force = true)) continue
+        // At most six metadata checks and two actual model evaluations per pass.
+        for (model in todo.take(6)) {
+            if (count >= 2 || !stillAuthorized(p)) break
+            if (!inspect(model, force = true)) {
+                if (evaluationStop != null) break
+                blocked[model.key] = clock() + 5 * 60_000L
+                continue
+            }
+            count++
             publish("در حال آزمون امن فارسی و ابزار: ${model.name}؛ فقط دادهٔ ساختگی")
             val evaluation = evaluator.evaluate(model, adapter) { stillAuthorized(p) && store.reserve(p.scope, clock(), automatic) }
             if (!stillAuthorized(p)) return
@@ -196,7 +216,7 @@ class ManagedAIProvider(
                 mutable.value = mutable.value.copy(notice = "بودجهٔ روزانهٔ آزمون تمام شد؛ نتیجهٔ قبلی حفظ شد. آزمون خودکار بیشتر یا خرید اعتبار انجام نمی‌شود.")
                 break
             }
-            if (evaluation.errorKind in setOf(AiErrorKind.RATE_LIMITED, AiErrorKind.UNAUTHORIZED, AiErrorKind.CREDIT_EXHAUSTED, AiErrorKind.OFFLINE, AiErrorKind.DISABLED, AiErrorKind.NOT_CONFIGURED)) {
+            if (evaluation.errorKind in accountErrors) {
                 evaluationStop = AiResult.Failure(requireNotNull(evaluation.errorKind), evaluation.explanation)
                 publish(evaluation.explanation); break
             }
@@ -207,14 +227,21 @@ class ManagedAIProvider(
     /** Metadata-only refreshes do not consume inference quota. Explicit tests are capped to two models. */
     suspend fun refresh(runTests: Boolean = false) = lock.withLock {
         val p = account() ?: return@withLock
-        mutable.value = mutable.value.copy(checking = true)
+        mutable.value = mutable.value.copy(checking = true); evaluationStop = null
         try {
             if (!discover(true)) return@withLock
-            if (runTests) { tests(p, automatic = false, retest = true); if (!discover(true)) return@withLock }
-            for (model in ranked().take(6)) inspect(model)
+            if (runTests) {
+                tests(p, automatic = false, retest = true)
+                evaluationStop?.let { stopAccount(it); return@withLock }
+                if (!stillAuthorized(p) || !discover(true)) return@withLock
+            }
+            if (!stillAuthorized(p)) return@withLock
+            for (model in candidates(p).take(6)) { inspect(model); if (evaluationStop != null || !stillAuthorized(p)) break }
             if (stillAuthorized(p)) {
-                val next = candidates(p).firstOrNull { health[it.key]?.available == true }
-                select(next?.key, "فهرست/قیمت/دسترسی تازه شد"); publish(if (next == null) "مدلِ مجاز و قبول‌شده آماده نیست؛ آزمون امن را اجرا کنید یا محدودیت حساب/Guardrail را بررسی کنید." else null)
+                val next = if (evaluationStop == null) candidates(p).firstOrNull { model -> health[model.key]?.let {
+                    it.available && AIRequestPolicy.fresh(it.checkedAt, clock(), AIRequestPolicy.METADATA_TTL_MS)
+                } == true } else null
+                select(next?.key, "فهرست/قیمت/دسترسی تازه شد"); publish(evaluationStop?.message ?: if (next == null) "مدلِ مجاز و قبول‌شده آماده نیست؛ آزمون امن را اجرا کنید یا محدودیت حساب/Guardrail را بررسی کنید." else null)
             }
         } finally { mutable.value = mutable.value.copy(checking = false) }
     }
@@ -225,14 +252,17 @@ class ManagedAIProvider(
         try {
             // At most eight automatic dummy requests/day, only while the user is using AI. No background inference.
             tests(p, automatic = true, retest = false)
-            evaluationStop?.let { return@withLock FunctionResult.Failed(it) }
+            evaluationStop?.let { return@withLock stopAccount(it) }
             if (!discover(false)) return@withLock catalogFailure?.let { FunctionResult.Failed(it) } ?: unavailable(mutable.value.message)
             val attempted = mutableSetOf<AIModelKey>()
             var last: AiResult.Failure? = null
             while (attempted.size < 2 && stillAuthorized(p)) {
                 val model = candidates(p).firstOrNull { it.key !in attempted } ?: break
                 attempted += model.key
-                if (!inspect(model, force = lastSelection != model.key)) { blocked[model.key] = clock() + 5 * 60_000L; continue }
+                if (!inspect(model, force = lastSelection != model.key)) {
+                    evaluationStop?.let { return@withLock stopAccount(it) }
+                    blocked[model.key] = clock() + 5 * 60_000L; continue
+                }
                 if (!stillAuthorized(p)) break
                 select(model.key, "مدل قبلی معتبر/در دسترس نبود؛ جایگزین فقط از فهرست قبول‌شده و مجاز است")
                 publish()
@@ -245,10 +275,11 @@ class ManagedAIProvider(
                     }
                     is FunctionResult.Failed -> last = result.error
                 }
+                if (!stillAuthorized(p)) return@withLock unavailable("حساب یا انتخاب مدل تغییر کرد؛ پاسخ قدیمی کنار گذاشته شد.")
                 onText("") // Discard partial prose before a different model is asked. No action has executed here.
                 val error = requireNotNull(last)
-                if (error.kind in setOf(AiErrorKind.RATE_LIMITED, AiErrorKind.UNAUTHORIZED, AiErrorKind.CREDIT_EXHAUSTED, AiErrorKind.OFFLINE, AiErrorKind.DISABLED, AiErrorKind.NOT_CONFIGURED)) {
-                    publish(error.message); return@withLock FunctionResult.Failed(error) // Never evade account limits with model switching.
+                if (error.kind in accountErrors) {
+                    return@withLock stopAccount(error) // Never evade account limits with model switching.
                 }
                 blocked[model.key] = clock() + 30 * 60_000L
                 health[model.key] = AIModelAvailability(false, clock(), explanation = error.message)
@@ -264,6 +295,12 @@ class ManagedAIProvider(
             unavailable(last?.message)
         } catch (e: CancellationException) { throw e }
         finally { mutable.value = mutable.value.copy(checking = false) }
+    }
+    private fun stopAccount(error: AiResult.Failure): FunctionResult.Failed {
+        // Preserve quality receipts, not a misleading currently-ready indication for a blocked account.
+        health.keys.toList().forEach { health[it] = AIModelAvailability(false, clock(), explanation = error.message, errorKind = error.kind) }
+        select(null, "ارسال به علت محدودیت/رضایت حساب متوقف شد"); publish(error.message)
+        return FunctionResult.Failed(error)
     }
     private fun unavailable(detail: String?) = FunctionResult.Failed(AiResult.Failure(AiErrorKind.NOT_FOUND,
         "هوش مصنوعی موقتاً آماده نیست. " + detail.orEmpty().take(240) + "\nمدل‌های مجاز/آزمون امن در چرخ‌دنده هستند. ثبت دستی آفلاین برقرار است؛ پرداخت یا تغییر Guardrail انجام نمی‌شود."))

@@ -20,7 +20,7 @@ class OpenRouterClientTest {
         }
     }
     private val messages = listOf(FunctionMessage("system", "فارسی"), FunctionMessage("user", "سلام"))
-    private val schemas = FunctionToolSchemas.tools()
+    private val schemas = OpenRouterToolSchemas.tools()
     @Test fun verifiedFreeCompletionUsesOnlyFixedHttpsNativeWireAndZeroCaps() = runBlocking {
         val http = FakeHttp(f.completion()); val result = OpenRouterClient(f::settings, Key(f.key), http).complete(messages) {}
         assertTrue(result is FunctionResult.Reply)

@@ -16,19 +16,21 @@ class OpenRouterModelAdapterTest {
         .put("endpoints", JSONArray().put(f.row(model, prompt = price).put("status", status).put("provider_name", "Synthetic provider").put("uptime_last_30m", 99)))).toString()
     private inner class Http : AiHttpTransport {
         var public = catalog(row()); var user = public; var endpoints = endpoint(); var completion = f.completion()
-        var userCode = 200; var postCode = 200
+        var userCode = 200; var postCode = 200; var endpointCode = 200
+        var handler: ((AiHttpRequest) -> AiHttpResponse)? = null
         val requests = mutableListOf<AiHttpRequest>()
         override fun execute(request: AiHttpRequest): AiHttpResponse {
             requests += request
+            handler?.let { return it(request) }
             return when {
                 request.url == OpenRouterModelMetadata.USER_MODELS_URL -> AiHttpResponse(userCode, user)
-                request.url.endsWith("/endpoints") -> AiHttpResponse(200, endpoints)
+                request.url.endsWith("/endpoints") -> AiHttpResponse(endpointCode, endpoints)
                 request.method == "GET" -> AiHttpResponse(200, public)
                 else -> AiHttpResponse(postCode, completion)
             }
         }
     }
-    private fun adapter(http: Http) = OpenRouterModelAdapter(OpenRouterClient(f::settings, object : AiApiKeyReader { override fun read() = f.key }, http, { now }), { now })
+    private fun adapter(http: Http, settings: () -> AiSettings = f::settings) = OpenRouterModelAdapter(OpenRouterClient(settings, object : AiApiKeyReader { override fun read() = f.key }, http, { now }), { now })
 
     @Test fun exactOfficialIdsPublicAndKeyScopedGuardrailCatalogMustIntersect() {
         val public = catalog(row(), row("new/discovered:free"))
@@ -134,4 +136,60 @@ class OpenRouterModelAdapterTest {
         assertTrue(a.infer(key, query) is FunctionResult.Failed)
         assertEquals(1, http.requests.count { it.method == "POST" })
     }
+    @Test fun userScopedCapabilitiesAndContextCannotBeInferredFromThePublicCatalogAlone() {
+        for (user in listOf(row().put("context_length", 8192), row().put("supported_parameters", JSONArray(listOf("tools"))),
+            row().put("architecture", JSONObject().put("output_modalities", JSONArray(listOf("image")))))) {
+            val model = OpenRouterModelMetadata.parse(catalog(row()), catalog(user), now).first.single()
+            assertEquals(AIModelAuthorization.NOT_AUTHORIZED, model.authorization)
+        }
+    }
+    @Test fun cachedPermissionsNeverTransferToANewAccountEvenInsideTheMinuteTtl() = runBlocking {
+        var settings = f.settings(); val http = Http(); val a = adapter(http) { settings }
+        val key = AIModelKey("openrouter", f.FREE)
+        assertTrue(a.infer(key, query) is FunctionResult.Reply)
+        settings = settings.copy(modelAccountScope = "new-account"); http.user = catalog()
+        assertTrue(a.infer(key, query) is FunctionResult.Failed)
+        assertEquals(1, http.requests.count { it.method == "POST" })
+        assertEquals(2, http.requests.count { it.url == OpenRouterModelMetadata.USER_MODELS_URL })
+    }
+    @Test fun anAccountChangeWhileAuthorizedMetadataIsInFlightDiscardsItsEvidence() = runBlocking {
+        var settings = f.settings(); val http = Http(); val a = adapter(http) { settings }
+        http.handler = { request ->
+            if (request.url == OpenRouterModelMetadata.USER_MODELS_URL) settings = settings.copy(modelAccountScope = "new-account")
+            AiHttpResponse(200, catalog(row()))
+        }
+        val result = a.discover() as AIModelDiscovery.Failed
+        assertEquals(AiErrorKind.DISABLED, result.error.kind)
+        assertTrue(http.requests.none { it.method == "POST" })
+        http.handler = null; http.user = catalog()
+        assertTrue(a.infer(AIModelKey("openrouter", f.FREE), query) is FunctionResult.Failed)
+        assertTrue(http.requests.none { it.method == "POST" })
+    }
+    @Test fun endpointErrorsKeepTheirAccountLimitKindAndNeverSendInference() = runBlocking {
+        for ((code, kind) in listOf(401 to AiErrorKind.UNAUTHORIZED, 429 to AiErrorKind.RATE_LIMITED, 403 to AiErrorKind.GUARDRAIL_REJECTED)) {
+            val http = Http(); http.endpointCode = code
+            val result = adapter(http).infer(AIModelKey("openrouter", f.FREE), query) as FunctionResult.Failed
+            assertEquals(kind, result.error.kind); assertTrue(http.requests.none { it.method == "POST" })
+        }
+    }
+    @Test fun invalidationWhileEndpointMetadataIsInFlightCannotRestoreItsOldApproval() = runBlocking {
+        val http = Http(); val a = adapter(http)
+        assertTrue(a.discover() is AIModelDiscovery.Found)
+        http.handler = { a.invalidate(); AiHttpResponse(200, endpoint()) }
+        val result = a.infer(AIModelKey("openrouter", f.FREE), query) as FunctionResult.Failed
+        assertEquals(AiErrorKind.DISABLED, result.error.kind)
+        assertTrue(http.requests.none { it.method == "POST" })
+    }
+    @Test fun changingConsentDuringCompletionDropsAllProseAndToolCalls() = runBlocking {
+        var settings = f.settings(); val http = Http(); val a = adapter(http) { settings }
+        assertTrue(a.discover() is AIModelDiscovery.Found)
+        http.handler = { request ->
+            if (request.method == "POST") { settings = settings.copy(consented = false); AiHttpResponse(200, f.completion("", listOf(f.call("add_expense", "{\"amount\":100}")))) }
+            else AiHttpResponse(200, endpoint())
+        }
+        val result = a.infer(AIModelKey("openrouter", f.FREE), query) as FunctionResult.Failed
+        assertEquals(AiErrorKind.DISABLED, result.error.kind)
+        assertEquals(1, http.requests.count { it.method == "POST" })
+    }
+
 }

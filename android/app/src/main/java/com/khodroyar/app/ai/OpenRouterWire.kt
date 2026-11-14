@@ -1,9 +1,18 @@
 package com.khodroyar.app.ai
 
+import org.json.JSONArray
 import org.json.JSONObject
 
 /** Bounded, complete native tool calls only. A truncated/failed stream cannot produce an action. */
 object OpenRouterWire {
+    fun messageJson(message: FunctionMessage): JSONObject = JSONObject().put("role", message.role).apply {
+        put("content", message.content)
+        if (message.calls.isNotEmpty()) put("tool_calls", JSONArray().apply {
+            message.calls.forEach { call -> put(JSONObject().put("id", call.id).put("type", "function")
+                .put("function", JSONObject().put("name", call.name).put("arguments", call.arguments))) }
+        })
+        message.toolCallId?.let { put("tool_call_id", it) }
+    }
     fun completion(body: String, selected: String, catalog: List<VerifiedFreeModel>, responseIds: Set<String>? = null): FunctionResult.Reply {
         require(body.length <= 256 * 1024)
         val root = NativeJson.objectValue(body, 256 * 1024)
@@ -111,4 +120,26 @@ class OpenRouterStream(
         require(content.isNotBlank() || complete.isNotEmpty())
         return FunctionResult.Reply(FunctionMessage("assistant", content.toString(), complete), model)
     }
+}
+
+/** OpenRouter/OpenAI-compatible schema encoding; never part of the business/tool registry. */
+object OpenRouterToolSchemas {
+    fun tools(specs: List<ToolSpec> = AgentToolRegistry.tools): JSONArray = JSONArray().apply {
+        specs.forEach { spec ->
+            val properties = JSONObject()
+            spec.params.forEach { p ->
+                val type = when (p.type) { ParamType.NUMBER -> "number"; ParamType.INT -> "integer"; else -> "string" }
+                properties.put(p.name, JSONObject().put("type", type).put("description", p.desc).apply {
+                    if (p.options.isNotEmpty()) put("enum", JSONArray(p.options))
+                    if (p.type in setOf(ParamType.NUMBER, ParamType.INT)) { put("minimum", p.min); put("maximum", p.max) }
+                    else put("maxLength", if (p.type == ParamType.TEXT) 80 else 100)
+                })
+            }
+            put(JSONObject().put("type", "function").put("function", JSONObject().put("name", spec.name)
+                .put("description", "[${spec.kind}] ${spec.desc}").put("parameters", JSONObject().put("type", "object")
+                    .put("properties", properties).put("additionalProperties", false)
+                    .put("required", JSONArray(spec.params.filter { it.required }.map { it.name })))))
+        }
+    }
+
 }

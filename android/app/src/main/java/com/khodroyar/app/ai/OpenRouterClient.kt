@@ -14,7 +14,7 @@ import org.json.JSONObject
 import java.io.IOException
 import java.net.SocketTimeoutException
 
-/** Direct, user-key-only provider. Every completion re-verifies live metadata; no cache authorises billing. */
+/** Direct user-key-only transport. Production inference requires account-bound, fresh all-zero metadata. */
 class OpenRouterClient(
     private val configuration: () -> AiSettings,
     private val credentials: AiApiKeyReader,
@@ -29,6 +29,12 @@ class OpenRouterClient(
 
     private class SafeFailure(val failure: AiResult.Failure) : Exception("OpenRouter request rejected")
     private fun fail(kind: AiErrorKind, message: String): Nothing = throw SafeFailure(AiResult.Failure(kind, message))
+    internal fun accountScope(): String? = configuration().let { s ->
+        s.modelAccountScope.takeIf { it.isNotBlank() && s.enabled && s.mode == AiMode.OPENROUTER && s.consented }
+    }
+    private fun requireScope(expected: String) {
+        if (accountScope() != expected) fail(AiErrorKind.DISABLED, "حساب یا رضایت عوض شد؛ بررسی قبلی و پاسخ آن معتبر نیست و ابزاری اجرا نمی‌شود.")
+    }
     private fun account(): Pair<AiSettings, String> {
         val s = configuration()
         if (!s.enabled || s.mode != AiMode.OPENROUTER || !s.consented)
@@ -36,6 +42,7 @@ class OpenRouterClient(
         val key = try { credentials.read()?.let(OpenRouterFreePolicy::normalizeKey) } catch (_: Exception) {
             fail(AiErrorKind.NOT_CONFIGURED, "خواندن کلید رمزنگاری‌شده ممکن نیست؛ در تنظیمات دوباره ذخیره کنید. ذخیرهٔ متن ساده نداریم.")
         } ?: fail(AiErrorKind.NOT_CONFIGURED, "کلید OpenRouter را فقط در تنظیمات امن وارد کنید؛ کلید را در گفتگو نفرستید.")
+        requireScope(s.modelAccountScope)
         return s to key
     }
     private fun checkHttp(response: AiHttpResponse) {
@@ -53,10 +60,12 @@ class OpenRouterClient(
         if (verified.isEmpty()) fail(AiErrorKind.NOT_FOUND, "هیچ مدل رایگانِ دارای ابزار و ظرفیت کافی تأیید نشد. مدل پولی استفاده نمی‌شود؛ بعداً فهرست را تازه کنید.")
         return verified
     }
-    private suspend fun request(request: AiHttpRequest, onEvent: ((String) -> Unit)? = null): AiHttpResponse =
-        if (transport is OpenRouterHttp) transport.await(request, onEvent)
+    private suspend fun request(request: AiHttpRequest, onEvent: ((String) -> Unit)? = null): AiHttpResponse {
+        currentCoroutineContext().ensureActive()
+        return if (transport is OpenRouterHttp) transport.await(request, onEvent)
         else if (onEvent != null && transport is AiStreamingTransport) transport.stream(request, onEvent)
         else transport.execute(request)
+    }
 
     private fun checkLimit() {
         val now = clock()
@@ -83,21 +92,22 @@ class OpenRouterClient(
     suspend fun refreshModels(): AiResult.Failure? = guarded({ account(); fetchCatalog(); null }, { _models.value = emptyList(); it })
 
     /** Metadata requests never include conversation/record data. Only /models/user receives the key. */
-    internal suspend fun metadata(url: String, authenticated: Boolean): OpenRouterMetadataResult = guarded({
-        val (_, key) = account()
+    internal suspend fun metadata(url: String, authenticated: Boolean, expectedScope: String): OpenRouterMetadataResult = guarded({
+        val (_, key) = account(); requireScope(expectedScope)
         require((url == OpenRouterModelMetadata.USER_MODELS_URL) == authenticated)
         require(url == OpenRouterFreePolicy.MODELS_URL || url == OpenRouterModelMetadata.USER_MODELS_URL ||
             (url.startsWith(OpenRouterFreePolicy.MODELS_URL + "/") && url.endsWith("/endpoints") &&
                 OpenRouterModelMetadata.validId(url.removePrefix(OpenRouterFreePolicy.MODELS_URL + "/").removeSuffix("/endpoints"))))
         val response = request(AiHttpRequest(url, "GET", if (authenticated) headers(key) else mapOf("Accept" to "application/json")))
         checkHttp(response)
+        currentCoroutineContext().ensureActive(); requireScope(expectedScope)
         OpenRouterMetadataResult.Body(response.body)
     }, { OpenRouterMetadataResult.Failed(it) })
 
     /** Called only through the managed adapter, with fresh independent price, authorization and endpoint evidence. */
-    suspend fun inferApproved(model: AIModel, available: AIModelAvailability, responseIds: Set<String>,
+    internal suspend fun inferApproved(model: AIModel, available: AIModelAvailability, responseIds: Set<String>, expectedScope: String,
         query: AIModelRequest, onText: (String) -> Unit): FunctionResult = guarded({
-        val (settings, key) = account()
+        val (_, key) = account(); requireScope(expectedScope)
         require(model.key.provider == OpenRouterModelMetadata.PROVIDER && AIRequestPolicy.eligibleMetadata(model, clock()))
         require(available.available && AIRequestPolicy.fresh(available.checkedAt, clock(), AIRequestPolicy.METADATA_TTL_MS))
         require(model.key.id in responseIds && responseIds.all(OpenRouterModelMetadata::validId))
@@ -107,18 +117,16 @@ class OpenRouterClient(
             fail(AiErrorKind.BAD_REQUEST, "متن شبیه کلید API است؛ ارسال نمی‌شود. کلید فقط در تنظیمات امن وارد شود.")
         require(query.maxOutputTokens in 128..PersianAgentLimits.OUTPUT_TOKENS)
         val streaming = query.stream && transport is AiStreamingTransport
-        val body = JSONObject().put("model", model.key.id).put("messages", JSONArray().apply { messages.forEach { put(it.json()) } })
-            .put("tools", FunctionToolSchemas.tools(query.tools)).put("tool_choice", "auto").put("stream", streaming)
+        val body = JSONObject().put("model", model.key.id).put("messages", JSONArray().apply { messages.forEach { put(OpenRouterWire.messageJson(it)) } })
+            .put("tools", OpenRouterToolSchemas.tools(query.tools)).put("tool_choice", "auto").put("stream", streaming)
             .put("max_tokens", query.maxOutputTokens).put("provider", OpenRouterFreePolicy.routing())
         attempts.addLast(clock())
         val context = currentCoroutineContext()
-        val decoder = OpenRouterStream(model.key.id, emptyList(), { text -> context.ensureActive(); onText(text) }, responseIds)
+        val decoder = OpenRouterStream(model.key.id, emptyList(), { text -> context.ensureActive(); requireScope(expectedScope); onText(text) }, responseIds)
         val response = request(AiHttpRequest(OpenRouterFreePolicy.CHAT_URL, "POST", headers(key), body.toString()),
             if (streaming) ({ event -> context.ensureActive(); decoder.accept(event) }) else null)
         checkHttp(response); context.ensureActive()
-        val current = configuration()
-        if (!current.enabled || !current.consented || current.mode != AiMode.OPENROUTER || current.modelAccountScope != settings.modelAccountScope)
-            fail(AiErrorKind.DISABLED, "حساب یا رضایت عوض شد؛ پاسخ و ابزارهای آن کنار گذاشته شدند.")
+        requireScope(expectedScope)
         val reply = if (streaming && response.body.isBlank()) decoder.result()
             else OpenRouterWire.completion(response.body, model.key.id, emptyList(), responseIds)
         // Canonical response aliases are accepted ONLY when explicitly supplied by the official catalog.
@@ -128,7 +136,7 @@ class OpenRouterClient(
 
     /** Internal legacy wire regression hook; cannot be supplied to an agent. Production uses ManagedAIProvider. */
     internal suspend fun complete(messages: List<FunctionMessage>, onText: (String) -> Unit): FunctionResult =
-        perform(messages, FunctionToolSchemas.tools(), null, onText)
+        perform(messages, OpenRouterToolSchemas.tools(), null, onText)
 
     private suspend fun perform(messages: List<FunctionMessage>, schemas: JSONArray, forcedTool: String?, onText: (String) -> Unit): FunctionResult = guarded({
         val (s, key) = account()
@@ -139,7 +147,7 @@ class OpenRouterClient(
         val selected = s.openRouterModel
         if (catalog.none { it.id == selected }) fail(AiErrorKind.NOT_FOUND, "مدل انتخابی در فهرست تازهٔ رایگان/ابزار تأیید نشد. خودکار عوض نمی‌شود؛ در تنظیمات مدل رایگان دیگری انتخاب کنید.")
         val streaming = forcedTool == null && transport is AiStreamingTransport
-        val body = JSONObject().put("tool_choice", "auto").put("model", selected).put("messages", JSONArray().apply { messages.forEach { put(it.json()) } })
+        val body = JSONObject().put("tool_choice", "auto").put("model", selected).put("messages", JSONArray().apply { messages.forEach { put(OpenRouterWire.messageJson(it)) } })
             .put("tools", schemas).put("provider", OpenRouterFreePolicy.routing()).put("stream", streaming)
             .put("max_tokens", if (forcedTool != null) 256 else PersianAgentLimits.OUTPUT_TOKENS)
         if (forcedTool != null) body.put("tool_choice", JSONObject().put("type", "function").put("function", JSONObject().put("name", forcedTool)))
@@ -147,7 +155,7 @@ class OpenRouterClient(
         attempts.addLast(clock())
         val request = AiHttpRequest(OpenRouterFreePolicy.CHAT_URL, "POST", headers(key), body.toString())
         val context = currentCoroutineContext()
-        val decoder = OpenRouterStream(selected, catalog) { text -> context.ensureActive(); onText(text) }
+        val decoder = OpenRouterStream(selected, catalog, onText = { text -> context.ensureActive(); onText(text) })
         val response = request(request, if (streaming) ({ event -> context.ensureActive(); decoder.accept(event) }) else null)
         checkHttp(response); context.ensureActive()
         if (streaming && response.body.isBlank()) decoder.result() else OpenRouterWire.completion(response.body, selected, catalog)

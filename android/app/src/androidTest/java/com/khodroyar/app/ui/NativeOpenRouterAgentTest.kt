@@ -220,7 +220,7 @@ class NativeOpenRouterAgentTest {
     }
     @Test fun keystoreEncryptionMigrationFreshConsentAndKeyDeletionDoNotTouchRecords() = runBlocking {
         val prefs = context.getSharedPreferences("khodroyar_ai", Context.MODE_PRIVATE)
-        prefs.edit().putString("mode", "GAPGPT_DIRECT").putBoolean("consented", true).commit()
+        prefs.edit().putString("mode", "GAPGPT_DIRECT").putBoolean("consented", true).putBoolean("openrouter_consented_v1", true).commit()
         assertEquals(AiMode.OPENROUTER, AiSettingsStore(context).load().mode); assertFalse(AiSettingsStore(context).load().consented)
         prefs.edit().putString("mode", "LOCAL").commit(); assertEquals(AiMode.LOCAL, AiSettingsStore(context).load().mode)
         val aiSettings = AiSettingsStore(context)
@@ -241,7 +241,7 @@ class NativeOpenRouterAgentTest {
     }
     private fun completion(content: String, calls: List<FunctionCall> = emptyList()): String = JSONObject().put("model", free)
         .put("choices", JSONArray().put(JSONObject().put("finish_reason", if (calls.isEmpty()) "stop" else "tool_calls")
-            .put("message", FunctionMessage("assistant", content, calls).json()))).toString()
+            .put("message", OpenRouterWire.messageJson(FunctionMessage("assistant", content, calls))))).toString()
     private fun endpointEvidence(modelCatalog: String = catalog(), id: String = free): String {
         val rows = JSONObject(modelCatalog).getJSONArray("data")
         val row = (0 until rows.length()).map { rows.getJSONObject(it) }.single { it.getString("id") == id }
@@ -487,13 +487,22 @@ class NativeOpenRouterAgentTest {
         val alternative = "synthetic/alternative:free"
         val source = JSONObject(catalog()).apply { getJSONArray("data").put(JSONObject(getJSONArray("data").getJSONObject(1).toString()).put("id", alternative)) }.toString()
         val posts = AtomicInteger(); val bodies = mutableListOf<String>()
-        val http = AiHttpTransport { request ->
-            if (request.method == "GET") AiHttpResponse(200, source) else {
+        val releaseAlternative = java.util.concurrent.CountDownLatch(1)
+        val http = object : AiHttpTransport, AiStreamingTransport {
+            override fun execute(request: AiHttpRequest): AiHttpResponse { check(request.method == "GET"); return AiHttpResponse(200, source) }
+            override fun stream(request: AiHttpRequest, onEvent: (String) -> Unit): AiHttpResponse {
                 val body = requireNotNull(request.body); bodies += body
-                when (posts.incrementAndGet()) {
+                return when (posts.incrementAndGet()) {
                     1 -> AiHttpResponse(200, completion("پیشنهاد هزینه", listOf(FunctionCall("once_only", "add_expense", """{"date":"1404/01/01","amount":45000,"title":"آزمون جایگزینی","category":"coffee"}"""))))
-                    2 -> AiHttpResponse(503, "synthetic unavailable")
-                    3 -> AiHttpResponse(200, JSONObject(completion("نتیجهٔ ابزار تأییدشده را دریافت کردم؛ ثبت دوباره نمی‌کنم.")).put("model", alternative).toString())
+                    2 -> {
+                        onEvent(JSONObject().put("model", free).put("choices", JSONArray().put(JSONObject().put("index", 0)
+                            .put("delta", JSONObject().put("content", "متن ناقص مدل قبلی نباید بماند")).put("finish_reason", JSONObject.NULL))).toString())
+                        AiHttpResponse(503, "synthetic unavailable")
+                    }
+                    3 -> {
+                        check(releaseAlternative.await(20, java.util.concurrent.TimeUnit.SECONDS)) { "UI must observe the cleared partial response" }
+                        AiHttpResponse(200, JSONObject(completion("نتیجهٔ ابزار تأییدشده را دریافت کردم؛ ثبت دوباره نمی‌کنم.")).put("model", alternative).toString())
+                    }
                     else -> error("Inference must not loop or replay")
                 }
             }
@@ -504,6 +513,10 @@ class NativeOpenRouterAgentTest {
         val screenHeight = compose.onNodeWithTag("ai-agent-screen").fetchSemanticsNode().boundsInRoot.height
         assertTrue(compose.onNodeWithTag("ai-chat-list").fetchSemanticsNode().boundsInRoot.height > screenHeight * 0.60f)
         compose.onNodeWithTag("agent-confirm-action").performScrollTo().performClick()
+        try {
+            compose.waitUntil(10000) { posts.get() == 3 && vm.modelState.active?.id == alternative && vm.streamingText.isEmpty() }
+            compose.onNodeWithText("متن ناقص مدل قبلی نباید بماند").assertDoesNotExist()
+        } finally { releaseAlternative.countDown() }
         compose.waitUntil(10000) { !vm.busy && vm.pending == null && posts.get() == 3 }
         assertNull(vm.failure); assertEquals(alternative, vm.modelState.active?.id)
         assertEquals(1, db.insights().expensesOn("1404/01/01").size)
@@ -513,7 +526,28 @@ class NativeOpenRouterAgentTest {
         val evidence = JSONObject().put("environment", "Synthetic OpenRouter; real Compose confirmation and Room; NOT live provider")
             .put("passed", true).put("posts", 3).put("committed_expenses", 1).put("approved_alternative_only", true)
             .put("tool_transcript_preserved", true).put("committed_write_not_replayed", true).put("chat_height_over_60_percent", true)
+            .put("partial_stream_cleared", true)
         publishSyntheticEvidence(context, "KhodroYar-UI-Smoke", "openrouter-model-failover.json", "application/json", evidence.toString().toByteArray())
+    }
+    @Test fun modelReceiptsAndDailyBudgetPersistAcrossInstancesButNeverAcrossAccountScopes() {
+        val settings = AiSettingsStore(context); settings.save(AiSettings(consented = true))
+        val now = 1_800_000_000_000L
+        val store = AndroidModelEvaluationStore(context)
+        val model = OpenRouterModelMetadata.parse(catalog(), catalog(), now).first.single { it.key.id == free }
+        store.save("initial", AIModelEvaluation(model.key, model.fingerprint, now, (1..4).map { AIModelTestCase("dummy$it", true) }, 95))
+        store.setActive("initial", model.key)
+        repeat(8) { assertTrue(store.reserve("initial", now, automatic = true)) }
+        assertFalse(AndroidModelEvaluationStore(context).reserve("initial", now, automatic = true))
+        repeat(8) { assertTrue(AndroidModelEvaluationStore(context).reserve("initial", now, automatic = false)) }
+        assertFalse(store.reserve("initial", now, automatic = false))
+        assertFalse(store.reserve("initial", now - 86_400_000L, automatic = false))
+        assertTrue(store.reserve("initial", now + 86_400_000L, automatic = true))
+        val restarted = AndroidModelEvaluationStore(context)
+        assertTrue(restarted.load("initial").single().passed); assertEquals(model.key, restarted.active("initial"))
+        settings.save(settings.load().copy(modelAccountScope = "rotated-account"))
+        assertTrue(restarted.load("rotated-account").isEmpty()); assertNull(restarted.active("rotated-account"))
+        assertFalse(restarted.reserve("initial", now + 86_400_000L, automatic = false))
+        assertTrue(restarted.reserve("rotated-account", now + 86_400_000L, automatic = true))
     }
     @Test fun nativeAndroidJsonCannotCoerceNonstandardSyntaxOrRoundFractionalIntegerArguments() {
         for (args in listOf("{month:1}", "{'month':1}", "{\"month\":1,}", "{\"month\":1,\"month\":2}",

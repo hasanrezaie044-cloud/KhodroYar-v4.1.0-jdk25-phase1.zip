@@ -134,7 +134,7 @@ jobs:
           data = json.loads(path.read_text())
           expected = dict(environment='Synthetic OpenRouter; real Compose confirmation and Room; NOT live provider', passed=True,
               posts=3, committed_expenses=1, approved_alternative_only=True, tool_transcript_preserved=True,
-              committed_write_not_replayed=True, chat_height_over_60_percent=True)
+              committed_write_not_replayed=True, chat_height_over_60_percent=True, partial_stream_cleared=True)
           assert data == expected, 'Actual native model replacement replay/approval assertions did not all pass'
           print('::notice title=Model failover after approved real Room write (mock)::' + json.dumps(data))
           PY

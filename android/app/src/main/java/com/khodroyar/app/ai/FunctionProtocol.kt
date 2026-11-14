@@ -1,22 +1,10 @@
 package com.khodroyar.app.ai
 
-import org.json.JSONArray
-import org.json.JSONObject
-
-/** Native Chat Completions protocol. Plain assistant prose is NEVER parsed as an operation. */
+/** Provider-neutral native messages/calls. Wire serialization belongs exclusively to adapters. */
 data class FunctionCall(val id: String, val name: String, val arguments: String)
 data class FunctionMessage(
     val role: String, val content: String = "", val calls: List<FunctionCall> = emptyList(), val toolCallId: String? = null,
-) {
-    fun json(): JSONObject = JSONObject().put("role", role).apply {
-        put("content", content)
-        if (calls.isNotEmpty()) put("tool_calls", JSONArray().apply {
-            calls.forEach { c -> put(JSONObject().put("id", c.id).put("type", "function")
-                .put("function", JSONObject().put("name", c.name).put("arguments", c.arguments))) }
-        })
-        toolCallId?.let { put("tool_call_id", it) }
-    }
-}
+)
 sealed interface FunctionResult {
     data class Reply(val message: FunctionMessage, val model: String) : FunctionResult
     data class Failed(val error: AiResult.Failure) : FunctionResult
@@ -40,24 +28,6 @@ object PersianAgentLimits {
 }
 
 object FunctionToolSchemas {
-    fun tools(specs: List<ToolSpec> = AgentToolRegistry.tools): JSONArray = JSONArray().apply {
-        specs.forEach { spec ->
-            val properties = JSONObject()
-            spec.params.forEach { p ->
-                val type = when (p.type) { ParamType.NUMBER -> "number"; ParamType.INT -> "integer"; else -> "string" }
-                properties.put(p.name, JSONObject().put("type", type).put("description", p.desc).apply {
-                    if (p.options.isNotEmpty()) put("enum", JSONArray(p.options))
-                    if (p.type in setOf(ParamType.NUMBER, ParamType.INT)) { put("minimum", p.min); put("maximum", p.max) }
-                    else put("maxLength", if (p.type == ParamType.TEXT) 80 else 100)
-                })
-            }
-            put(JSONObject().put("type", "function").put("function", JSONObject().put("name", spec.name)
-                .put("description", "[${spec.kind}] ${spec.desc}").put("parameters", JSONObject().put("type", "object")
-                    .put("properties", properties).put("additionalProperties", false)
-                    .put("required", JSONArray(spec.params.filter { it.required }.map { it.name })))))
-        }
-    }
-
     /** Stricter wire boundary than legacy local commands; unknown/internal snapshot fields fail closed. */
     fun validate(call: FunctionCall): ValidationResult {
         if (call.arguments.length > PersianAgentLimits.ARGUMENT_CHARS) return ValidationResult.Invalid("آرگومان ابزار بیش از حد بزرگ است.")

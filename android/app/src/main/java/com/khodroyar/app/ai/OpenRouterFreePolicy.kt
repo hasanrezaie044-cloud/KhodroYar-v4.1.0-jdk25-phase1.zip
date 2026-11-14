@@ -65,13 +65,13 @@ object OpenRouterFreePolicy {
         val wait = retryAfter?.toLongOrNull()?.coerceIn(1, 86400)?.toInt()
         return when (status) {
             401 -> AiResult.Failure(AiErrorKind.UNAUTHORIZED, "کلید OpenRouter نامعتبر است یا اجازهٔ استفاده ندارد؛ فقط در تنظیمات جایگزینش کنید، نه در گفتگو.")
-            403 -> AiResult.Failure(AiErrorKind.GUARDRAIL_REJECTED, "مدل/ارائه‌دهنده برای کلید یا Guardrail حساب مجاز نیست. برنامه محدودیت را دور نمی‌زند؛ اگر مایلید در OpenRouter اجازه بدهید و فهرست را تازه کنید."),
+            403 -> AiResult.Failure(AiErrorKind.GUARDRAIL_REJECTED, "مدل/ارائه‌دهنده برای کلید یا Guardrail حساب مجاز نیست. برنامه محدودیت را دور نمی‌زند؛ اگر مایلید در OpenRouter اجازه بدهید و فهرست را تازه کنید.")
             402 -> AiResult.Failure(AiErrorKind.CREDIT_EXHAUSTED, "OpenRouter درخواست رایگان را نپذیرفت. برنامه به مدل پولی تغییر نمی‌کند و اعتبار نمی‌خرد؛ محدودیت حساب یا دسترسی مدل رایگان را بررسی کنید.")
             404 -> AiResult.Failure(AiErrorKind.NOT_FOUND, "مدل/مسیر رایگانِ سازگار در OpenRouter در دسترس نیست؛ فهرست مدل‌های رایگان را تازه کنید.")
             408, 504 -> AiResult.Failure(AiErrorKind.TIMEOUT, "پاسخ سرویس رایگان در مهلت تعیین‌شده نرسید؛ عملیات جدیدی اجرا نمی‌شود.")
             429 -> AiResult.Failure(AiErrorKind.RATE_LIMITED, "سهمیه یا ظرفیت رایگان OpenRouter فعلاً محدود است. سقف روزانه و دسترسی را OpenRouter تعیین می‌کند؛ مدل پولی جایگزین نمی‌شود.", wait ?: 60)
             400, 422 -> AiResult.Failure(AiErrorKind.BAD_REQUEST, "مدل رایگان این درخواست/ابزار را نپذیرفت؛ مدل رایگانِ تأییدشدهٔ دیگری انتخاب کنید یا گفتگو را کوتاه کنید.")
-            else -> AiResult.Failure(AiErrorKind.SERVER, "OpenRouter یا ارائه‌دهندهٔ مدل رایگان در دسترس نیست. ثبت دستی و امکانات آفلاین برنامه برقرارند؛ تغییر خودکار مدل یا تلاش نامحدود نداریم.")
+            else -> AiResult.Failure(AiErrorKind.SERVER, "OpenRouter یا ارائه‌دهندهٔ مدل رایگان در دسترس نیست. ثبت دستی و امکانات آفلاین برنامه برقرارند؛ پرداخت یا تلاش نامحدود انجام نمی‌شود. جایگزین فقط از مدل‌های رایگانِ مجاز و قبول‌شده ممکن است.")
         }
     }
 }

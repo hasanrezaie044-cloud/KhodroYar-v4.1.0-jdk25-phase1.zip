@@ -33,6 +33,9 @@ object OpenRouterModelMetadata {
     private fun parameters(row: JSONObject): Set<String> = row.optJSONArray("supported_parameters")?.let { a ->
         (0 until a.length()).mapNotNull { a.opt(it) as? String }.toSet()
     }.orEmpty()
+    private fun textOutput(row: JSONObject): Boolean = row.optJSONObject("architecture")?.optJSONArray("output_modalities")?.let { a ->
+        (0 until a.length()).any { a.opt(it) == "text" }
+    } ?: true // The fixed official endpoint defaults to text-output models (not the all-modalities catalog).
     private fun context(row: JSONObject): Int = runCatching { BigDecimal(row.get("context_length").toString()).intValueExact() }.getOrDefault(0)
     private fun retired(row: JSONObject, now: Long): Boolean {
         if (row.optBoolean("deprecated", false)) return true
@@ -54,12 +57,9 @@ object OpenRouterModelMetadata {
             val allowed = user[id]
             val supports = parameters(row)
             val authorized = allowed != null && prices(allowed.optJSONObject("pricing")).verifiedFree &&
-                parameters(allowed).containsAll(setOf("tools", "tool_choice", "max_tokens")) && !retired(allowed, now) &&
+                parameters(allowed).containsAll(setOf("tools", "tool_choice", "max_tokens")) && context(allowed) >= 32768 && textOutput(allowed) && !retired(allowed, now) &&
                 responseIdentities(allowed) == responseIdentities(row)
-            val textOutput = row.optJSONObject("architecture")?.optJSONArray("output_modalities")?.let { a ->
-                (0 until a.length()).any { a.opt(it) == "text" }
-            } ?: true // This fixed endpoint defaults to text-output models, not the all-modalities catalog.
-            val capabilities = AIModelCapability(supports.containsAll(setOf("tools", "tool_choice", "max_tokens")), context(row), textOutput)
+            val capabilities = AIModelCapability(supports.containsAll(setOf("tools", "tool_choice", "max_tokens")), context(row), textOutput(row))
             val canonical = (row.opt("canonical_slug") as? String).orEmpty()
             val fingerprintText = listOf(id, canonical, capabilities.toString(), supports.sorted().joinToString(",")).joinToString("|")
             val fingerprint = MessageDigest.getInstance("SHA-256").digest(fingerprintText.toByteArray()).joinToString("") { "%02x".format(it) }
@@ -94,46 +94,62 @@ class OpenRouterModelAdapter(
 ) : AIModelAdapter {
     override val providerId = OpenRouterModelMetadata.PROVIDER
     private var catalog: AIModelDiscovery.Found? = null
+    private var catalogScope: String? = null
+    private val invalidations = java.util.concurrent.atomic.AtomicLong()
     private var epoch = AIModelCatalogEpoch.value.get()
     private var identities = emptyMap<String, Set<String>>()
     private val health = mutableMapOf<AIModelKey, AIModelAvailability>()
-    override fun invalidate() { catalog = null; identities = emptyMap(); health.clear() }
+    override fun invalidate() { invalidations.incrementAndGet(); catalog = null; catalogScope = null; identities = emptyMap(); health.clear() }
+    private fun staleAccount() = AIModelDiscovery.Failed(AiResult.Failure(AiErrorKind.DISABLED,
+        "حساب/رضایت یا بررسی فراداده تغییر کرد؛ فهرست قدیمی مجوز استفاده نیست. دوباره تازه‌سازی کنید."))
     override suspend fun discover(force: Boolean): AIModelDiscovery {
+        val expectedScope = client.accountScope() ?: run { invalidate(); return staleAccount() }
+        if (catalogScope != expectedScope) invalidate()
         val currentEpoch = AIModelCatalogEpoch.value.get()
         if (epoch != currentEpoch) { invalidate(); epoch = currentEpoch }
         if (!force) catalog?.takeIf { AIRequestPolicy.fresh(it.checkedAt, clock(), AIRequestPolicy.METADATA_TTL_MS) }?.let { return it }
-        val public = client.metadata(OpenRouterFreePolicy.MODELS_URL, false)
+        val revision = invalidations.get()
+        val public = client.metadata(OpenRouterFreePolicy.MODELS_URL, false, expectedScope)
         if (public is OpenRouterMetadataResult.Failed) { invalidate(); return AIModelDiscovery.Failed(public.error) }
-        val user = client.metadata(OpenRouterModelMetadata.USER_MODELS_URL, true)
+        val user = client.metadata(OpenRouterModelMetadata.USER_MODELS_URL, true, expectedScope)
         if (user is OpenRouterMetadataResult.Failed) { invalidate(); return AIModelDiscovery.Failed(user.error) }
+        if (client.accountScope() != expectedScope || invalidations.get() != revision) { invalidate(); return staleAccount() }
         return try {
             val (models, aliases) = OpenRouterModelMetadata.parse((public as OpenRouterMetadataResult.Body).value, (user as OpenRouterMetadataResult.Body).value, clock())
-            identities = aliases
+            identities = aliases; catalogScope = expectedScope
             AIModelDiscovery.Found(models, clock()).also { catalog = it }
         } catch (_: Exception) {
             invalidate(); AIModelDiscovery.Failed(AiResult.Failure(AiErrorKind.MODEL_INVALID, "فهرست رسمی مدل/قیمت/دسترسی قابل تأیید نیست؛ از فهرست قدیمی یا مدل پولی استفاده نمی‌شود."))
         }
     }
     override suspend fun availability(model: AIModel, force: Boolean): AIModelAvailability {
-        if (!force) health[model.key]?.takeIf { AIRequestPolicy.fresh(it.checkedAt, clock(), AIRequestPolicy.METADATA_TTL_MS) }?.let { return it }
+        val expectedScope = catalogScope
+        if (expectedScope == null || expectedScope != client.accountScope() ||
+            catalog?.models?.none { it.key == model.key && it.fingerprint == model.fingerprint } != false)
+            return AIModelAvailability(false, clock(), explanation = "بررسی مدل متعلق به حساب فعلی نیست", errorKind = AiErrorKind.DISABLED)
+        val revision = invalidations.get()
         if (!AIRequestPolicy.eligibleMetadata(model, clock())) return AIModelAvailability(false, clock(), explanation = "قیمت/هویت/مجوز مدل معتبر نیست")
-        val result = client.metadata(OpenRouterModelMetadata.endpointUrl(model.key.id), false)
+        if (!force) health[model.key]?.takeIf { AIRequestPolicy.fresh(it.checkedAt, clock(), AIRequestPolicy.METADATA_TTL_MS) }?.let { return it }
+        val result = client.metadata(OpenRouterModelMetadata.endpointUrl(model.key.id), false, expectedScope)
         val value = when (result) {
-            is OpenRouterMetadataResult.Failed -> AIModelAvailability(false, clock(), explanation = result.error.message)
+            is OpenRouterMetadataResult.Failed -> AIModelAvailability(false, clock(), explanation = result.error.message, errorKind = result.error.kind)
             is OpenRouterMetadataResult.Body -> runCatching {
                 OpenRouterModelMetadata.availability(result.value, model, identities[model.key.id].orEmpty(), clock())
             }.getOrElse { AIModelAvailability(false, clock(), explanation = "پاسخ وضعیت ارائه‌دهنده قابل تأیید نیست") }
         }
+        if (client.accountScope() != expectedScope || invalidations.get() != revision)
+            return AIModelAvailability(false, clock(), explanation = "حساب یا بررسی فراداده عوض شد", errorKind = AiErrorKind.DISABLED)
         health[model.key] = value; return value
     }
     override suspend fun infer(model: AIModelKey, request: AIModelRequest, onText: (String) -> Unit): FunctionResult {
         val found = discover(false)
         if (found is AIModelDiscovery.Failed) return FunctionResult.Failed(found.error)
+        val expectedScope = catalogScope ?: return FunctionResult.Failed(staleAccount().error)
         val verified = (found as AIModelDiscovery.Found).models.singleOrNull { it.key == model && AIRequestPolicy.eligibleMetadata(it, clock()) }
             ?: return FunctionResult.Failed(AiResult.Failure(AiErrorKind.MODEL_INVALID, "مدل در فهرست تازهٔ قیمت صفر و مجاز برای کلید تأیید نشد؛ درخواست ارسال نشد."))
         val available = availability(verified)
-        if (!available.available) return FunctionResult.Failed(AiResult.Failure(AiErrorKind.NOT_FOUND, available.explanation))
-        return client.inferApproved(verified, available, identities[model.id].orEmpty(), request, onText)
+        if (!available.available) return FunctionResult.Failed(AiResult.Failure(available.errorKind ?: AiErrorKind.NOT_FOUND, available.explanation))
+        return client.inferApproved(verified, available, identities[model.id].orEmpty(), expectedScope, request, onText)
     }
 }
 
