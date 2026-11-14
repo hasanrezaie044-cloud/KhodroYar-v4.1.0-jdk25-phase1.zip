@@ -1,6 +1,10 @@
 package com.khodroyar.app.data.repo
 
 import android.content.Context
+import androidx.room.withTransaction
+import com.khodroyar.app.automation.AutomationRule
+import com.khodroyar.app.automation.AutomationStore
+import com.khodroyar.app.automation.RuleKind
 import com.khodroyar.app.core.finance.LoanCalculator
 import com.khodroyar.app.core.holidays.IranHolidays
 import com.khodroyar.app.core.jalali.Jalali
@@ -25,6 +29,10 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.flow.runningFold
+
+/** Frozen side effect of the SAME manual maintenance rule, approved along with its record. */
+data class AgentMaintenanceChange(val change: TrackedChange, val rateYear: Int, val rateSnapshot: String)
 
 /**
  * Single write/read surface over Room. All suspend functions hop to the IO
@@ -39,6 +47,100 @@ class AppRepository(context: Context) {
     private val db = AppDatabase.get(context)
     private val io = Dispatchers.IO
     private val settingsStore = SettingsStore.get(context)
+    val insights: InsightsDao get() = db.insights()
+    val quickEntries by lazy { QuickEntries(db, settingsStore, ::ratesFor) }
+    val serviceBatches by lazy { ServiceBatchOperations(db, settingsStore, ::ratesFor) }
+
+    fun comparison(window: com.khodroyar.app.core.analytics.ReportWindow,
+        previous: com.khodroyar.app.core.analytics.ReportWindow = window.previous()
+    ): Flow<com.khodroyar.app.core.analytics.PeriodComparison> = combine(
+        insights.financial(window.start, window.end), insights.financial(previous.start, previous.end),
+        insights.expenses(window.start, window.end), insights.expenses(previous.start, previous.end),
+    ) { current, before, costs, oldCosts ->
+        com.khodroyar.app.core.analytics.PeriodComparison(window, previous, current, before,
+            com.khodroyar.app.core.analytics.PeriodInsights.increases(costs, oldCosts))
+    }
+
+    /** Table invalidations, not full rows, drive maintenance refreshes (including same-date edits). */
+    fun maintenanceInputsChanged(): Flow<Int> = db.invalidationTracker.createFlow("services", "maintenances")
+        .runningFold(0) { revision, _ -> revision + 1 }
+
+    fun drivingPace(today: String = Jalali.todayString()): Flow<com.khodroyar.app.core.analytics.DrivingPace?> =
+        insights.mileageDays(Jalali.addDays(today, -55), today).map { com.khodroyar.app.core.analytics.MaintenanceForecast.pace(it, today) }
+
+
+    /** Resolve exactly one explicit assistant ID; bounded lookup, never a title guess. */
+    suspend fun agentRecord(kind: String, prefix: String): Any? = withContext(io) {
+        require(Regex("[A-Za-z0-9-]{4,40}").matches(prefix))
+        when (kind) {
+            "expense" -> db.insights().expenseByIdPrefix(prefix).singleOrNull()
+            "fuel" -> db.insights().fuelByIdPrefix(prefix).singleOrNull()
+            "maintenance" -> db.insights().maintenanceByIdPrefix(prefix).singleOrNull()
+            "service" -> db.services().byIdPrefix(prefix).singleOrNull()
+            "insurance" -> db.insurance().byIdPrefix(prefix).singleOrNull()
+            else -> null
+        }
+    }
+
+    /** Expected-row check and write/readback share one Room transaction and writer gate. */
+    /** Same newest-odometer rule as the maintenance form, without mutating any state. */
+    suspend fun prepareAgentMaintenance(row: MaintenanceEntity): AgentMaintenanceChange? = withContext(io) {
+        val type = com.khodroyar.app.core.finance.MaintenanceType.fromWire(row.type)
+        val latest = latestMaintenance(row.type)
+        if (type !in com.khodroyar.app.core.finance.MaintenanceType.TRACKED || row.km <= 0 || latest != null && row.km < latest.km) return@withContext null
+        val year = Jalali.currentYear(); val rates = ratesFor(year); val before = settingsStore.current
+        val next = row.km + com.khodroyar.app.core.analytics.Analytics.intervalFor(row.type, rates)
+        AgentMaintenanceChange(TrackedChange(row.type, before.currentKmFor(row.type), before.nextKmFor(row.type), row.km, next), year, rates.toString())
+    }
+
+    suspend fun applyApprovedAgentRecord(before: Any?, after: Any?, maintenance: AgentMaintenanceChange? = null) = withContext(io + kotlinx.coroutines.NonCancellable) {
+        val identity = requireNotNull(before ?: after)
+        fun id(row: Any): String = when (row) {
+            is PersonalExpenseEntity -> row.id
+            is FuelEntity -> row.id
+            is MaintenanceEntity -> row.id
+            is InsuranceEntity -> row.id
+            else -> error("نوع رکورد مجاز نیست.")
+        }
+        require(before == null || after == null || before::class == after::class && id(before) == id(after))
+        suspend fun read(): Any? = when (identity) {
+            is PersonalExpenseEntity -> db.insights().expense(identity.id)
+            is FuelEntity -> db.insights().fuel(identity.id)
+            is MaintenanceEntity -> db.insights().maintenance(identity.id)
+            is InsuranceEntity -> db.insurance().byId(identity.id)
+            else -> error("نوع رکورد مجاز نیست.")
+        }
+        RecordMutations.mutate(db, settingsStore, invalidateReceipt = true) {
+            if (read() == after) return@mutate // Matching stable ID: no reinsert and no repeated settings side effect.
+            val change = maintenance?.change
+            require(change == null || before == null && after is MaintenanceEntity && change.wire == after.type)
+            val state = settingsStore.current
+            val journal = if (change == null) null else {
+                val latest = latestMaintenance(change.wire)
+                check(latest == null || latest.km <= change.afterCurrent) { "سرویس دوره‌ای جدیدتری ثبت شده؛ پیش‌نمایش تازه لازم است." }
+                check(state.currentKmFor(change.wire) == change.beforeCurrent && state.nextKmFor(change.wire) == change.beforeNext) { "موعد نگهداری پس از پیش‌نمایش تغییر کرده است." }
+                QuickMileageJournal.plan(QuickKind.MAINTENANCE, id(identity), before, after, state,
+                    state.withTrackedKm(change.wire, change.afterCurrent, change.afterNext), false, change.wire)
+            }
+            journal?.let { settingsStore.stageQuickMileage(it.encode(), it::beforeMatches) }
+            var recovered = QuickMileageJournal.Recovery.NONE
+            try {
+                db.withTransaction {
+                    val actual = read()
+                    check(actual == before) { "رکورد بعد از پیش‌نمایش تغییر یا حذف شده؛ دوباره انتخاب و تأیید کنید." }
+                    if (maintenance != null) check(ratesFor(maintenance.rateYear).toString() == maintenance.rateSnapshot) { "نرخ/فاصلهٔ نگهداری تغییر کرده؛ پیش‌نمایش تازه لازم است." }
+                    when (identity) {
+                        is PersonalExpenseEntity -> if (after == null) db.personalExpenses().deleteById(identity.id) else db.personalExpenses().insert(after as PersonalExpenseEntity)
+                        is FuelEntity -> if (after == null) db.fuels().deleteById(identity.id) else db.fuels().insert(after as FuelEntity)
+                        is MaintenanceEntity -> if (after == null) db.maintenances().deleteById(identity.id) else db.maintenances().insert(after as MaintenanceEntity)
+                        is InsuranceEntity -> if (after == null) db.insurance().deleteById(identity.id) else db.insurance().insert(after as InsuranceEntity)
+                    }
+                    check(read() == after) { "بازخوانی رکورد تأیید نشد." }
+                }
+            } finally { if (journal != null) recovered = QuickMileageJournal.recover(db, settingsStore) }
+            check(recovered != QuickMileageJournal.Recovery.CONFLICT) { "رکورد ثبت شد؛ تنظیم دستی موعد نگهداری حفظ شد. سوابق را بررسی کنید و دوباره ثبت نکنید." }
+        }
+    }
 
     // ----------------------------------------------------------- app settings
 
@@ -46,7 +148,11 @@ class AppRepository(context: Context) {
     val settings: Flow<AppSettings> = settingsStore.state
     val settingsNow: AppSettings get() = settingsStore.current
 
-    fun updateSettings(transform: (AppSettings) -> AppSettings) = settingsStore.update(transform)
+    fun updateSettings(transform: (AppSettings) -> AppSettings) = settingsStore.update { before ->
+        val after = transform(before)
+        QuickEntries.invalidateSettingsChange(before, after)
+        after
+    }
     fun markBackupDone() = settingsStore.markBackupDone()
 
     // ------------------------------------------------------------------ rates
@@ -110,6 +216,7 @@ class AppRepository(context: Context) {
         missionFood: Double, missionToll: Double, missionFine: Double,
         attachmentPath: String = "",
     ): String = withContext(io) {
+        RecordMutations.mutate(db, settingsStore, invalidateReceipt = true) {
         val year = Jalali.parse(date)?.year ?: Jalali.currentYear()
         val rates = ratesFor(year)
         val income = IncomeCalculator.calculate(
@@ -141,9 +248,45 @@ class AppRepository(context: Context) {
             settingsStore.update { s -> s.copy(vehicleCurrentKm = s.vehicleCurrentKm + km) }
         }
         id
+
+        }
+    }
+
+    /** Atomic INSERT IGNORE + readback: retries/overlapping workers never overwrite an edited occurrence. */
+    suspend fun recordAutomation(rule: AutomationRule, date: String, id: String) = withContext(io) {
+        RecordMutations.mutate(db, settingsStore, invalidateReceipt = true) {
+        require(rule.valid() && id == rule.occurrenceId(date))
+        when (rule.kind) {
+            RuleKind.TRAFFIC -> error("Traffic is not a database write")
+            RuleKind.EXPENSE -> db.withTransaction {
+                db.personalExpenses().insertIfAbsent(PersonalExpenseEntity(id, date, rule.category,
+                    rule.title, rule.amount, java.time.Instant.now().toString()))
+                check(db.personalExpenses().byId(id)?.date == date)
+            }
+            RuleKind.SERVICE -> {
+                val t = requireNotNull(rule.service)
+                val type = requireNotNull(ServiceType.fromWireOrNull(t.type))
+                val rates = ratesFor(requireNotNull(Jalali.parse(date)).year)
+                val income = IncomeCalculator.calculate(type, t.km, t.hours, t.tollCount, 0.0, 0.0, 0.0,
+                    rates, t.startTime.ifEmpty { null }, t.endTime.ifEmpty { null })
+                val saved = db.withTransaction {
+                    db.services().insertIfAbsent(ServiceEntity(id, date, t.type, t.carType, t.km, t.hours, t.hours,
+                        t.startTime, t.endTime, t.origin, t.destination, t.passengers, "", t.tollCount,
+                        0.0, 0.0, 0.0, income, java.time.Instant.now().toString()))
+                    requireNotNull(db.services().byId(id)).also { check(it.date == date) }
+                }
+                // Also repaired on a retry after a process death between Room and preferences.
+                if (ServiceType.fromWire(saved.type) !in ServiceType.FIXED_AMOUNT_TYPES) {
+                    settingsStore.applyScheduledMileageOnce(id, saved.km)
+                }
+            }
+        }
+
+        }
     }
 
     suspend fun updateService(entity: ServiceEntity, recomputeIncome: Boolean = true) = withContext(io) {
+        RecordMutations.mutate(db, settingsStore, invalidateReceipt = true) {
         val previous = db.services().byId(entity.id)
         val row = if (!recomputeIncome) entity else {
             val year = Jalali.parse(entity.date)?.year ?: Jalali.currentYear()
@@ -167,6 +310,8 @@ class AppRepository(context: Context) {
                 s.copy(vehicleCurrentKm = (s.vehicleCurrentKm + delta).coerceAtLeast(0.0))
             }
         }
+
+        }
     }
 
     /** Services of exactly one day — the calendar's selectedDate binding. */
@@ -174,6 +319,10 @@ class AppRepository(context: Context) {
 
     suspend fun servicesForDateOnce(date: String): List<ServiceEntity> =
         withContext(io) { db.services().rangeOnce(date, date) }
+
+    /** Read-only company-report comparison; identical hours semantics to existing reports. */
+    suspend fun workReportDays(start: String, end: String): List<DailyTotals> =
+        withContext(io) { db.services().dailyInRangeOnce(start, end) }
 
     suspend fun servicesInRangeOnce(start: String, end: String): List<ServiceEntity> =
         withContext(io) { db.services().rangeOnce(start, end) }
@@ -190,6 +339,7 @@ class AppRepository(context: Context) {
     suspend fun loansOnce(): List<LoanEntity> = withContext(io) { db.loans().allOnce() }
 
     suspend fun deleteService(id: String) = withContext(io) {
+        RecordMutations.mutate(db, settingsStore, invalidateReceipt = true) {
         val existing = db.services().byId(id)
         db.services().deleteById(id)
         // The photo belongs to the record; don't leave an orphan in app storage.
@@ -200,6 +350,8 @@ class AppRepository(context: Context) {
             settingsStore.update { s ->
                 s.copy(vehicleCurrentKm = (s.vehicleCurrentKm - existing.km).coerceAtLeast(0.0))
             }
+        }
+
         }
     }
     suspend fun service(id: String): ServiceEntity? = withContext(io) { db.services().byId(id) }
@@ -213,6 +365,7 @@ class AppRepository(context: Context) {
 
     /** Re-prices the services of ONE year with that year's rates. */
     suspend fun recalculateYear(year: Int): Int = withContext(io) {
+        RecordMutations.mutate(db, settingsStore, invalidateReceipt = true) {
         val rates = ratesFor(year)
         val rows = db.services().byDatePrefixOnce("$year/")
         val updated = rows.map { s ->
@@ -226,6 +379,8 @@ class AppRepository(context: Context) {
         }
         db.services().insertAll(updated)
         updated.size
+
+        }
     }
 
     // ------------------------------------------------------- fuels / upkeep
@@ -237,16 +392,25 @@ class AppRepository(context: Context) {
 
     suspend fun addFuel(date: String, type: String, liters: Double, total: Double, carType: String) =
         withContext(io) {
+        RecordMutations.mutate(db, settingsStore, invalidateReceipt = true) {
             db.fuels().insert(FuelEntity(
                 java.util.UUID.randomUUID().toString(), date, type, liters, total, carType,
                 java.time.Instant.now().toString(),
             ))
-        }
 
-    suspend fun deleteFuel(id: String) = withContext(io) { db.fuels().deleteById(id) }
+        }
+    }
+
+    suspend fun deleteFuel(id: String) = withContext(io) {
+        RecordMutations.mutate(db, settingsStore, invalidateReceipt = true) { db.fuels().deleteById(id)
+        }
+    }
 
     /** Upsert by primary key (used by the assistant's confirmed edit; existing screens are unaffected). */
-    suspend fun updateFuel(entity: FuelEntity) = withContext(io) { db.fuels().insert(entity) }
+    suspend fun updateFuel(entity: FuelEntity) = withContext(io) {
+        RecordMutations.mutate(db, settingsStore, invalidateReceipt = true) { db.fuels().insert(entity)
+        }
+    }
 
     fun maintenances(): Flow<List<MaintenanceEntity>> = db.maintenances().observeAll()
     fun maintenances(prefix: String): Flow<List<MaintenanceEntity>> =
@@ -258,16 +422,25 @@ class AppRepository(context: Context) {
         cost: Double, km: Double, carType: String, description: String,
         attachmentPath: String = "",
     ) = withContext(io) {
+        RecordMutations.mutate(db, settingsStore, invalidateReceipt = true) {
         db.maintenances().insert(MaintenanceEntity(
             java.util.UUID.randomUUID().toString(), date, type, typeText,
             cost, km, carType, description, java.time.Instant.now().toString(),
             attachmentPath,
         ))
+
+        }
     }
 
-    suspend fun deleteMaintenance(id: String) = withContext(io) { db.maintenances().deleteById(id) }
+    suspend fun deleteMaintenance(id: String) = withContext(io) {
+        RecordMutations.mutate(db, settingsStore, invalidateReceipt = true) { db.maintenances().deleteById(id)
+        }
+    }
     suspend fun updateMaintenance(entity: MaintenanceEntity) = withContext(io) {
+        RecordMutations.mutate(db, settingsStore, invalidateReceipt = true) {
         db.maintenances().insert(entity) // upsert via primary key
+
+        }
     }
     suspend fun latestMaintenance(type: String) = withContext(io) { db.maintenances().latestByType(type) }
     suspend fun highestKm(): Double = withContext(io) { db.services().maxKm() ?: 0.0 }
@@ -278,19 +451,7 @@ class AppRepository(context: Context) {
      */
     suspend fun drivenKmSinceMaintenance(typeWire: String): Double = withContext(io) {
         val last = db.maintenances().latestByType(typeWire)
-        val all = db.services().allOnce()
-        if (last == null) {
-            all.sumOf { it.km }
-        } else {
-            // Prefer date comparison; fall back to timestamp if dates equal/blank
-            all.filter { s ->
-                when {
-                    s.date > last.date -> true
-                    s.date < last.date -> false
-                    else -> s.timestamp > last.timestamp
-                }
-            }.sumOf { it.km }
-        }
+        db.services().drivenSince(last?.date, last?.timestamp.orEmpty())
     }
 
     /** Convenience: build ServiceDue for a tracked maintenance type using driven-km logic. */
@@ -304,6 +465,11 @@ class AppRepository(context: Context) {
     ): com.khodroyar.app.core.analytics.Analytics.ServiceDue {
         val last = latestMaintenance(typeWire)
         val driven = drivenKmSinceMaintenance(typeWire)
+        val base = baseCurrentKm.takeIf { it > 0 } ?: last?.km?.takeIf { it > 0 } ?: 0.0
+        if ((base <= 0 && nextKmOverride <= 0) || currentOdometer <= 0) return com.khodroyar.app.core.analytics.Analytics.ServiceDue(
+            label, last?.km, interval, currentOdometer, null, false, false, driven,
+            nextKm = nextKmOverride.takeIf { it > 0 } ?: if (base > 0 && interval > 0) base + interval else 0.0,
+            baseCurrentKm = base)
         return com.khodroyar.app.core.analytics.Analytics.dueFromDriven(
             label = label,
             lastKm = last?.km,
@@ -311,7 +477,7 @@ class AppRepository(context: Context) {
             drivenSinceLast = driven,
             nextKmOverride = nextKmOverride,
             currentOdometer = currentOdometer,
-            baseCurrentKm = baseCurrentKm,
+            baseCurrentKm = base,
         )
     }
 
@@ -418,15 +584,24 @@ class AppRepository(context: Context) {
 
     suspend fun addPersonalExpense(date: String, category: String, title: String, amount: Double) =
         withContext(io) {
+        RecordMutations.mutate(db, settingsStore, invalidateReceipt = true) {
             db.personalExpenses().insert(PersonalExpenseEntity(
                 java.util.UUID.randomUUID().toString(), date, category, title, amount,
                 java.time.Instant.now().toString(),
             ))
-        }
 
-    suspend fun deletePersonalExpense(id: String) = withContext(io) { db.personalExpenses().deleteById(id) }
+        }
+    }
+
+    suspend fun deletePersonalExpense(id: String) = withContext(io) {
+        RecordMutations.mutate(db, settingsStore, invalidateReceipt = true) { db.personalExpenses().deleteById(id)
+        }
+    }
     suspend fun updatePersonalExpense(entity: com.khodroyar.app.data.db.PersonalExpenseEntity) = withContext(io) {
+        RecordMutations.mutate(db, settingsStore, invalidateReceipt = true) {
         db.personalExpenses().insert(entity)
+
+        }
     }
 
     suspend fun addPersonalIncome(date: String, category: String, title: String, amount: Double) =
@@ -540,6 +715,7 @@ class AppRepository(context: Context) {
      * builds can read each other's backups. The PIN is deliberately excluded.
      */
     suspend fun exportBackupJson(): String = withContext(io) {
+        quickEntries.recover()
         val services = db.services().allOnce()
         val fuels = db.fuels().allOnce()
         val maint = db.maintenances().allOnce()
@@ -601,6 +777,10 @@ class AppRepository(context: Context) {
         val payload = LegacyBackup.parse(json)
             ?: return@withContext Result.failure(IllegalArgumentException("ساختار فایل نامعتبر است"))
         try {
+            // Never let a restored/rolled-back dataset silently receive old unattended rules.
+            AutomationStore.get(appContext).pauseAll()
+            QuickEntries.invalidate()
+            RecordMutations.mutate(db, settingsStore, invalidateReceipt = true) {
             db.runInTransaction {
                 // Room's runInTransaction needs blocking calls; DAO suspend functions
                 // are invoked through runBlocking on the already-IO thread.
@@ -623,6 +803,7 @@ class AppRepository(context: Context) {
                 }
             }
             applySettingsFrom(json)
+            }
             Result.success(payload.counts)
         } catch (e: Exception) {
             Result.failure(e)

@@ -1,0 +1,21 @@
+# Local tooling, build outputs and private runtime configuration
+.gradle/
+android/.gradle/
+**/build/
+node_modules/
+**/__pycache__/
+*.py[cod]
+android/local.properties
+.idea/
+*.apk
+*.aab
+*.jks
+*.keystore
+.env
+.env.*
+!.env.example
+.DS_Store
+
+# Owner-local checkpoints/private delivery. Never commit APKs or publish private keys.
+.khodroyar-backups/
+.khodroyar-private/

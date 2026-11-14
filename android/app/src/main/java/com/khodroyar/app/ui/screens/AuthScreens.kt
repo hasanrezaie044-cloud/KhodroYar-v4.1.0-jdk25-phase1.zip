@@ -1,7 +1,6 @@
 package com.khodroyar.app.ui.screens
 
 import com.khodroyar.app.ui.components.tr
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
@@ -16,20 +15,23 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLayoutDirection
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
-import com.khodroyar.app.R
+import androidx.compose.ui.platform.testTag
 import com.khodroyar.app.data.prefs.SettingsStore
 import com.khodroyar.app.security.BiometricGate
 import com.khodroyar.app.security.PinStore
 import com.khodroyar.app.ui.components.FieldShape
+import com.khodroyar.app.ui.components.SurfaceCard
+import com.khodroyar.app.ui.components.IconBadge
+import com.khodroyar.app.ui.components.fieldColors
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import com.khodroyar.app.ui.components.toLatinDigits
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -81,117 +83,39 @@ private fun ProfileSetupScreen(
     var last by remember { mutableStateOf(initialLast) }
     var error by remember { mutableStateOf<String?>(null) }
 
-    CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) {
-        Box(Modifier.fillMaxSize().background(Color(0xFF05090B))) {
-            Image(
-                painter = painterResource(R.drawable.login_background),
-                contentDescription = null,
-                contentScale = ContentScale.Crop,
-                modifier = Modifier.fillMaxSize(),
-            )
-            Box(
-                Modifier
-                    .fillMaxSize()
-                    .background(
-                        Brush.verticalGradient(
-                            listOf(Color(0xCC05090B), Color(0xE605090B), Color(0xF205090B)),
-                        ),
-                    ),
-            )
-            Column(
-                Modifier
-                    .fillMaxSize()
-                    .statusBarsPadding()
-                    .navigationBarsPadding()
-                    .padding(horizontal = 24.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.Center,
-            ) {
-                Box(
-                    Modifier
-                        .size(72.dp)
-                        .clip(CircleShape)
-                        .background(Color(0x33A8D5C2)),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Icon(Icons.Outlined.Person, null, tint = Color(0xFFA8D5C2), modifier = Modifier.size(36.dp))
-                }
-                Spacer(Modifier.height(18.dp))
-                Text(
-                    "خوش آمدید",
-                    color = Color.White,
-                    style = MaterialTheme.typography.headlineSmall,
-                    fontWeight = FontWeight.Bold,
-                )
-                Spacer(Modifier.height(22.dp))
-                Surface(
-                    color = Color(0xE6121A1C),
-                    shape = FieldShape,
-                    tonalElevation = 0.dp,
-                    shadowElevation = 8.dp,
-                    modifier = Modifier.widthIn(max = 420.dp).fillMaxWidth(),
-                ) {
-                    Column(
-                        Modifier.padding(20.dp),
-                        verticalArrangement = Arrangement.spacedBy(12.dp),
-                    ) {
-                        OutlinedTextField(
-                            value = first,
-                            onValueChange = { first = it; error = null },
-                            modifier = Modifier.fillMaxWidth(),
-                            label = { Text("نام") },
-                            singleLine = true,
-                            shape = FieldShape,
-                            colors = profileFieldColors(),
-                        )
-                        OutlinedTextField(
-                            value = last,
-                            onValueChange = { last = it; error = null },
-                            modifier = Modifier.fillMaxWidth(),
-                            label = { Text("نام خانوادگی") },
-                            singleLine = true,
-                            shape = FieldShape,
-                            colors = profileFieldColors(),
-                        )
-                        error?.let {
-                            Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium)
+    GateBackdrop {
+        Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().imePadding()
+            .verticalScroll(rememberScrollState()).padding(horizontal = 24.dp, vertical = 28.dp),
+            horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+            GateBrand()
+            Spacer(Modifier.height(32.dp))
+            Text("از آشنایی با شما خوشحالیم", style = MaterialTheme.typography.headlineSmall, color = Color.White)
+            Spacer(Modifier.height(6.dp))
+            Text("پروفایل شخصی‌تان را بسازید", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Spacer(Modifier.height(24.dp))
+            SurfaceCard(modifier = Modifier.widthIn(max = 420.dp)) {
+                Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                    OutlinedTextField(value = first, onValueChange = { first = it; error = null },
+                        modifier = Modifier.fillMaxWidth().testTag("profile-first-name"), label = { Text("نام") }, singleLine = true, shape = FieldShape, colors = fieldColors())
+                    OutlinedTextField(value = last, onValueChange = { last = it; error = null },
+                        modifier = Modifier.fillMaxWidth().testTag("profile-last-name"), label = { Text("نام خانوادگی") }, singleLine = true, shape = FieldShape, colors = fieldColors())
+                    error?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium) }
+                    Button(onClick = {
+                        val f = first.trim(); val l = last.trim()
+                        when {
+                            f.isEmpty() -> error = "لطفاً نام را وارد کنید"
+                            l.isEmpty() -> error = "لطفاً نام خانوادگی را وارد کنید"
+                            else -> onSave(f, l)
                         }
-                        Button(
-                            onClick = {
-                                val f = first.trim()
-                                val l = last.trim()
-                                when {
-                                    f.isEmpty() -> error = "لطفاً نام را وارد کنید"
-                                    l.isEmpty() -> error = "لطفاً نام خانوادگی را وارد کنید"
-                                    else -> onSave(f, l)
-                                }
-                            },
-                            modifier = Modifier.fillMaxWidth().height(50.dp),
-                            shape = FieldShape,
-                        ) { Text("شروع کنید") }
-                    }
+                    }, modifier = Modifier.fillMaxWidth().heightIn(min = 54.dp).testTag("profile-save"), shape = FieldShape) { Text("شروع مسیر") }
                 }
-                Spacer(Modifier.height(18.dp))
-                Text(
-                    "کاملاً آفلاین · بدون اینترنت",
-                    color = Color(0xFF8FA09D),
-                    style = MaterialTheme.typography.bodyMedium,
-                )
             }
+            Spacer(Modifier.height(20.dp))
+            Text("این پروفایل فقط روی گوشی شما ذخیره می‌شود", style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }
-
-@Composable
-private fun profileFieldColors() = OutlinedTextFieldDefaults.colors(
-    focusedTextColor = Color.White,
-    unfocusedTextColor = Color.White,
-    focusedBorderColor = Color(0xFFA8D5C2),
-    unfocusedBorderColor = Color(0xFF3A4A48),
-    focusedLabelColor = Color(0xFFA8D5C2),
-    unfocusedLabelColor = Color(0xFF8FA09D),
-    cursorColor = Color(0xFFA8D5C2),
-)
 
 /**
  * The lock screen's logic. The look lives in [AnimatedLoginScreen]; what happens with the

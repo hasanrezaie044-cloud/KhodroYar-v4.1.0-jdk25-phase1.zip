@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <data-extraction-rules>
     <cloud-backup><exclude domain="root" /><exclude domain="database" /><exclude domain="sharedpref" /></cloud-backup>
-    <device-transfer><exclude domain="root" /></device-transfer>
+    <device-transfer><exclude domain="sharedpref" path="khodroyar_provider_credentials.xml" /><exclude domain="sharedpref" path="khodroyar_ai_usage.xml" /><exclude domain="sharedpref" path="khodroyar_ai_models.xml" /><exclude domain="sharedpref" path="khodroyar_openrouter_credentials.xml" /><exclude domain="root" /><exclude domain="sharedpref" path="khodroyar_gapgpt_credentials.xml" /><exclude domain="sharedpref" path="khodroyar_agent_automations.xml" /></device-transfer>
 </data-extraction-rules>

@@ -1,0 +1,251 @@
+name: KhodroYar Native UI Smoke
+
+on:
+  workflow_dispatch:
+  workflow_call:
+    inputs:
+      ref:
+        required: false
+        type: string
+
+concurrency:
+  group: khodroyar-ui-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ui-smoke:
+    name: Compose UI · API 35 emulator
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+      - name: Set up JDK 25
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '25'
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: 'platforms;android-36 build-tools;36.0.0 platform-tools'
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.4.1'
+          cache-read-only: true
+      - name: Ensure wrapper
+        working-directory: android
+        run: |
+          if [ ! -f gradle/wrapper/gradle-wrapper.jar ]; then
+            gradle wrapper --gradle-version 9.4.1 --distribution-type bin
+          fi
+          chmod +x gradlew
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Compile UI tests before starting emulator
+        working-directory: android
+        run: |
+          set +e
+          ./gradlew :app:assembleDebug :app:assembleDebugAndroidTest --stacktrace 2>&1 | tee "$RUNNER_TEMP/khodroyar-ui-compile.log"
+          RESULT=${PIPESTATUS[0]}
+          set -e
+          python3 ../tools/annotate-build-errors.py "$RUNNER_TEMP/khodroyar-ui-compile.log"
+          test "$RESULT" -eq 0
+      - name: Run native UI tests on disposable emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          arch: x86_64
+          target: google_apis
+          profile: pixel_2
+          ram-size: 3072M
+          heap-size: 512M
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none
+          script: bash tools/run-ui-smoke.sh
+      - name: Publish actual keyboard integration evidence
+        if: always()
+        run: |
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          for path in sorted((Path(os.environ['RUNNER_TEMP']) / 'orbit-ui-screenshots').glob('ime-*.json')):
+              if path.stat().st_size <= 32768:
+                  text = json.dumps(json.loads(path.read_text()), ensure_ascii=False)[:3800]
+                  text = text.replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
+                  print('::notice title=Actual software keyboard ' + path.stem + '::' + text)
+          PY
+      - name: Publish legacy Neshan compatibility evidence (mocked HTTP, no personal key)
+        if: always()
+        run: |
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          path = Path(os.environ['RUNNER_TEMP']) / 'orbit-ui-screenshots' / 'traffic-legacy.json'
+          assert path.is_file() and path.stat().st_size <= 16384, 'Missing native legacy-traffic evidence'
+          data = json.loads(path.read_text())
+          expected = dict(environment='Synthetic Neshan transport; NOT live Neshan', passed=True,
+              routes=['shiraz', 'zobahan', 'kharrazi', 'keshvari', 'meysami', 'habibollahi'],
+              requests=12, automatic_and_manual=True, legacy_query_only=True,
+              reply_has_polyline=False, all_six_statuses_displayed=True)
+          assert data == expected, 'Native traffic compatibility assertions did not all pass'
+          print('::notice title=Legacy Neshan six-route UI integration (NOT live Neshan)::' + json.dumps(data))
+          PY
+      - name: Publish native OpenRouter safety evidence (mocked HTTPS/SSE, no account key)
+        if: always()
+        run: |
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          path = Path(os.environ['RUNNER_TEMP']) / 'orbit-ui-screenshots' / 'openrouter-agent.json'
+          assert path.is_file() and path.stat().st_size <= 16384, 'Missing actual native OpenRouter mock evidence'
+          data = json.loads(path.read_text())
+          expected = dict(environment='Synthetic OpenRouter HTTP and SSE; NOT live model/account', passed=True,
+              native_tool_calls=True, no_request_before_consent=True, posts=2, records_after_approval=1,
+              paid_fallback=False, sse_completed=True, rtl_width_dp=320, font_scale=1.25,
+              confirm_button_clicked=True, history_deleted_records_preserved=True)
+          assert data == expected, 'Native free-agent consent/approval/continuation did not all pass'
+          print('::notice title=Native Persian agent integration (NOT live OpenRouter)::' + json.dumps(data))
+          path = path.with_name('openrouter-approvals.json')
+          assert path.is_file() and path.stat().st_size <= 16384, 'Missing actual approval-card lifecycle evidence'
+          data = json.loads(path.read_text())
+          expected = dict(environment='Synthetic OpenRouter; real Room and approval-card taps; NOT live account', passed=True,
+              posts=7, cancelled_create_unchanged=True, cancelled_delete_unchanged=True, double_tap_created_once=True,
+              unapproved_queue_discarded=True, confirmed_delete_readback=True, mileage_restored=True)
+          assert data == expected, 'Native explicit confirmation/cancellation/replay safety assertions did not all pass'
+          print('::notice title=Real agent approval-card lifecycle (mock AI)::' + json.dumps(data))
+          path = path.with_name('openrouter-model-evaluation.json')
+          assert path.is_file() and path.stat().st_size <= 16384, 'Missing model benchmark/privacy/guardrail evidence'
+          data = json.loads(path.read_text())
+          expected = dict(environment='Synthetic official catalog/guardrail and four inference cases; real local Room; NOT live OpenRouter',
+              passed=True, dummy_test_posts=4, private_record_unchanged=True, private_data_not_sent=True,
+              guardrail_removal_sent_no_post=True, no_real_tool_execution=True)
+          assert data == expected, 'Model benchmark/privacy/guardrail assertions did not all pass'
+          print('::notice title=Model evaluation and Guardrail integration (mock)::' + json.dumps(data))
+          path = path.with_name('openrouter-model-failover.json')
+          assert path.is_file() and path.stat().st_size <= 16384, 'Missing actual model failover evidence'
+          data = json.loads(path.read_text())
+          expected = dict(environment='Synthetic OpenRouter; real Compose confirmation and Room; NOT live provider', passed=True,
+              posts=3, committed_expenses=1, approved_alternative_only=True, tool_transcript_preserved=True,
+              committed_write_not_replayed=True, chat_height_over_60_percent=True, partial_stream_cleared=True)
+          assert data == expected, 'Actual native model replacement replay/approval assertions did not all pass'
+          print('::notice title=Model failover after approved real Room write (mock)::' + json.dumps(data))
+          PY
+      - name: Publish bounded synthetic previews for visual review
+        if: always() && github.event_name == 'workflow_dispatch'
+        run: |
+          python3 -m venv "$RUNNER_TEMP/ui-preview-env"
+          "$RUNNER_TEMP/ui-preview-env/bin/pip" --disable-pip-version-check -q install Pillow==12.0.0
+      - name: Free-agent approval preview
+        if: always() && github.event_name == 'workflow_dispatch'
+        run: '"$RUNNER_TEMP/ui-preview-env/bin/python" tools/ui-previews.py "$RUNNER_TEMP/orbit-ui-screenshots" 38-openrouter-approval-320-large-font'
+      - name: Home preview
+        if: always() && github.event_name == 'workflow_dispatch'
+        run: '"$RUNNER_TEMP/ui-preview-env/bin/python" tools/ui-previews.py "$RUNNER_TEMP/orbit-ui-screenshots" 01-home-light-fa'
+      - name: Annual statistics preview
+        if: always() && github.event_name == 'workflow_dispatch'
+        run: '"$RUNNER_TEMP/ui-preview-env/bin/python" tools/ui-previews.py "$RUNNER_TEMP/orbit-ui-screenshots" 21-reports-annual-statistics'
+      - name: Home line chart preview
+        if: always() && github.event_name == 'workflow_dispatch'
+        run: '"$RUNNER_TEMP/ui-preview-env/bin/python" tools/ui-previews.py "$RUNNER_TEMP/orbit-ui-screenshots" 20-home-line-timeline-right'
+      - name: Bar chart preview
+        if: always() && github.event_name == 'workflow_dispatch'
+        run: '"$RUNNER_TEMP/ui-preview-env/bin/python" tools/ui-previews.py "$RUNNER_TEMP/orbit-ui-screenshots" 18-dashboard-bars'
+      - name: Compact layout preview
+        if: always() && github.event_name == 'workflow_dispatch'
+        run: '"$RUNNER_TEMP/ui-preview-env/bin/python" tools/ui-previews.py "$RUNNER_TEMP/orbit-ui-screenshots" 19-home-dark-320-large-text'
+      - name: Recent services preview
+        if: always() && github.event_name == 'workflow_dispatch'
+        run: '"$RUNNER_TEMP/ui-preview-env/bin/python" tools/ui-previews.py "$RUNNER_TEMP/orbit-ui-screenshots" 22-reports-recent-services'
+      - name: Compact report table preview
+        if: always() && github.event_name == 'workflow_dispatch'
+        run: '"$RUNNER_TEMP/ui-preview-env/bin/python" tools/ui-previews.py "$RUNNER_TEMP/orbit-ui-screenshots" 23-report-table-320-large-text'
+      - name: Upload native screenshots and test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: khodroyar-orbit-native-ui
+          path: |
+            ${{ runner.temp }}/orbit-ui-screenshots
+            android/app/build/reports/androidTests/connected
+            android/app/build/outputs/androidTest-results/connected
+          if-no-files-found: warn
+          retention-days: 14
+
+  feature-previews:
+    name: Feature screen visual review
+    needs: ui-smoke
+    if: always() && github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+      - name: Read this run's native screenshots
+        uses: actions/download-artifact@v4
+        with:
+          name: khodroyar-orbit-native-ui
+          path: ${{ runner.temp }}/native-feature-review
+      - name: Set up bounded preview encoder
+        run: |
+          python3 -m venv "$RUNNER_TEMP/feature-preview-env"
+          "$RUNNER_TEMP/feature-preview-env/bin/pip" --disable-pip-version-check -q install Pillow==12.0.0
+      - name: Compact quick entry
+        run: '"$RUNNER_TEMP/feature-preview-env/bin/python" tools/ui-previews.py "$RUNNER_TEMP/native-feature-review" 25-quick-entry-320-large-text'
+      - name: Reviewed quick entry
+        run: '"$RUNNER_TEMP/feature-preview-env/bin/python" tools/ui-previews.py "$RUNNER_TEMP/native-feature-review" 26-quick-entry-review'
+      - name: Fuel review in dark mode
+        run: '"$RUNNER_TEMP/feature-preview-env/bin/python" tools/ui-previews.py "$RUNNER_TEMP/native-feature-review" 28-quick-fuel-dark-review'
+      - name: Maintenance forecast
+        run: '"$RUNNER_TEMP/feature-preview-env/bin/python" tools/ui-previews.py "$RUNNER_TEMP/native-feature-review" 29-maintenance-forecast'
+      - name: Financial comparison
+        run: '"$RUNNER_TEMP/feature-preview-env/bin/python" tools/ui-previews.py "$RUNNER_TEMP/native-feature-review" 31-financial-comparison'
+      - name: Automation health
+        run: '"$RUNNER_TEMP/feature-preview-env/bin/python" tools/ui-previews.py "$RUNNER_TEMP/native-feature-review" 32-automation-health'
+      - name: Quick edit failure diagnostics
+        if: always()
+        run: '"$RUNNER_TEMP/feature-preview-env/bin/python" tools/ui-previews.py "$RUNNER_TEMP/native-feature-review" debug-quick-edit-state'
+      - name: Count-first reports at 320 dp and large font
+        run: '"$RUNNER_TEMP/feature-preview-env/bin/python" tools/ui-previews.py "$RUNNER_TEMP/native-feature-review" 36-count-first-320-large-font'
+      - name: Full-road Isfahan catalogue
+        run: '"$RUNNER_TEMP/feature-preview-env/bin/python" tools/ui-previews.py "$RUNNER_TEMP/native-feature-review" 35b-isfahan-full-road-catalogue'
+      - name: Legacy Neshan response rendered for all six routes (mocked)
+        run: '"$RUNNER_TEMP/feature-preview-env/bin/python" tools/ui-previews.py "$RUNNER_TEMP/native-feature-review" 37-traffic-legacy-response-six-routes'
+
+  model-previews:
+    name: Full-screen chat and model settings previews
+    needs: ui-smoke
+    if: always() && github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: khodroyar-orbit-native-ui
+          path: ${{ runner.temp }}/model-ui-review
+      - name: Set up bounded synthetic chat preview encoder
+        run: |
+          python3 -m venv "$RUNNER_TEMP/model-preview-env"
+          "$RUNNER_TEMP/model-preview-env/bin/pip" --disable-pip-version-check -q install Pillow==12.0.0
+      # Each image needs its own step: GitHub retains at most ten notice annotations per step.
+      - name: Explicit approval at compact width
+        run: '"$RUNNER_TEMP/model-preview-env/bin/python" tools/ui-previews.py "$RUNNER_TEMP/model-ui-review" 38-openrouter-approval-320-large-font'
+      - name: Full-screen chat after verified model failover
+        run: '"$RUNNER_TEMP/model-preview-env/bin/python" tools/ui-previews.py "$RUNNER_TEMP/model-ui-review" 39-ai-fullscreen-320'
+      - name: Approved-only manual model settings
+        run: '"$RUNNER_TEMP/model-preview-env/bin/python" tools/ui-previews.py "$RUNNER_TEMP/model-ui-review" 40-model-management-320'

@@ -3,6 +3,14 @@ package com.khodroyar.app.ui.components
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.onClick
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
@@ -14,6 +22,8 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
@@ -75,6 +85,7 @@ fun JalaliMonthGrid(
                             val date = Jalali.format(year, month, day)
                             DayCell(
                                 day = day,
+                                date = date,
                                 isSelected = date == selected,
                                 isToday = date == today,
                                 isWeekend = Jalali.dayOfWeek(year, month, day) >= 5,
@@ -96,6 +107,7 @@ fun JalaliMonthGrid(
 @Composable
 private fun DayCell(
     day: Int,
+    date: String,
     isSelected: Boolean,
     isToday: Boolean,
     isWeekend: Boolean,
@@ -119,12 +131,14 @@ private fun DayCell(
         red -> MaterialTheme.colorScheme.error
         else -> MaterialTheme.colorScheme.onSurface
     }
-    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+    Column(Modifier.fillMaxWidth().padding(horizontal = 1.dp), horizontalAlignment = Alignment.CenterHorizontally) {
         Surface(
-            shape = CircleShape,
+            shape = RoundedCornerShape(12.dp),
             color = container,
             border = if (isToday && !isSelected) BorderStroke(1.dp, MaterialTheme.colorScheme.primary) else null,
-            modifier = Modifier.size(38.dp).clip(CircleShape).clickable(onClick = onClick),
+            modifier = Modifier.fillMaxWidth().heightIn(min = 44.dp).clip(RoundedCornerShape(12.dp))
+                .selectable(isSelected, role = Role.Button, onClick = onClick)
+                .semantics { contentDescription = "$date، $dataCount سرویس، $expenseCount هزینه" },
         ) {
             Box(contentAlignment = Alignment.Center) {
                 Text(
@@ -170,7 +184,7 @@ private fun DayCell(
                         .height(5.dp)
                         .width(if (expenseCount >= 3) 12.dp else 5.dp)
                         .clip(CircleShape)
-                        .background(Color(0xFFE5484D).copy(alpha = maxOf(expenseIntensity, 0.6f)))
+                        .background(MaterialTheme.colorScheme.error.copy(alpha = maxOf(expenseIntensity, 0.6f)))
                 )
             }
         }
@@ -187,14 +201,14 @@ fun MonthNavigator(
     trailing: String = "",
 ) {
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-        IconButton(onClick = onPrevious) { Icon(Icons.Outlined.ChevronRight, "ماه قبل") }
+        IconButton(onClick = onPrevious) { Icon(if (LocalLayoutDirection.current == LayoutDirection.Rtl) Icons.Outlined.ChevronRight else Icons.Outlined.ChevronLeft, tr("ماه قبل", "Previous month")) }
         Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
             Text("${Jalali.monthName(month)} $year", style = MaterialTheme.typography.titleLarge)
             if (trailing.isNotBlank()) {
                 Text(trailing, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodyMedium)
             }
         }
-        IconButton(onClick = onNext) { Icon(Icons.Outlined.ChevronLeft, "ماه بعد") }
+        IconButton(onClick = onNext) { Icon(if (LocalLayoutDirection.current == LayoutDirection.Rtl) Icons.Outlined.ChevronLeft else Icons.Outlined.ChevronRight, tr("ماه بعد", "Next month")) }
     }
 }
 
@@ -270,7 +284,11 @@ fun JalaliDateField(
     isHoliday: (String) -> Boolean = { false },
 ) {
     var open by remember { mutableStateOf(false) }
-    Box(modifier.fillMaxWidth()) {
+    Box(modifier.fillMaxWidth().clearAndSetSemantics {
+        contentDescription = "$label: $value"
+        role = Role.Button
+        onClick { open = true; true }
+    }) {
         OutlinedTextField(
             value = value,
             onValueChange = {},
@@ -283,8 +301,8 @@ fun JalaliDateField(
             colors = OutlinedTextFieldDefaults.colors(
                 disabledTextColor = MaterialTheme.colorScheme.onSurface,
                 disabledLabelColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                disabledBorderColor = MaterialTheme.colorScheme.outlineVariant,
-                disabledContainerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+                disabledBorderColor = Color.Transparent,
+                disabledContainerColor = MaterialTheme.colorScheme.surfaceContainer,
                 disabledTrailingIconColor = MaterialTheme.colorScheme.primary,
             ),
         )
@@ -312,7 +330,11 @@ fun TimeField(
     modifier: Modifier = Modifier,
 ) {
     var open by remember { mutableStateOf(false) }
-    Box(modifier.fillMaxWidth()) {
+    Box(modifier.fillMaxWidth().clearAndSetSemantics {
+        contentDescription = "$label: $value"
+        role = Role.Button
+        onClick { open = true; true }
+    }) {
         OutlinedTextField(
             value = value,
             onValueChange = {},
@@ -325,8 +347,8 @@ fun TimeField(
             colors = OutlinedTextFieldDefaults.colors(
                 disabledTextColor = MaterialTheme.colorScheme.onSurface,
                 disabledLabelColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                disabledBorderColor = MaterialTheme.colorScheme.outlineVariant,
-                disabledContainerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+                disabledBorderColor = Color.Transparent,
+                disabledContainerColor = MaterialTheme.colorScheme.surfaceContainer,
                 disabledTrailingIconColor = MaterialTheme.colorScheme.primary,
             ),
         )

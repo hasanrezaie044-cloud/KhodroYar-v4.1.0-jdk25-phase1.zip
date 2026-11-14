@@ -30,6 +30,11 @@ interface ServiceDao {
     @Query("SELECT * FROM services WHERE date BETWEEN :start AND :end ORDER BY date, startTime")
     suspend fun rangeOnce(start: String, end: String): List<ServiceEntity>
 
+    @Query("""SELECT date, COUNT(*) AS count, COALESCE(SUM(km),0) AS totalKm,
+        COALESCE(SUM(hours),0) AS totalHours, COALESCE(SUM(income),0) AS totalIncome
+        FROM services WHERE date BETWEEN :start AND :end GROUP BY date ORDER BY date""")
+    suspend fun dailyInRangeOnce(start: String, end: String): List<DailyTotals>
+
     @Query("SELECT * FROM services WHERE date LIKE :prefix || '%' ORDER BY date, startTime")
     suspend fun byDatePrefixOnce(prefix: String): List<ServiceEntity>
 
@@ -38,6 +43,8 @@ interface ServiceDao {
 
     @Query("SELECT * FROM services WHERE id = :id")
     suspend fun byId(id: String): ServiceEntity?
+    @Query("SELECT * FROM services WHERE id LIKE :prefix || '%' LIMIT 2")
+    suspend fun byIdPrefix(prefix: String): List<ServiceEntity>
 
     @Query("""
         SELECT COUNT(*) AS count,
@@ -66,9 +73,14 @@ interface ServiceDao {
     """)
     fun observeDailyTotals(prefix: String): Flow<List<DailyTotals>>
 
+    @Query("""SELECT COALESCE(SUM(km),0) FROM services WHERE type NOT IN ('fixed-salary','leave')
+        AND (:date IS NULL OR date > :date OR (date = :date AND timestamp > :timestamp))""")
+    suspend fun drivenSince(date: String?, timestamp: String): Double
+
     @Query("SELECT MAX(km) FROM services")
     suspend fun maxKm(): Double?
 
+    @Insert(onConflict = OnConflictStrategy.IGNORE) suspend fun insertIfAbsent(item: ServiceEntity): Long
     @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun insert(item: ServiceEntity)
     @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun insertAll(items: List<ServiceEntity>)
     @Update suspend fun update(item: ServiceEntity)
@@ -112,6 +124,7 @@ interface FuelDao {
     fun observeTotalCost(prefix: String): Flow<Double>
     @Query("SELECT COALESCE(SUM(liters),0) FROM fuels WHERE date LIKE :prefix || '%'")
     fun observeTotalLiters(prefix: String): Flow<Double>
+    @Insert(onConflict = OnConflictStrategy.IGNORE) suspend fun insertIfAbsent(item: FuelEntity): Long
     @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun insert(item: FuelEntity)
     @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun insertAll(items: List<FuelEntity>)
     @Query("DELETE FROM fuels WHERE id = :id") suspend fun deleteById(id: String)
@@ -130,6 +143,7 @@ interface MaintenanceDao {
     fun observeTotalCost(prefix: String): Flow<Double>
     @Query("SELECT * FROM maintenances WHERE type = :type ORDER BY km DESC LIMIT 1")
     suspend fun latestByType(type: String): MaintenanceEntity?
+    @Insert(onConflict = OnConflictStrategy.IGNORE) suspend fun insertIfAbsent(item: MaintenanceEntity): Long
     @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun insert(item: MaintenanceEntity)
     @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun insertAll(items: List<MaintenanceEntity>)
     @Query("DELETE FROM maintenances WHERE id = :id") suspend fun deleteById(id: String)
@@ -156,6 +170,8 @@ interface PersonalExpenseDao {
     @Query("SELECT * FROM personal_expenses ORDER BY date") suspend fun allOnce(): List<PersonalExpenseEntity>
     @Query("SELECT COALESCE(SUM(amount),0) FROM personal_expenses WHERE date LIKE :prefix || '%'")
     fun observeTotal(prefix: String): Flow<Double>
+    @Query("SELECT * FROM personal_expenses WHERE id = :id") suspend fun byId(id: String): PersonalExpenseEntity?
+    @Insert(onConflict = OnConflictStrategy.IGNORE) suspend fun insertIfAbsent(item: PersonalExpenseEntity): Long
     @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun insert(item: PersonalExpenseEntity)
     @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun insertAll(items: List<PersonalExpenseEntity>)
     @Query("DELETE FROM personal_expenses WHERE id = :id") suspend fun deleteById(id: String)
@@ -244,6 +260,8 @@ interface InsuranceDao {
     suspend fun allOnce(): List<InsuranceEntity>
     @Query("SELECT * FROM insurance WHERE id = :id")
     suspend fun byId(id: String): InsuranceEntity?
+    @Query("SELECT * FROM insurance WHERE id LIKE :prefix || '%' LIMIT 2")
+    suspend fun byIdPrefix(prefix: String): List<InsuranceEntity>
     @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun insert(item: InsuranceEntity)
     @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun insertAll(items: List<InsuranceEntity>)
     @Update suspend fun update(item: InsuranceEntity)

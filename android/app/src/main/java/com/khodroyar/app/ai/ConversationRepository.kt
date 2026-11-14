@@ -2,6 +2,8 @@ package com.khodroyar.app.ai
 
 import android.content.Context
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
@@ -16,16 +18,18 @@ import java.util.UUID
 class ConversationRepository(context: Context) {
 
     private val file = File(context.applicationContext.filesDir, "ai_conversations.json")
-    private val lock = Any()
+    private companion object { val lock = Any() }
 
     suspend fun load(): List<Conversation> = withContext(Dispatchers.IO) {
         synchronized(lock) { readAll() }
     }
 
     suspend fun save(conversation: Conversation) = withContext(Dispatchers.IO) {
+        val coroutine = currentCoroutineContext()
         synchronized(lock) {
-            val trimmedMessages = conversation.messages.takeLast(AiLimits.MAX_STORED_MESSAGES)
-            val updated = conversation.copy(messages = trimmedMessages)
+            coroutine.ensureActive()
+            val trimmedMessages = conversation.messages.takeLast(AiLimits.MAX_STORED_MESSAGES).map { it.copy(text = AiTextSafety.redact(it.text)) }
+            val updated = conversation.copy(title = AiTextSafety.redact(conversation.title), messages = trimmedMessages)
             val all = readAll().filter { it.id != updated.id } + updated
             val kept = all.sortedByDescending { it.updatedAt }.take(AiLimits.MAX_STORED_CONVERSATIONS)
             writeAll(kept)
@@ -55,6 +59,7 @@ class ConversationRepository(context: Context) {
         val arr = JSONArray()
         list.forEach { c ->
             arr.put(JSONObject().apply {
+                put("mode", c.mode.name); put("accountScope", c.accountScope)
                 put("id", c.id); put("title", c.title); put("createdAt", c.createdAt); put("updatedAt", c.updatedAt)
                 put("messages", JSONArray().also { ma ->
                     c.messages.forEach { m ->
@@ -77,10 +82,11 @@ class ConversationRepository(context: Context) {
         val msgs = (0 until ma.length()).mapNotNull { i ->
             val m = ma.optJSONObject(i) ?: return@mapNotNull null
             val role = runCatching { ChatRole.valueOf(m.optString("role")) }.getOrNull() ?: return@mapNotNull null
-            ChatEntry(m.optString("id", UUID.randomUUID().toString()), role, m.optString("text", ""), m.optLong("createdAt", 0L))
+            ChatEntry(m.optString("id", UUID.randomUUID().toString()), role, AiTextSafety.redact(m.optString("text", "")), m.optLong("createdAt", 0L))
         }
         val id = o.optString("id", "")
         if (id.isBlank()) return null
-        return Conversation(id, o.optString("title", ""), o.optLong("createdAt", 0L), o.optLong("updatedAt", 0L), msgs)
+        val mode = runCatching { AiMode.valueOf(o.optString("mode", "ONLINE")) }.getOrDefault(AiMode.ONLINE)
+        return Conversation(id, AiTextSafety.redact(o.optString("title", "")), o.optLong("createdAt", 0L), o.optLong("updatedAt", 0L), msgs, mode, o.optString("accountScope", ""))
     }
 }

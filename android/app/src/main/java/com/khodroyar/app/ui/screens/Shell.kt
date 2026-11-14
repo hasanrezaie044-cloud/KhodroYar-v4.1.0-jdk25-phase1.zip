@@ -8,10 +8,7 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedContent
-import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.selection.selectable
-import androidx.compose.ui.semantics.Role
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -23,6 +20,10 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.ArrowBack
+import androidx.compose.material.icons.outlined.Add
+import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.AutoAwesome
 import androidx.compose.material.icons.outlined.ArrowForward
 import androidx.compose.material.icons.outlined.DirectionsCar
 import androidx.compose.material.icons.outlined.Menu
@@ -36,7 +37,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
@@ -45,6 +48,12 @@ import com.khodroyar.app.data.db.PersonnelEntity
 import com.khodroyar.app.data.db.ServiceEntity
 import com.khodroyar.app.data.prefs.AppSettings
 import com.khodroyar.app.data.repo.AppRepository
+import com.khodroyar.app.data.repo.EntryReceipt
+import com.khodroyar.app.data.repo.QuickKind
+import com.khodroyar.app.ai.AgentSection
+import com.khodroyar.app.automation.AutomationStore
+import com.khodroyar.app.notifications.AgentAutomationScheduler
+import com.khodroyar.app.notifications.TrafficCheckScheduler
 import com.khodroyar.app.notifications.AutoBackupScheduler
 import com.khodroyar.app.notifications.AutoServiceScheduler
 import com.khodroyar.app.notifications.Notifications
@@ -53,24 +62,10 @@ import com.khodroyar.app.ui.components.*
 import com.khodroyar.app.ui.nav.AppDestination
 import com.khodroyar.app.ui.nav.ToolDestination
 import com.khodroyar.app.ui.theme.AppDimens
-import com.khodroyar.app.ui.theme.headerBrush
+import com.khodroyar.app.ui.theme.LocalDarkTheme
 import kotlinx.coroutines.launch
 
-/**
- * Application shell: RTL layout direction, bottom navigation, the right-edge tools
- * drawer, full-screen overlays and the app-wide toast host.
- *
- * What changed here:
- *  * the floating service-registration FAB is gone — registration is a real tab with a
- *    real full-screen form ([ServiceFormScreen]);
- *  * "بیشتر" became "تنظیمات", and the tools it used to launch live in a right-edge
- *    slide-out panel that opens with a swipe (RTL puts a Material drawer on the right,
- *    and the swipe direction follows);
- *  * the top app area is a gradient header drawn *behind* the status bar, so the notch
- *    strip is part of the design instead of an empty band;
- *  * one back handler owns the whole hierarchy, so the exit confirmation only appears
- *    when back would actually leave the app.
- */
+/** RTL/LTR shell, theme-aware chrome, anchored navigation, toolkit, overlays and agent return routing. */
 @Composable
 fun CarManagerRoot(
     repository: AppRepository,
@@ -80,12 +75,25 @@ fun CarManagerRoot(
     onToggleTheme: () -> Unit = {},
 ) {
     val context = LocalContext.current
+    SystemChrome(dark = LocalDarkTheme.current)
+    com.khodroyar.app.update.BazaarUpdatePrompt()
     val scope = rememberCoroutineScope()
+    val keyboardVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
+    val focus = androidx.compose.ui.platform.LocalFocusManager.current
+    val keyboard = androidx.compose.ui.platform.LocalSoftwareKeyboardController.current
     val settings by repository.settings.collectAsState(initial = repository.settingsNow)
 
+    val agentRules by remember { AutomationStore.get(context) }.rules.collectAsState()
+    LaunchedEffect(agentRules.any { it.enabled }) { AgentAutomationScheduler.sync(context) }
+    LaunchedEffect(Unit) { AgentAutomationScheduler.checkNow(context); TrafficCheckScheduler.sync(context) }
+    var agentReturn by remember { mutableStateOf(false) }
     var destination by remember { mutableStateOf(AppDestination.HOME) }
+    var companyReportOpen by remember { mutableStateOf(false) }
     var tool by remember { mutableStateOf<ToolDestination?>(null) }
     var overlay by remember { mutableStateOf<Overlay?>(null) }
+    val recentEntry by repository.quickEntries.receipt.collectAsState()
+    var pendingUndo by remember { mutableStateOf<EntryReceipt?>(null) }
+    var undoBusy by remember { mutableStateOf(false) }
     // Calendar quick links (fuel / repairs / expense for a given day): the tool opens
     // straight on its entry form with that date, and returns to the calendar afterwards.
     var quick by remember { mutableStateOf<QuickEntry?>(null) }
@@ -95,7 +103,13 @@ fun CarManagerRoot(
         val target = launchTarget ?: return@LaunchedEffect
         overlay = null
         quick = null
-        when (target) {
+        companyReportOpen = false
+        val maintenanceType = Notifications.maintenanceTypeFromTarget(target)
+        if (maintenanceType != null) {
+            tool = ToolDestination.MAINTENANCE
+            overlay = Overlay.FastEntry(QuickKind.MAINTENANCE, maintenanceType.wire)
+        } else when (target) {
+            Notifications.TARGET_AGENT -> tool = ToolDestination.AI_ASSISTANT
             Notifications.TARGET_MAINTENANCE -> tool = ToolDestination.MAINTENANCE
             Notifications.TARGET_FINANCE -> tool = ToolDestination.FINANCE
             Notifications.TARGET_INSURANCE -> tool = ToolDestination.INSURANCE
@@ -109,21 +123,20 @@ fun CarManagerRoot(
         onLaunchHandled()
     }
     var showExitDialog by remember { mutableStateOf(false) }
-    var tutorialStep by remember { mutableStateOf<Int?>(null) }
-    var tutorialKey by remember { mutableStateOf<String?>(null) }
-    val tutorialPrefs = remember {
-        context.getSharedPreferences("car_manager_onboarding", Context.MODE_PRIVATE)
-    }
-    LaunchedEffect(Unit) {
-        if (!tutorialPrefs.getBoolean("tab_home", false)) {
-            tutorialKey = "tab_home"
-            tutorialStep = 0
-        }
-    }
-
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     val snackbarHost = remember { SnackbarHostState() }
     val toast = rememberToastController(snackbarHost)
+
+    // Complete an interrupted Room/preferences handoff before the next quick/manual writer.
+    LaunchedEffect(repository) {
+        try { repository.quickEntries.recover() }
+        catch (e: kotlinx.coroutines.CancellationException) { throw e }
+        catch (_: Exception) { toast.show("ثبت سریع قبلی کامل بررسی نشد؛ رکورد و کیلومتر خودرو را بررسی کن.") }
+    }
+    val mileageNotice by repository.quickEntries.recoveryNotice.collectAsState()
+    LaunchedEffect(mileageNotice) {
+        mileageNotice?.let { toast.show(it); repository.quickEntries.acknowledgeRecoveryNotice() }
+    }
 
     // Reminder schedule follows the switches, and is re-synced on every cold start.
     LaunchedEffect(settings.anyReminderEnabled) { ReminderScheduler.sync(context) }
@@ -150,16 +163,17 @@ fun CarManagerRoot(
         }
     }
 
+    val assistantOpen = overlay == null && tool == ToolDestination.AI_ASSISTANT
+
     val title = when {
         overlay != null -> overlay!!.title
         tool != null -> if (settings.language == AppSettings.LANGUAGE_EN) tool!!.englishTitle else tool!!.title
+        companyReportOpen && destination == AppDestination.REPORTS -> if (settings.language == AppSettings.LANGUAGE_EN) "Company service counts" else "مقایسهٔ کارکرد شرکت"
         else -> if (settings.language == AppSettings.LANGUAGE_EN) destination.englishTitle else destination.title
     }
     val subtitle = when {
-        overlay != null -> if (settings.language == AppSettings.LANGUAGE_EN) "Back" else "بازگشت با دکمه بازگشت"
-        tool != null -> if (settings.language == AppSettings.LANGUAGE_EN) tool!!.englishSubtitle else tool!!.subtitle
-        destination == AppDestination.HOME -> todayLabel()
-        else -> if (settings.language == AppSettings.LANGUAGE_EN) "KhodroYar · Offline" else "مدیریت خودرو  ·  آفلاین"
+        overlay == null && tool == null && destination == AppDestination.HOME -> todayLabel()
+        else -> ""
     }
 
     CompositionLocalProvider(
@@ -176,11 +190,10 @@ fun CarManagerRoot(
                 ToolsDrawer(
                     active = tool,
                     onPick = { picked ->
+                        agentReturn = false
                         quick = null
                         tool = picked
                         overlay = null
-                        val key = "tool_${picked.name.lowercase()}"
-                        if (!tutorialPrefs.getBoolean(key, false)) { tutorialKey = key; tutorialStep = 0 }
                         scope.launch { drawerState.close() }
                     },
                     onClose = { scope.launch { drawerState.close() } },
@@ -194,29 +207,28 @@ fun CarManagerRoot(
                     SnackbarHost(
                         hostState = snackbarHost,
                         modifier = Modifier
-                            .fillMaxWidth()
-                            .statusBarsPadding()
-                            .padding(top = 8.dp),
+                            .fillMaxWidth(),
                     ) { data ->
                         Snackbar(
-                            snackbarData = data,
-                            modifier = Modifier.padding(horizontal = 12.dp),
-                        )
+                            modifier = Modifier.padding(horizontal = 12.dp).testTag("app-snackbar"),
+                            dismissAction = {
+                                IconButton(onClick = { data.dismiss() }, modifier = Modifier.testTag("dismiss-snackbar")) {
+                                    Icon(Icons.Outlined.Close, tr("بستن پیام", "Dismiss message"))
+                                }
+                            },
+                        ) { Text(data.visuals.message) }
                     }
                 },
                 bottomBar = {
-                    AppBottomBar(
+                    if (!keyboardVisible && overlay == null && !assistantOpen) AppBottomBar(
                         selected = destination,
                         toolActive = tool != null,
                         onSelect = { picked ->
+                            agentReturn = false
                             destination = picked
+                            companyReportOpen = false
                             tool = null
                             overlay = null
-                            val key = "tab_${picked.name.lowercase()}"
-                            if (!tutorialPrefs.getBoolean(key, false)) {
-                                tutorialKey = key
-                                tutorialStep = 0
-                            }
                         },
                     )
                 },
@@ -225,25 +237,45 @@ fun CarManagerRoot(
                     Modifier
                         .fillMaxSize()
                         .padding(padding)
-                        .imePadding(),
+                        .consumeWindowInsets(padding)
+                        // Consume Scaffold's bar once; overlays have no bottom bar and
+                        // still need gesture/three-button navigation protection. union
+                        // takes max(IME, navigation), never adds both heights.
+                        .windowInsetsPadding(WindowInsets.systemBars.only(WindowInsetsSides.Horizontal + WindowInsetsSides.Bottom).union(WindowInsets.ime)),
                 ) {
-                    AppTopBar(
+                    if (!assistantOpen) AppTopBar(
                         title = title,
                         subtitle = subtitle,
                         privacyMode = settings.privacyMode,
-                        showBack = overlay != null || tool != null,
-                        onBack = { if (overlay != null) overlay = null else tool = null },
+                        showBack = overlay != null || tool != null || companyReportOpen || agentReturn,
+                        onBack = {
+                            when {
+                                keyboardVisible -> { focus.clearFocus(force = true); keyboard?.hide() }
+                                overlay is Overlay.FastEntry -> (context as? androidx.activity.ComponentActivity)?.onBackPressedDispatcher?.onBackPressed()
+                                agentReturn -> { overlay = null; tool = ToolDestination.AI_ASSISTANT; agentReturn = false }
+                                overlay != null -> overlay = null
+                                tool != null -> tool = null
+                                else -> companyReportOpen = false
+                            }
+                        },
                         onOpenTools = { scope.launch { drawerState.open() } },
                         onSearch = { overlay = Overlay.Search },
+                        onQuick = { overlay = Overlay.FastEntry() },
                     )
                     AnimatedContent(
-                        targetState = (overlay ?: tool ?: destination) as Any,
+                        targetState = (overlay ?: tool ?: if (companyReportOpen && destination == AppDestination.REPORTS) CompanyReportRoute else destination) as Any,
                         transitionSpec = { fadeIn(tween(180)) togetherWith fadeOut(tween(140)) },
                         label = "screen",
                         modifier = Modifier.fillMaxSize(),
                     ) { target ->
                         when (target) {
                             /* ------------------------------------------- overlays */
+                            is Overlay.FastEntry -> key(target.kind, target.maintenanceType, target.editing?.revision) {
+                                QuickEntryScreen(repository, initialKind = target.kind,
+                                    initialMaintenanceType = target.maintenanceType, editing = target.editing,
+                                    onFullService = { date -> overlay = Overlay.NewServiceOn(date) },
+                                    onDone = { overlay = null })
+                            }
                             is Overlay.EditService -> ServiceFormScreen(
                                 repository = repository,
                                 initialDate = target.service.date,
@@ -267,6 +299,7 @@ fun CarManagerRoot(
                             )
 
                             /* ---------------------------------------------- tools */
+                            CompanyReportRoute -> WorkReportScreen()
                             ToolDestination.FUEL -> FuelScreen(
                                 repository,
                                 quickDate = quick?.takeIf { it.tool == ToolDestination.FUEL }?.date,
@@ -285,7 +318,27 @@ fun CarManagerRoot(
                             ToolDestination.RATES -> RatesScreen(repository)
                             ToolDestination.INSURANCE -> InsuranceScreen(repository)
                             ToolDestination.TRAFFIC -> TrafficAssistantScreen(repository)
-                            ToolDestination.AI_ASSISTANT -> AiAssistantScreen()
+                            ToolDestination.AI_ASSISTANT -> AiAssistantScreen(onBack = { agentReturn = false; tool = null }, onNavigate = { section ->
+                                overlay = null
+                                quick = null
+                                agentReturn = true
+                                companyReportOpen = false
+                                when (section) {
+                                    AgentSection.HOME -> { tool = null; destination = AppDestination.HOME }
+                                    AgentSection.SERVICES -> { tool = null; destination = AppDestination.SERVICES }
+                                    AgentSection.CALENDAR -> { tool = null; destination = AppDestination.CALENDAR }
+                                    AgentSection.REPORTS -> { tool = null; destination = AppDestination.REPORTS }
+                                    AgentSection.SETTINGS -> { tool = null; destination = AppDestination.SETTINGS }
+                                    AgentSection.FINANCE -> tool = ToolDestination.FINANCE
+                                    AgentSection.FUEL -> tool = ToolDestination.FUEL
+                                    AgentSection.MAINTENANCE -> tool = ToolDestination.MAINTENANCE
+                                    AgentSection.INSURANCE -> tool = ToolDestination.INSURANCE
+                                    AgentSection.RATES -> tool = ToolDestination.RATES
+                                    AgentSection.TRAFFIC -> tool = ToolDestination.TRAFFIC
+                                    AgentSection.SEARCH -> overlay = Overlay.Search
+                                    AgentSection.WORK_REPORT -> { tool = null; destination = AppDestination.REPORTS; companyReportOpen = true }
+                                }
+                            })
 
                             /* ----------------------------------------------- tabs */
                             AppDestination.HOME -> DashboardScreen(
@@ -298,6 +351,13 @@ fun CarManagerRoot(
                                     repository.updateSettings { it.copy(privacyMode = !it.privacyMode) }
                                 },
                                 onOpenTraffic = { tool = ToolDestination.TRAFFIC },
+                                onAddService = { overlay = Overlay.FastEntry() },
+                                recentEntry = recentEntry,
+                                onEditQuick = { recentEntry?.let { overlay = Overlay.FastEntry(it.draft.kind, editing = it) } },
+                                onUndoQuick = { pendingUndo = recentEntry },
+                                onRecordMaintenance = { type -> overlay = Overlay.FastEntry(QuickKind.MAINTENANCE, type.wire) },
+                                onOpenMaintenance = { tool = ToolDestination.MAINTENANCE },
+                                onOpenAssistant = { agentReturn = false; tool = ToolDestination.AI_ASSISTANT },
                             )
                             AppDestination.SERVICES -> ServicesScreen(repository)
                             AppDestination.CALENDAR -> CalendarScreen(
@@ -308,7 +368,7 @@ fun CarManagerRoot(
                                 onQuickExpense = { date -> quick = QuickEntry(ToolDestination.FINANCE, date); tool = ToolDestination.FINANCE },
                                 onEditService = { overlay = Overlay.EditService(it) },
                             )
-                            AppDestination.REPORTS -> ReportsScreen(repository)
+                            AppDestination.REPORTS -> ReportsScreen(repository, onOpenService = { overlay = Overlay.EditService(it) }, onWorkReport = { companyReportOpen = true })
                             AppDestination.SETTINGS -> SettingsScreen(repository, settings, onToggleTheme)
                             else -> DashboardScreen(
                                 repository = repository,
@@ -320,6 +380,13 @@ fun CarManagerRoot(
                                     repository.updateSettings { it.copy(privacyMode = !it.privacyMode) }
                                 },
                                 onOpenTraffic = { tool = ToolDestination.TRAFFIC },
+                                onAddService = { overlay = Overlay.FastEntry() },
+                                recentEntry = recentEntry,
+                                onEditQuick = { recentEntry?.let { overlay = Overlay.FastEntry(it.draft.kind, editing = it) } },
+                                onUndoQuick = { pendingUndo = recentEntry },
+                                onRecordMaintenance = { type -> overlay = Overlay.FastEntry(QuickKind.MAINTENANCE, type.wire) },
+                                onOpenMaintenance = { tool = ToolDestination.MAINTENANCE },
+                                onOpenAssistant = { agentReturn = false; tool = ToolDestination.AI_ASSISTANT },
                             )
                         }
                     }
@@ -332,56 +399,37 @@ fun CarManagerRoot(
          * while the user is merely navigating: it is the last branch, reached only when
          * nothing is open and we are already on the home tab.
          */
-        BackHandler {
+        BackHandler(enabled = overlay !is Overlay.FastEntry || drawerState.isOpen) {
             when {
+                keyboardVisible -> { focus.clearFocus(force = true); keyboard?.hide() }
                 drawerState.isOpen -> scope.launch { drawerState.close() }
+                agentReturn -> { overlay = null; tool = ToolDestination.AI_ASSISTANT; agentReturn = false }
                 overlay != null -> overlay = null
                 tool != null -> tool = null
+                companyReportOpen -> companyReportOpen = false
                 destination != AppDestination.HOME -> destination = AppDestination.HOME
                 else -> showExitDialog = true
             }
         }
 
-        tutorialStep?.let { step ->
-            val key = tutorialKey ?: "tab_home"
-            val fa = when (key) {
-                "tab_home" -> listOf("خانه", "اینجا خلاصه وضعیت روز، درآمد، کیلومتر، ساعت، تعداد سرویس و وضعیت تعویض روغن را می‌بینید.")
-                "tab_services" -> listOf("ثبت سرویس", "تاریخ، ساعت شروع، مسیر، کیلومتر و ساعت کار را وارد کنید؛ نوع سرویس از روی تاریخ (تعطیل)، ساعت و شماره درخواست خودکار تشخیص داده می‌شود.")
-                "tab_calendar" -> listOf("تقویم", "روز موردنظر را انتخاب کنید تا سرویس‌های همان روز را ببینید و ویرایش یا ثبت کنید.")
-                "tab_reports" -> listOf("گزارش", "گزارش‌های دوره‌ای و خروجی Excel/PDF از اطلاعات ثبت‌شده را اینجا مشاهده کنید.")
-                "tab_settings" -> listOf("تنظیمات", "ظاهر، زبان، هدف درآمد، اعلان‌ها، پشتیبان‌گیری، پرسنل و امنیت را از این بخش مدیریت کنید.")
-                "tool_fuel" -> listOf("سوخت", "سوخت‌گیری را ثبت کنید؛ مبلغ و لیترها برای محاسبه هزینه‌ها در داشبورد استفاده می‌شوند.")
-                "tool_finance" -> listOf("مالی و وام", "وام، اقساط، خرید و درآمد شخصی را ثبت و وضعیت اقساط را مدیریت کنید.")
-                "tool_maintenance" -> listOf("تعمیرات و تعویض روغن", "کیلومتر فعلی و کیلومتر بعدی روغن را ثبت کنید؛ برنامه با سرویس‌های ثبت‌شده موعد هشدار را تشخیص می‌دهد.")
-                "tool_rates" -> listOf("نرخ‌ها", "نرخ‌های هر سال را وارد کنید. تغییر نرخ فقط روی محاسبات همان سال اثر می‌گذارد.")
-                "tool_ai_assistant" -> listOf("دستیار هوشمند", "با دستیار گفتگو کنید، گزارش بگیرید یا ثبت هزینه و سرویس را بخواهید. هر ثبت، ویرایش یا حذف فقط پس از تأیید شما انجام می‌شود.")
-                else -> listOf("آموزش", "این بخش برای مدیریت اطلاعات خودرو است.")
-            }
-            val en = when (key) {
-                "tab_home" -> listOf("Home", "See today's summary, income, mileage, hours, service count and oil-change status.")
-                "tab_services" -> listOf("Add Service", "Enter date, start time, route, mileage and work hours; the service type is detected automatically from the date (holiday), time and request number.")
-                "tab_calendar" -> listOf("Calendar", "Select a day to view, edit or add services for that date.")
-                "tab_reports" -> listOf("Reports", "View period reports and export your recorded data to Excel or PDF.")
-                "tab_settings" -> listOf("Settings", "Manage appearance, language, income goal, notifications, backup, personnel and security.")
-                "tool_fuel" -> listOf("Fuel", "Record refuelling; litres and costs are used in dashboard calculations.")
-                "tool_finance" -> listOf("Finance & Loans", "Record loans, installments, personal purchases and income, and manage installment status.")
-                "tool_maintenance" -> listOf("Maintenance & Oil", "Enter current and next oil-change mileage; the app uses recorded services to determine when the alert is due.")
-                "tool_rates" -> listOf("Rates", "Enter rates for each year. Changing a year's rates affects calculations for that year only.")
-                "tool_ai_assistant" -> listOf("Smart Assistant", "Chat, get reports, or ask to record expenses and services. Every save, edit or delete happens only after you confirm.")
-                else -> listOf("Tutorial", "This section helps manage your vehicle information.")
-            }
-            val titles = if (settings.language == AppSettings.LANGUAGE_EN) en else fa
-            AlertDialog(
-                onDismissRequest = { tutorialPrefs.edit().putBoolean(key, true).apply(); tutorialStep = null; tutorialKey = null },
-                title = { Text(if (settings.language == AppSettings.LANGUAGE_EN) "Tutorial: ${titles[0]}" else "آموزش ${titles[0]}") },
-                text = { Column { Text("1 / 1", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold); Spacer(Modifier.height(8.dp)); Text(titles[1]) } },
-                confirmButton = {
-                    Button(onClick = { tutorialPrefs.edit().putBoolean(key, true).apply(); tutorialStep = null; tutorialKey = null }) {
-                        Text(if (settings.language == AppSettings.LANGUAGE_EN) "Got it" else "شروع")
+        pendingUndo?.let { receipt ->
+            val undoError = tr("ثبت یا کیلومتر بعداً تغییر کرده؛ برای ایمنی چیزی برگردانده نشد. از فهرست اصلی ویرایش کن.", "Entry or mileage changed; nothing was undone. Edit it from the ledger.")
+            val undoSuccess = tr("ثبت سریع برگردانده شد", "Quick entry undone")
+            AlertDialog(onDismissRequest = { if (!undoBusy) pendingUndo = null },
+                icon = { Icon(Icons.Outlined.Close, null) },
+                title = { Text(tr("برگرداندن ثبت سریع؟", "Undo quick entry?")) },
+                text = { Text("${receipt.draft.title.ifBlank { receipt.draft.kind.label }} · ${receipt.draft.date}\n" +
+                    tr("فقط همین ثبت حذف می‌شود؛ تغییر مرتبط کیلومتر هم برمی‌گردد. قانون‌های خودکار تغییر نمی‌کنند.", "Only this entry and its associated mileage change are removed. Automation rules are unchanged.")) },
+                confirmButton = { TextButton(enabled = !undoBusy, onClick = {
+                    undoBusy = true
+                    scope.launch {
+                        try { toast.show(if (repository.quickEntries.undo(receipt)) undoSuccess else undoError); pendingUndo = null }
+                        catch (e: kotlinx.coroutines.CancellationException) { throw e }
+                        catch (_: Exception) { toast.show(undoError); pendingUndo = null }
+                        finally { undoBusy = false }
                     }
-                },
-                dismissButton = { TextButton(onClick = { tutorialPrefs.edit().putBoolean(key, true).apply(); tutorialStep = null; tutorialKey = null }) { Text(if (settings.language == AppSettings.LANGUAGE_EN) "Skip" else "رد کردن") } },
-            )
+                }, colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error), modifier = Modifier.testTag("confirm-quick-undo")) { Text(tr("تأیید برگرداندن", "Confirm undo")) } },
+                dismissButton = { TextButton(enabled = !undoBusy, onClick = { pendingUndo = null }) { Text(tr("انصراف", "Cancel")) } })
         }
 
         if (showExitDialog) {
@@ -404,6 +452,10 @@ fun CarManagerRoot(
 /** Full-screen panels that sit above the tab content. */
 sealed interface Overlay {
     val title: String
+
+    data class FastEntry(val kind: QuickKind = QuickKind.EXPENSE, val maintenanceType: String? = null, val editing: EntryReceipt? = null) : Overlay {
+        override val title: String get() = "ثبت سریع"
+    }
 
     data class EditService(val service: ServiceEntity) : Overlay {
         override val title: String get() = "ویرایش سرویس"
@@ -433,219 +485,91 @@ private fun todayLabel(): String {
 
 /* ------------------------------------------------------------------- top bar */
 
-/**
- * Status-bar-aware header.
- *
- * The gradient fills the whole top area including the cutout/notch strip
- * ([Modifier.statusBarsPadding] insets only the *content*), so the camera area reads as
- * part of the app. The gradient is dark in both themes, which keeps the system clock,
- * battery and signal icons legible — light status-bar icons are requested in
- * `MainActivity`. Nothing about the system bar's behaviour is overridden.
- */
+/** A quiet, theme-aware toolbar. Insets and icon contrast follow the actual surface. */
 @Composable
 private fun AppTopBar(
-    title: String,
-    subtitle: String,
-    privacyMode: Boolean,
-    showBack: Boolean,
-    onBack: () -> Unit,
-    onOpenTools: () -> Unit,
-    onSearch: (() -> Unit)? = null,
+    title: String, subtitle: String, privacyMode: Boolean, showBack: Boolean,
+    onBack: () -> Unit, onOpenTools: () -> Unit, onSearch: (() -> Unit)? = null, onQuick: (() -> Unit)? = null,
 ) {
-    Box(
-        Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(bottomStart = 30.dp, bottomEnd = 30.dp))
-            .background(headerBrush())
-    ) {
-        Row(
-            Modifier
-                .fillMaxWidth()
-                .statusBarsPadding()
-                .padding(start = 14.dp, end = 14.dp, top = 12.dp, bottom = 20.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            if (showBack) {
-                IconButton(onClick = onBack) {
-                    Icon(Icons.Outlined.ArrowForward, "بازگشت", tint = Color.White)
-                }
-            } else {
-                Surface(
-                    shape = CircleShape,
-                    color = Color.White.copy(alpha = 0.16f),
-                    modifier = Modifier.padding(start = 4.dp),
-                ) {
-                    Icon(
-                        Icons.Outlined.DirectionsCar, null,
-                        tint = Color.White,
-                        modifier = Modifier.padding(9.dp).size(20.dp),
-                    )
+    Surface(color = MaterialTheme.colorScheme.background) {
+        Row(Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 12.dp, vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            Surface(shape = RoundedCornerShape(14.dp), color = MaterialTheme.colorScheme.surfaceContainerLowest,
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) {
+                IconButton(onClick = if (showBack) onBack else onOpenTools) {
+                    Icon(if (showBack) Icons.AutoMirrored.Outlined.ArrowBack else Icons.Outlined.Menu,
+                        if (showBack) tr("بازگشت", "Back") else tr("ابزارها", "Tools"), modifier = Modifier.size(22.dp))
                 }
             }
-            Column(Modifier.weight(1f).padding(horizontal = 10.dp)) {
-                Text(
-                    title,
-                    color = Color.White,
-                    style = MaterialTheme.typography.titleLarge,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                Text(
-                    subtitle,
-                    color = Color.White.copy(alpha = 0.78f),
-                    style = MaterialTheme.typography.bodySmall,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
+            Column(Modifier.weight(1f)) {
+                Text(title, style = MaterialTheme.typography.titleLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                if (subtitle.isNotBlank()) Text(subtitle, style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
-            if (privacyMode) {
-                Icon(
-                    Icons.Outlined.VisibilityOff, "حالت حریم خصوصی روشن است",
-                    tint = Color.White,
-                    modifier = Modifier.padding(end = 6.dp).size(20.dp),
-                )
+            if (privacyMode) Icon(Icons.Outlined.VisibilityOff, tr("حالت حریم خصوصی", "Privacy mode"),
+                tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
+            if (onQuick != null && !showBack) FilledTonalIconButton(onClick = onQuick, modifier = Modifier.testTag("toolbar-quick-add")) {
+                Icon(Icons.Outlined.Add, tr("ثبت سریع", "Quick add"))
             }
-            if (onSearch != null && !showBack) {
-                IconButton(onClick = onSearch) {
-                    Icon(Icons.Outlined.Search, "جستجو", tint = Color.White)
-                }
+            if (onSearch != null && !showBack) IconButton(onClick = onSearch) {
+                Icon(Icons.Outlined.Search, tr("جستجو", "Search"), modifier = Modifier.size(23.dp))
             }
-            IconButton(onClick = onOpenTools) {
-                Icon(Icons.Outlined.Menu, "پنل ابزارها", tint = Color.White)
-            }
+            if (showBack) IconButton(onClick = onOpenTools) { Icon(Icons.Outlined.Menu, tr("ابزارها", "Tools")) }
         }
     }
 }
 
-/* ---------------------------------------------------------------- bottom bar */
-
+/** Material's native navigation handles touch targets, selection, and gesture/three-button insets. */
 @Composable
-private fun AppBottomBar(
-    selected: AppDestination,
-    toolActive: Boolean,
-    onSelect: (AppDestination) -> Unit,
-) {
-    // A floating rounded bar instead of a full-width strip: the selected destination is a
-    // filled pill (icon + label), the others are quiet icons with a small caption.
-    Box(
-        Modifier
-            .fillMaxWidth()
-            .navigationBarsPadding()
-            .padding(horizontal = 14.dp)
-            .padding(top = 6.dp, bottom = 10.dp),
-    ) {
-        Surface(
-            shape = RoundedCornerShape(30.dp),
-            color = MaterialTheme.colorScheme.surfaceContainerLowest,
-            shadowElevation = 12.dp,
-            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f)),
-            modifier = Modifier.fillMaxWidth(),
-        ) {
-            Row(
-                Modifier.padding(6.dp),
-                horizontalArrangement = Arrangement.spacedBy(4.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
+private fun AppBottomBar(selected: AppDestination, toolActive: Boolean, onSelect: (AppDestination) -> Unit) {
+    Box(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.background).navigationBarsPadding().padding(horizontal = 10.dp, vertical = 6.dp)) {
+        Surface(color = MaterialTheme.colorScheme.surfaceContainerLowest, shape = RoundedCornerShape(28.dp),
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)), shadowElevation = 2.dp) {
+            NavigationBar(containerColor = Color.Transparent, tonalElevation = 0.dp, windowInsets = WindowInsets(0, 0, 0, 0)) {
                 AppDestination.entries.forEach { item ->
-                    val isSelected = !toolActive && selected == item
-                    val title = if (LocalLanguage.current == "en") item.englishTitle else item.title
-                    val pill by animateColorAsState(
-                        if (isSelected) MaterialTheme.colorScheme.primary else Color.Transparent,
-                        label = "navPill",
-                    )
-                    val content = if (isSelected) MaterialTheme.colorScheme.onPrimary
-                    else MaterialTheme.colorScheme.onSurfaceVariant
-                    Column(
-                        Modifier
-                            .weight(1f)
-                            .clip(RoundedCornerShape(24.dp))
-                            .background(pill)
-                            .selectable(selected = isSelected, role = Role.Tab, onClick = { onSelect(item) })
-                            .heightIn(min = 52.dp)
-                            .padding(horizontal = 4.dp, vertical = 6.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.Center,
-                    ) {
-                        Icon(
-                            if (isSelected) item.selectedIcon else item.icon,
-                            title,
-                            tint = content,
-                            modifier = Modifier.size(22.dp),
-                        )
-                        Text(
-                            title,
-                            color = content,
-                            style = MaterialTheme.typography.labelSmall,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
+                    val active = !toolActive && selected == item
+                    val label = when {
+                        item == AppDestination.SERVICES -> tr("ثبت", "Add")
+                        LocalLanguage.current == "en" -> item.englishTitle
+                        else -> item.title
                     }
+                    NavigationBarItem(selected = active, onClick = { onSelect(item) },
+                        modifier = Modifier.testTag("nav-${item.name}"),
+                        icon = { Icon(if (item == AppDestination.SERVICES) Icons.Outlined.Add else if (active) item.selectedIcon else item.icon, null) },
+                        label = { Text(label, style = MaterialTheme.typography.labelSmall,
+                            fontWeight = if (active) FontWeight.Bold else FontWeight.Medium, maxLines = 2,
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center, overflow = TextOverflow.Ellipsis) },
+                        colors = NavigationBarItemDefaults.colors(
+                            indicatorColor = MaterialTheme.colorScheme.primary,
+                            selectedIconColor = MaterialTheme.colorScheme.onPrimary, selectedTextColor = MaterialTheme.colorScheme.primary,
+                            unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant, unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant))
                 }
             }
         }
     }
 }
 
-/* --------------------------------------------------------------- tools panel */
-
-/**
- * The right-edge slide-out panel. A Material modal drawer under RTL anchors to the
- * right and its swipe gesture follows, which is exactly the requested interaction:
- * drag in from the right edge, pick something, and it closes itself. Tapping the scrim
- * closes it too — that behaviour is built in.
- */
+/** Full-height toolkit; large row targets and no text clipped by fixed drawer-item heights. */
 @Composable
-private fun ToolsDrawer(
-    active: ToolDestination?,
-    onPick: (ToolDestination) -> Unit,
-    onClose: () -> Unit,
-) {
-    ModalDrawerSheet(
-        drawerContainerColor = MaterialTheme.colorScheme.surface,
-        drawerShape = RoundedCornerShape(topStart = 0.dp, bottomStart = 0.dp, topEnd = 26.dp, bottomEnd = 26.dp),
-        modifier = Modifier.widthIn(max = 330.dp),
-    ) {
-        Column(
-            Modifier
-                .fillMaxHeight()
-                .verticalScroll(rememberScrollState())
-                .statusBarsPadding()
-                .navigationBarsPadding()
-                .padding(horizontal = AppDimens.screenPadding, vertical = 14.dp),
-            verticalArrangement = Arrangement.spacedBy(AppDimens.gap),
-        ) {
+private fun ToolsDrawer(active: ToolDestination?, onPick: (ToolDestination) -> Unit, onClose: () -> Unit) {
+    ModalDrawerSheet(drawerContainerColor = MaterialTheme.colorScheme.background,
+        drawerShape = RoundedCornerShape(topEnd = 28.dp, bottomEnd = 28.dp), modifier = Modifier.widthIn(max = 350.dp).testTag("tools-drawer")) {
+        Column(Modifier.fillMaxHeight().verticalScroll(rememberScrollState()).navigationBarsPadding()
+            .padding(horizontal = 20.dp, vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Box(
-                    Modifier
-                        .size(40.dp)
-                        .clip(RoundedCornerShape(12.dp))
-                        .background(MaterialTheme.colorScheme.primaryContainer),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Icon(
-                        Icons.Outlined.DirectionsCar, null,
-                        tint = MaterialTheme.colorScheme.onPrimaryContainer,
-                        modifier = Modifier.size(22.dp),
-                    )
+                IconBadge(Icons.Outlined.DirectionsCar, size = 44.dp)
+                Column(Modifier.weight(1f).padding(horizontal = 12.dp)) {
+                    Text(tr("خودرویار", "KhodroYar"), style = MaterialTheme.typography.titleLarge)
                 }
-                Column(Modifier.weight(1f).padding(horizontal = 10.dp)) {
-                    Text(tr("پنل ابزارها", "Tools panel"), style = MaterialTheme.typography.titleLarge)
-                }
+                IconButton(onClick = onClose) { Icon(Icons.Outlined.Close, tr("بستن پنل", "Close tools")) }
             }
-            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+            Spacer(Modifier.height(8.dp))
+            Text(tr("ابزارهای شما", "Your toolkit"), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
             ToolDestination.entries.forEach { item ->
-                // ActionRow instead of NavigationDrawerItem: the Material item clamps its
-                // own height, which clips the two-line Persian labels.
-                ActionRow(
-                    title = if (LocalLanguage.current == "en") item.englishTitle else item.title,
-                    subtitle = if (LocalLanguage.current == "en") item.englishSubtitle else item.subtitle,
-                    icon = item.icon,
-                    trailing = if (item == active) "فعال" else "",
-                    onClick = { onPick(item) },
-                )
+                ActionRow(title = if (LocalLanguage.current == "en") item.englishTitle else item.title,
+                    subtitle = "",
+                    icon = item.icon, trailing = if (item == active) tr("فعال", "Active") else "", onClick = { onPick(item) })
             }
-            Spacer(Modifier.weight(1f))
-            TextButton(onClick = onClose, modifier = Modifier.fillMaxWidth()) { Text(tr("بستن پنل", "Close panel")) }
         }
     }
 }
@@ -660,3 +584,6 @@ fun themeLabel(settings: AppSettings): String = when (settings.themeMode) {
 
 /** A calendar quick link in flight: which tool to open, and the day it was tapped on. */
 private data class QuickEntry(val tool: ToolDestination, val date: String)
+
+/** A child of Reports, deliberately absent from the tools drawer. */
+private data object CompanyReportRoute

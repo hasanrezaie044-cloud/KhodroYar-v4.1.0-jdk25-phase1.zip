@@ -3,9 +3,12 @@ package com.khodroyar.app.ai
 /** One message sent to the model. [role] is "system", "user" or "assistant". */
 data class AiMessage(val role: String, val content: String)
 
+/** Local is an explicit command assistant, not a downloaded/generative language model. */
+enum class AiMode { LOCAL, ONLINE, GAPGPT_DIRECT, OPENROUTER, GEMINI, GROQ, CLOUDFLARE, CEREBRAS, HUGGING_FACE, AVALAI }
+
 enum class AiErrorKind {
     OFFLINE, TIMEOUT, NOT_CONFIGURED, DISABLED, BAD_REQUEST, UNAUTHORIZED,
-    CREDIT_EXHAUSTED, RATE_LIMITED, SERVER, UNKNOWN,
+    CREDIT_EXHAUSTED, RATE_LIMITED, NOT_FOUND, SERVER, UNKNOWN, MODEL_INVALID, GUARDRAIL_REJECTED,
 }
 
 sealed interface AiResult {
@@ -23,14 +26,15 @@ data class AiProviderStatus(
     val enabled: Boolean = false,
     val configured: Boolean = false,
     val defaultModel: String = "",
-    /** null = unknown (could not be checked), true/false = real answer from the provider's model list. */
+    /** null = unknown (could not be checked), true/false = real answer from the provider's model list or a successful completion. */
     val modelAvailable: Boolean? = null,
     val message: String = "",
+    val errorKind: AiErrorKind? = null,
 )
 
 /**
- * Provider abstraction. Today the only implementation is [GapGPTProvider]; any other
- * OpenAI-compatible service can be added behind the same backend contract.
+ * Online provider abstraction. The custom backend and direct OpenAI-compatible service
+ * have DIFFERENT endpoint/response contracts. Local mode never calls either one.
  */
 interface AIProvider {
     val name: String
@@ -54,6 +58,9 @@ data class Conversation(
     val createdAt: Long,
     val updatedAt: Long,
     val messages: List<ChatEntry>,
+    val mode: AiMode = AiMode.ONLINE,
+    /** Legacy histories without a scope are view-only, never silently reused with a new key. */
+    val accountScope: String = "",
 )
 
 object AiLimits {

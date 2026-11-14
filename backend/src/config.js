@@ -1,5 +1,7 @@
 'use strict';
 
+const { normalizeProviderBaseUrl } = require('./urls');
+
 function int(name, def, { min = 0, max = Number.MAX_SAFE_INTEGER } = {}) {
   const raw = process.env[name];
   if (raw === undefined || raw === '') return def;
@@ -14,10 +16,7 @@ function str(name, def = '') {
 }
 
 function loadConfig() {
-  const baseUrl = str('GAPGPT_BASE_URL', 'https://api.gapgpt.app/v1').replace(/\/+$/, '');
-  if (!/^https:\/\//i.test(baseUrl) && !/^http:\/\/(localhost|127\.0\.0\.1)/i.test(baseUrl)) {
-    throw new Error('GAPGPT_BASE_URL must use https:// (http only allowed for localhost tests)');
-  }
+  const baseUrl = normalizeProviderBaseUrl(str('GAPGPT_BASE_URL', 'https://api.gapgpt.app/v1'));
   const defaultModel = str('DEFAULT_MODEL', 'gpt-4o-mini');
   const allowed = str('ALLOWED_MODELS')
     .split(',')

@@ -1,707 +1,365 @@
 package com.khodroyar.app.ui.components
 
 import androidx.compose.animation.core.Animatable
-import androidx.compose.animation.core.FastOutSlowInEasing
-import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxHeight
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.BarChart
+import androidx.compose.material.icons.outlined.ShowChart
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.StrokeCap
-import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.CustomAccessibilityAction
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.customActions
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import com.khodroyar.app.core.analytics.Analytics
-import kotlin.math.atan2
-import kotlin.math.cos
-import kotlin.math.hypot
+import java.util.Locale
+import kotlin.math.abs
 import kotlin.math.min
-import kotlin.math.sin
-import kotlin.math.sqrt
 
-/**
- * Shared chart primitives for KhodroYar — no external charting library.
- * All interaction is Compose-native (tap / selection / soft animation).
- */
-
+/** Orbit charts. Native Canvas, finite geometry, real zero axes and short one-shot fades only. */
 enum class TrendMetric(val label: String, val unit: String) {
-    INCOME("درآمد", "تومان"),
-    KM("کیلومتر", "کیلومتر"),
-    HOURS("ساعت کارکرد", "ساعت"),
-    COUNT("تعداد سرویس", "سرویس"),
+    INCOME("درآمد", "تومان"), KM("کیلومتر", "کیلومتر"), HOURS("ساعت کارکرد", "ساعت"), COUNT("تعداد سرویس", "سرویس"),
 }
-
 fun Analytics.TrendPoint.metricValue(metric: TrendMetric): Double = when (metric) {
     TrendMetric.INCOME -> totalIncome.toDouble()
     TrendMetric.KM -> totalKm
     TrendMetric.HOURS -> totalHours
     TrendMetric.COUNT -> count.toDouble()
 }
-
 fun formatMetric(value: Double, metric: TrendMetric): String = when (metric) {
     TrendMetric.HOURS -> Analytics.formatHours(value)
     TrendMetric.COUNT -> Analytics.formatNumber(value.toLong())
     else -> Analytics.formatNumber(value)
 }
 
-/* ---------------------------------------------------------------- bar chart */
+@Composable
+fun InsufficientData(message: String, modifier: Modifier = Modifier) {
+    Column(modifier.fillMaxWidth().heightIn(min = 144.dp).clip(RoundedCornerShape(18.dp))
+        .background(MaterialTheme.colorScheme.surfaceContainerLow).padding(20.dp),
+        horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+        Icon(Icons.Outlined.BarChart, null, Modifier.size(28.dp), tint = MaterialTheme.colorScheme.outline)
+        Spacer(Modifier.height(10.dp))
+        Text(message, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = TextAlign.Center)
+    }
+}
 
 @Composable
 fun TrendBarChart(
-    points: List<Analytics.TrendPoint>,
-    metric: TrendMetric,
-    modifier: Modifier = Modifier,
-    barHeight: androidx.compose.ui.unit.Dp = 160.dp,
-    masked: Boolean = false,
-) {
-    val values = points.map { it.metricValue(metric) }
-    val max = values.maxOrNull()?.takeIf { it > 0.0 } ?: 1.0
-    var selected by remember { mutableStateOf<Int?>(null) }
-    val primary = MaterialTheme.colorScheme.primary
-    val mutedBar = MaterialTheme.colorScheme.outlineVariant
-    val surfaceLow = MaterialTheme.colorScheme.surfaceContainerLowest
+    points: List<Analytics.TrendPoint>, metric: TrendMetric, modifier: Modifier = Modifier,
+    barHeight: Dp = 190.dp, masked: Boolean = false,
+    timelineDirection: LayoutDirection = LocalLayoutDirection.current, showPointSelector: Boolean = true,
+) = SeriesChart(points.map { it.label }, points.map { it.metricValue(metric) }, modifier, barHeight,
+    MaterialTheme.colorScheme.primary, MaterialTheme.colorScheme.secondary, emptySet(), masked, null,
+    { formatMetric(it, metric) + " " + metric.unit }, bars = true, timelineDirection = timelineDirection, showPointSelector = showPointSelector)
 
-    Column(modifier.fillMaxWidth()) {
-        selected?.let { idx ->
-            if (idx in values.indices) {
-                ChartTooltip(
-                    title = points[idx].label,
-                    value = if (masked) "•••" else formatMetric(values[idx], metric) + " " + metric.unit,
-                )
-                Spacer(Modifier.height(8.dp))
-            }
-        }
-        Row(
-            Modifier
-                .fillMaxWidth()
-                .height(barHeight)
-                .clip(RoundedCornerShape(16.dp))
-                .background(surfaceLow)
-                .padding(horizontal = 8.dp, vertical = 10.dp),
-            verticalAlignment = Alignment.Bottom,
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-        ) {
-            points.forEachIndexed { index, _ ->
-                val raw = values[index]
-                val fraction = (raw / max).coerceIn(0.0, 1.0).toFloat()
-                val animated by animateFloatAsState(
-                    targetValue = fraction,
-                    animationSpec = tween(520, easing = FastOutSlowInEasing),
-                    label = "bar$index",
-                )
-                val isSel = selected == index
-                val isLast = index == points.lastIndex
-                Column(
-                    Modifier
-                        .weight(1f)
-                        .fillMaxHeight()
-                        .clickable { selected = if (isSel) null else index },
-                    verticalArrangement = Arrangement.Bottom,
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                ) {
-                    Box(
-                        Modifier
-                            .fillMaxWidth(if (isSel || isLast) 0.88f else 0.72f)
-                            .height((barHeight.value * 0.78f * animated).dp.coerceAtLeast(4.dp))
-                            .shadow(if (isSel) 6.dp else 0.dp, RoundedCornerShape(topStart = 10.dp, topEnd = 10.dp))
-                            .clip(RoundedCornerShape(topStart = 10.dp, topEnd = 10.dp))
-                            .background(
-                                if (raw <= 0.0) Brush.linearGradient(listOf(mutedBar, mutedBar))
-                                else Brush.verticalGradient(
-                                    listOf(
-                                        primary.copy(alpha = if (isSel) 1f else 0.95f),
-                                        primary.copy(alpha = if (isSel) 0.75f else 0.45f),
-                                    ),
-                                ),
-                            ),
-                    )
-                }
-            }
-        }
-        Spacer(Modifier.height(8.dp))
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            points.forEachIndexed { index, point ->
-                Text(
-                    point.label,
-                    modifier = Modifier.weight(1f),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = if (selected == index || index == points.lastIndex) {
-                        MaterialTheme.colorScheme.onSurface
-                    } else {
-                        MaterialTheme.colorScheme.onSurfaceVariant
-                    },
-                    textAlign = TextAlign.Center,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    fontWeight = if (selected == index) FontWeight.SemiBold else FontWeight.Normal,
-                )
-            }
-        }
-    }
-}
-
-/** Honest empty state: shown instead of inventing numbers we do not have. */
-@Composable
-fun InsufficientData(message: String, modifier: Modifier = Modifier) {
-    Box(
-        modifier
-            .fillMaxWidth()
-            .heightIn(min = 120.dp)
-            .clip(RoundedCornerShape(16.dp))
-            .background(MaterialTheme.colorScheme.surfaceContainer),
-        contentAlignment = Alignment.Center,
-    ) {
-        Text(
-            message,
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            textAlign = TextAlign.Center,
-            modifier = Modifier.padding(horizontal = 20.dp, vertical = 16.dp),
-        )
-    }
-}
-
-/* ---------------------------------------------------------------- line chart */
-
-/**
- * Smooth interactive line chart (Catmull-Rom → cubic Bézier).
- * Tap near a point to select it and show a floating tooltip.
- */
+/** Smooth segments have horizontal controls inside each interval: they cannot invent peaks/negative dips. */
 @Composable
 fun SmoothLineChart(
-    labels: List<String>,
-    values: List<Double>,
-    modifier: Modifier = Modifier,
-    height: androidx.compose.ui.unit.Dp = 210.dp,
-    lineColor: Color = MaterialTheme.colorScheme.primary,
-    markerColor: Color = MaterialTheme.colorScheme.secondary,
-    markers: Set<Int> = emptySet(),
-    masked: Boolean = false,
-    goalValue: Double? = null,
+    labels: List<String>, values: List<Double>, modifier: Modifier = Modifier, height: Dp = 220.dp,
+    lineColor: Color = MaterialTheme.colorScheme.primary, markerColor: Color = MaterialTheme.colorScheme.secondary,
+    markers: Set<Int> = emptySet(), masked: Boolean = false, goalValue: Double? = null,
     valueText: (Double) -> String = { Analytics.formatNumber(it) },
+    timelineDirection: LayoutDirection = LocalLayoutDirection.current, showPointSelector: Boolean = true,
+) = SeriesChart(labels, values, modifier, height, lineColor, markerColor, markers, masked, goalValue, valueText,
+    timelineDirection = timelineDirection, showPointSelector = showPointSelector)
+
+@Composable
+private fun SeriesChart(
+    labels: List<String>, values: List<Double>, modifier: Modifier, height: Dp,
+    lineColor: Color, markerColor: Color, markers: Set<Int>, masked: Boolean, goalValue: Double?,
+    valueText: (Double) -> String, bars: Boolean = false,
+    timelineDirection: LayoutDirection, showPointSelector: Boolean,
 ) {
-    if (values.isEmpty()) return
-    val measurer = rememberTextMeasurer()
-    val onSurface = MaterialTheme.colorScheme.onSurface
+    if (masked) {
+        InsufficientData(tr("نمودار مالی در حالت حریم خصوصی پنهان است", "Financial chart hidden in privacy mode"), modifier)
+        return
+    }
+    if (values.isEmpty() || values.none { it.isFinite() }) {
+        InsufficientData(tr("هنوز داده‌ای برای نمودار وجود ندارد", "No chart data yet"), modifier)
+        return
+    }
+    val data = remember(values) { values.map(ChartGeometry::finite) }
+    val scale = remember(data, goalValue) { ChartGeometry.scale(data, goalValue) }
+    val rtl = timelineDirection == LayoutDirection.Rtl
+    var selected by remember(labels, data) { mutableIntStateOf(data.lastIndex) }
+    val index = selected.coerceIn(data.indices)
+    val label = labels.getOrElse(index) { (index + 1).toString() }
+    val title = tr("نمودار روند؛ برای جزئیات نقطه‌ای را لمس کنید", "Trend chart; tap a point for details")
+    val previousText = tr("نقطهٔ قبل", "Previous point")
+    val nextText = tr("نقطهٔ بعد", "Next point")
+    val goalText = tr("هدف", "Goal")
+    val markerText = tr("نشان رنگی: ماه دریافت وام", "Coloured marker: loan received")
+    val grid = MaterialTheme.colorScheme.outlineVariant
     val muted = MaterialTheme.colorScheme.onSurfaceVariant
-    val grid = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f)
+    val surface = MaterialTheme.colorScheme.surfaceContainerLowest
     val goalColor = MaterialTheme.colorScheme.tertiary
-    val surface = MaterialTheme.colorScheme.surface
-    val surfaceLow = MaterialTheme.colorScheme.surfaceContainerLowest
-    val calloutStyle = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Medium)
-    val dataMax = values.maxOrNull()?.takeIf { it > 0.0 } ?: 1.0
-    val maxValue = maxOf(dataMax, goalValue?.takeIf { it > 0.0 } ?: 0.0).takeIf { it > 0.0 } ?: 1.0
-    val maxIndex = values.indices.maxByOrNull { values[it] } ?: 0
-    var selected by remember(labels, values) { mutableStateOf<Int?>(null) }
-
+    val measurer = rememberTextMeasurer()
+    val axisStyle = MaterialTheme.typography.labelSmall
+    val axisUnits = listOf(tr("هزار", "K"), tr("میلیون", "M"), tr("میلیارد", "B"))
+    val axisLabels = remember(scale, axisStyle, axisUnits, measurer) {
+        scale.ticks.map { measurer.measure(compactAxis(it, axisUnits), axisStyle, maxLines = 1) }
+    }
+    // Units are on each tick, not a permanent explanatory paragraph below the plot.
+    // The same measured gutter is used by drawing and hit-testing, including large fonts.
+    val axisGutter = with(LocalDensity.current) { (axisLabels.maxOf { it.size.width }).toDp() + 12.dp }.coerceIn(40.dp, 96.dp)
     val reveal = remember { Animatable(0f) }
-    LaunchedEffect(values) {
-        reveal.snapTo(0f)
-        reveal.animateTo(1f, tween(640, easing = FastOutSlowInEasing))
-    }
+    LaunchedEffect(data) { reveal.snapTo(0f); reveal.animateTo(1f, tween(360)) }
+    val visibleLabels = remember(data.size) { ChartGeometry.visibleLabels(data.size) }
 
-    Column(modifier.fillMaxWidth()) {
-        selected?.let { idx ->
-            if (idx in values.indices) {
-                ChartTooltip(
-                    title = labels.getOrElse(idx) { "" },
-                    value = if (masked) "•••" else valueText(values[idx]),
-                )
-                Spacer(Modifier.height(8.dp))
+    Column(modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        // Reserved space avoids a layout jump when a user changes selection.
+        Surface(shape = RoundedCornerShape(16.dp), color = lineColor.copy(alpha = 0.06f)) {
+            Row(Modifier.fillMaxWidth().heightIn(min = 64.dp).padding(horizontal = 12.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Column(Modifier.weight(1f)) {
+                    Text(label, color = muted, style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(valueText(data[index]), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold,
+                        maxLines = 2, overflow = TextOverflow.Ellipsis)
+                }
+                IconBadge(if (bars) Icons.Outlined.BarChart else Icons.Outlined.ShowChart,
+                    tint = if (index in markers) markerColor else lineColor, size = 32.dp)
             }
         }
-        Box(
-            Modifier
-                .fillMaxWidth()
-                .height(height)
-                .clip(RoundedCornerShape(16.dp))
-                .background(surfaceLow)
-                .padding(4.dp),
-        ) {
-            Canvas(
-                Modifier
-                    .fillMaxSize()
-                    .pointerInput(values, labels) {
-                        detectTapGestures { tap ->
-                            val topPad = 28f
-                            val bottomPad = 14f
-                            val sidePad = 14f
-                            val usableW = (size.width - sidePad * 2).coerceAtLeast(1f)
-                            val usableH = (size.height - topPad - bottomPad).coerceAtLeast(1f)
-                            val step = if (values.size > 1) usableW / (values.size - 1) else 0f
-                            fun px(i: Int) = sidePad + step * i
-                            fun py(v: Double): Float {
-                                val f = (v / maxValue).coerceIn(0.0, 1.0).toFloat()
-                                return topPad + usableH * (1f - f)
-                            }
-                            var best = -1
-                            var bestDist = Float.MAX_VALUE
-                            values.indices.forEach { i ->
-                                val dx = tap.x - px(i)
-                                val dy = tap.y - py(values[i])
-                                val d = hypot(dx, dy)
-                                if (d < bestDist) {
-                                    bestDist = d
-                                    best = i
-                                }
-                            }
-                            selected = if (best >= 0 && bestDist < 56.dp.toPx()) {
-                                if (selected == best) null else best
-                            } else {
-                                null
-                            }
-                        }
-                    },
-            ) {
-                val topPad = 28f
-                val bottomPad = 14f
-                val sidePad = 14f
-                val usableW = (size.width - sidePad * 2).coerceAtLeast(1f)
-                val usableH = (size.height - topPad - bottomPad).coerceAtLeast(1f)
-                val step = if (values.size > 1) usableW / (values.size - 1) else 0f
-                val progress = reveal.value
-
-                fun px(i: Int) = sidePad + step * i
-                fun py(v: Double): Float {
-                    val f = (v / maxValue).coerceIn(0.0, 1.0).toFloat()
-                    return topPad + usableH * (1f - f)
+        Canvas(Modifier.fillMaxWidth().height(height).semantics {
+            contentDescription = title
+            stateDescription = "$label: ${valueText(data[index])}"
+            customActions = listOf(
+                CustomAccessibilityAction(previousText) { selected = (index - 1).coerceAtLeast(0); true },
+                CustomAccessibilityAction(nextText) { selected = (index + 1).coerceAtMost(data.lastIndex); true },
+            )
+        }.pointerInput(data, rtl, axisGutter) {
+            detectTapGestures { tap ->
+                val axis = axisGutter.toPx()
+                val left = if (rtl) 10.dp.toPx() else axis
+                val right = size.width - if (rtl) axis else 10.dp.toPx()
+                val inset = if (bars) 14.dp.toPx() else 0f
+                ChartGeometry.nearestIndex((tap.x - left - inset) / (right - left - 2 * inset).coerceAtLeast(1f), data.size, rtl)?.let { selected = it }
+            }
+        }.pointerInput(data, rtl, axisGutter, bars) {
+            fun selectAt(x: Float) {
+                val axis = axisGutter.toPx()
+                val left = if (rtl) 10.dp.toPx() else axis
+                val right = size.width - if (rtl) axis else 10.dp.toPx()
+                val inset = if (bars) 14.dp.toPx() else 0f
+                ChartGeometry.nearestIndex((x - left - inset) / (right - left - 2 * inset).coerceAtLeast(1f), data.size, rtl)?.let { selected = it }
+            }
+            detectHorizontalDragGestures(onDragStart = { selectAt(it.x) }) { change, _ ->
+                change.consume(); selectAt(change.position.x)
+            }
+        }) {
+            val axis = axisGutter.toPx()
+            val left = if (rtl) 10.dp.toPx() else axis
+            val right = size.width - if (rtl) axis else 10.dp.toPx()
+            val top = 12.dp.toPx()
+            val bottom = size.height - 32.dp.toPx()
+            val plotW = (right - left).coerceAtLeast(1f)
+            val plotH = (bottom - top).coerceAtLeast(1f)
+            val barInset = if (bars) 14.dp.toPx() else 0f
+            fun px(i: Int) = left + barInset + ChartGeometry.xFraction(i, data.size, rtl) * (plotW - 2 * barInset).coerceAtLeast(1f)
+            fun py(v: Double) = bottom - scale.fraction(v) * plotH
+            val zeroY = py(0.0)
+            scale.ticks.zip(axisLabels).forEach { (tick, text) ->
+                val y = py(tick)
+                drawLine(grid.copy(alpha = if (abs(tick) < scale.step * 0.01) 0.95f else 0.6f), Offset(left, y), Offset(right, y),
+                    strokeWidth = 1.dp.toPx(), pathEffect = if (tick == 0.0) null else PathEffect.dashPathEffect(floatArrayOf(3.dp.toPx(), 5.dp.toPx())))
+                drawText(text, color = muted, topLeft = Offset(if (rtl) right + 8.dp.toPx() else left - text.size.width - 8.dp.toPx(), y - text.size.height / 2))
+            }
+            goalValue?.takeIf { it.isFinite() && it > 0 }?.let { goal ->
+                drawLine(goalColor, Offset(left, py(goal)), Offset(right, py(goal)), strokeWidth = 1.5.dp.toPx(),
+                    pathEffect = PathEffect.dashPathEffect(floatArrayOf(7.dp.toPx(), 5.dp.toPx())))
+            }
+            val selectionX = px(index)
+            drawRoundRect(lineColor.copy(alpha = 0.045f), Offset((selectionX - 12.dp.toPx()).coerceAtLeast(left), top),
+                Size(min(24.dp.toPx(), right - (selectionX - 12.dp.toPx()).coerceAtLeast(left)).coerceAtLeast(1f), plotH), CornerRadius(10.dp.toPx()))
+            drawLine(lineColor.copy(alpha = 0.18f), Offset(selectionX, top), Offset(selectionX, bottom), strokeWidth = 1.dp.toPx())
+            if (bars) {
+                val width = min(28.dp.toPx(), plotW / (data.size + 1) * 0.58f)
+                data.forEachIndexed { i, v ->
+                    val y = py(v)
+                    val alpha = if (i == index) 1f else 0.30f
+                    drawRoundRect(Brush.verticalGradient(listOf(lineColor.copy(alpha = alpha), lineColor.copy(alpha = alpha * 0.55f)), top, bottom),
+                        Offset(px(i) - width / 2, min(y, zeroY)), Size(width, abs(y - zeroY).coerceAtLeast(2.dp.toPx())), CornerRadius(8.dp.toPx()))
                 }
-
-                // horizontal guides
-                for (k in 0..3) {
-                    val y = topPad + usableH * (k / 3f)
-                    drawLine(
-                        color = grid,
-                        start = Offset(sidePad, y),
-                        end = Offset(size.width - sidePad, y),
-                        strokeWidth = 1.dp.toPx(),
-                    )
-                }
-
-                // goal dashed line
-                val goal = goalValue
-                if (goal != null && goal > 0.0) {
-                    val gy = py(goal)
-                    val dash = 8.dp.toPx()
-                    var x = sidePad
-                    while (x < size.width - sidePad) {
-                        val x2 = (x + dash).coerceAtMost(size.width - sidePad)
-                        drawLine(
-                            color = goalColor.copy(alpha = 0.9f),
-                            start = Offset(x, gy),
-                            end = Offset(x2, gy),
-                            strokeWidth = 2.dp.toPx(),
-                            cap = StrokeCap.Round,
-                        )
-                        x += dash * 1.9f
-                    }
-                    val goalLabel = if (masked) "هدف" else "هدف " + valueText(goal)
-                    val gLayout = measurer.measure(text = goalLabel, style = calloutStyle)
-                    val gx = (size.width - sidePad - gLayout.size.width - 4f).coerceAtLeast(sidePad)
-                    val gly = (gy - gLayout.size.height - 6f).coerceAtLeast(2f)
-                    drawText(gLayout, color = goalColor, topLeft = Offset(gx, gly))
-                }
-
-                val pts = values.indices.map { Offset(px(it), py(values[it])) }
-
-                val line = Path()
-                line.moveTo(pts.first().x, pts.first().y)
-                if (pts.size == 1) {
-                    line.lineTo(pts.first().x, pts.first().y)
-                } else {
-                    for (i in 0 until pts.size - 1) {
-                        val p0 = pts[if (i == 0) 0 else i - 1]
-                        val p1 = pts[i]
-                        val p2 = pts[i + 1]
-                        val p3 = pts[if (i + 2 > pts.size - 1) pts.size - 1 else i + 2]
-                        val c1x = p1.x + (p2.x - p0.x) / 6f
-                        val c1y = p1.y + (p2.y - p0.y) / 6f
-                        val c2x = p2.x - (p3.x - p1.x) / 6f
-                        val c2y = p2.y - (p3.y - p1.y) / 6f
-                        line.cubicTo(c1x, c1y, c2x, c2y, p2.x, p2.y)
+            } else {
+                val points = data.indices.map { Offset(px(it), py(data[it])) }
+                val line = Path().apply {
+                    moveTo(points.first().x, points.first().y)
+                    points.zipWithNext().forEach { (a, b) ->
+                        val third = (b.x - a.x) / 3f
+                        cubicTo(a.x + third, a.y, b.x - third, b.y, b.x, b.y)
                     }
                 }
-
-                val area = Path()
-                area.addPath(line)
-                area.lineTo(pts.last().x, topPad + usableH)
-                area.lineTo(pts.first().x, topPad + usableH)
-                area.close()
-                drawPath(
-                    path = area,
-                    brush = Brush.verticalGradient(
-                        listOf(
-                            lineColor.copy(alpha = 0.32f * progress),
-                            lineColor.copy(alpha = 0.08f * progress),
-                            lineColor.copy(alpha = 0f),
-                        ),
-                        startY = topPad,
-                        endY = topPad + usableH,
-                    ),
-                )
-                drawPath(
-                    path = line,
-                    color = lineColor.copy(alpha = 0.25f + 0.75f * progress),
-                    style = Stroke(
-                        width = 3.5.dp.toPx(),
-                        cap = StrokeCap.Round,
-                        join = StrokeJoin.Round,
-                    ),
-                )
-
-                pts.forEachIndexed { i, p ->
-                    val isEdge = i == 0 || i == pts.lastIndex || i == maxIndex
-                    val isMarker = markers.contains(i)
-                    val isSel = selected == i
-                    val r = when {
-                        isSel -> 8.dp.toPx()
-                        isMarker -> 6.dp.toPx()
-                        isEdge -> 5.dp.toPx()
-                        else -> 3.5.dp.toPx()
-                    } * (0.55f + 0.45f * progress)
-                    if (isSel) {
-                        drawCircle(color = lineColor.copy(alpha = 0.18f), radius = r * 2.2f, center = p)
+                val area = Path().apply {
+                    addPath(line); lineTo(points.last().x, zeroY); lineTo(points.first().x, zeroY); close()
+                }
+                drawPath(area, Brush.verticalGradient(listOf(lineColor.copy(alpha = 0.18f * reveal.value), lineColor.copy(alpha = 0.015f)), top, bottom))
+                drawPath(line, lineColor.copy(alpha = 0.09f * reveal.value), style = Stroke(8.dp.toPx(), cap = StrokeCap.Round))
+                drawPath(line, lineColor.copy(alpha = reveal.value), style = Stroke(3.dp.toPx(), cap = StrokeCap.Round))
+                points.forEachIndexed { i, p ->
+                    val color = if (i in markers) markerColor else lineColor
+                    if (i == index) drawCircle(color.copy(alpha = 0.14f), 10.dp.toPx(), p)
+                    if (i == index || i in markers || points.size == 1) {
+                        drawCircle(surface, 5.5.dp.toPx(), p)
+                        drawCircle(color, 3.5.dp.toPx(), p)
                     }
-                    drawCircle(
-                        color = if (isMarker) markerColor else lineColor,
-                        radius = r,
-                        center = p,
-                    )
-                    drawCircle(color = surface, radius = r * 0.42f, center = p)
                 }
             }
+            visibleLabels.forEach { i ->
+                val text = measurer.measure(labels.getOrElse(i) { "${i + 1}" }, axisStyle,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis,
+                    constraints = androidx.compose.ui.unit.Constraints(maxWidth = (plotW / 4).toInt().coerceAtLeast(1)))
+                drawText(text, color = if (i == index) lineColor else muted,
+                    topLeft = Offset((px(i) - text.size.width / 2).coerceIn(left, (right - text.size.width).coerceAtLeast(left)), bottom + 9.dp.toPx()))
+            }
         }
-        Spacer(Modifier.height(8.dp))
-        androidx.compose.runtime.CompositionLocalProvider(
-            LocalLayoutDirection provides LayoutDirection.Ltr,
-        ) {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(2.dp)) {
-                labels.forEachIndexed { index, label ->
-                    Text(
-                        label,
-                        modifier = Modifier
-                            .weight(1f)
-                            .clickable {
-                                selected = if (selected == index) null else index
-                            },
-                        style = MaterialTheme.typography.labelSmall,
-                        color = when {
-                            selected == index -> lineColor
-                            markers.contains(index) -> markerColor
-                            index == labels.lastIndex -> onSurface
-                            else -> muted
-                        },
-                        textAlign = TextAlign.Center,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        fontWeight = if (selected == index) FontWeight.SemiBold else FontWeight.Normal,
-                    )
+        if (goalValue != null && goalValue > 0 && goalValue.isFinite()) Text("$goalText · ${valueText(goalValue)}",
+            style = MaterialTheme.typography.labelSmall, color = goalColor)
+        if (markers.isNotEmpty()) Text(markerText, style = MaterialTheme.typography.labelSmall, color = markerColor)
+        // Home uses touch + previous/next accessibility actions instead of a second row
+        // of duplicate labels. Other charts can retain explicit >=48dp point targets.
+        if (showPointSelector) LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth()) {
+            itemsIndexed(data) { i, v ->
+                Surface(shape = RoundedCornerShape(10.dp), color = if (i == index) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerLow) {
+                    Text(labels.getOrElse(i) { "${i + 1}" }, Modifier.selectable(i == index, role = Role.RadioButton, onClick = { selected = i })
+                        .semantics { contentDescription = "${labels.getOrElse(i) { "${i + 1}" }}: ${valueText(v)}" }
+                        .heightIn(min = 48.dp).padding(horizontal = 12.dp, vertical = 12.dp),
+                        style = MaterialTheme.typography.labelSmall, color = if (i == index) lineColor else muted)
                 }
             }
         }
     }
+}
+
+private fun compactAxis(value: Double, units: List<String>): String {
+    val v = abs(value)
+    val divisor = when { v >= 1e9 -> 1e9; v >= 1e6 -> 1e6; v >= 1e3 -> 1e3; else -> 1.0 }
+    val suffix = when (divisor) { 1e9 -> units[2]; 1e6 -> units[1]; 1e3 -> units[0]; else -> "" }
+    val number = String.format(Locale.ROOT, if (v / divisor >= 10 || v == 0.0) "%.0f" else "%.1f", value / divisor).removeSuffix(".0")
+    return if (suffix.isBlank()) number else "$number $suffix"
 }
 
 @Composable
 fun TrendLineChart(
-    points: List<Analytics.TrendPoint>,
-    metric: TrendMetric,
-    modifier: Modifier = Modifier,
-    masked: Boolean = false,
-    goalValue: Double? = null,
-) {
-    SmoothLineChart(
-        labels = points.map { it.label },
-        values = points.map { it.metricValue(metric) },
-        modifier = modifier,
-        masked = masked,
-        goalValue = goalValue,
-        valueText = { formatMetric(it, metric) },
-    )
-}
+    points: List<Analytics.TrendPoint>, metric: TrendMetric, modifier: Modifier = Modifier,
+    masked: Boolean = false, goalValue: Double? = null, height: Dp = 220.dp,
+    timelineDirection: LayoutDirection = LocalLayoutDirection.current, showPointSelector: Boolean = true,
+) = SmoothLineChart(labels = points.map { it.label }, values = points.map { it.metricValue(metric) }, modifier = modifier,
+    height = height, masked = masked, goalValue = goalValue, valueText = { formatMetric(it, metric) + " " + metric.unit },
+    timelineDirection = timelineDirection, showPointSelector = showPointSelector)
 
-/* ---------------------------------------------------------------- interactive donut */
+data class DonutSlice(val id: String, val label: String, val value: Double, val color: Color)
 
-data class DonutSlice(
-    val id: String,
-    val label: String,
-    val value: Double,
-    val color: Color,
-)
-
-/**
- * Interactive donut: tap ring or legend to select a slice.
- * Center shows label, value, percent, and total.
- */
+/** Separated thin arcs + a readable, full-width legend. No fake unit slice for empty data. */
 @Composable
 fun InteractiveDonutChart(
-    slices: List<DonutSlice>,
-    selectedId: String?,
-    onSelect: (String) -> Unit,
-    modifier: Modifier = Modifier,
-    centerTitle: String = "",
-    centerSubtitle: String = "",
-    size: androidx.compose.ui.unit.Dp = 236.dp,
+    slices: List<DonutSlice>, selectedId: String?, onSelect: (String) -> Unit, modifier: Modifier = Modifier,
+    centerTitle: String = "", centerSubtitle: String = "", size: Dp = 216.dp,
+    masked: Boolean = LocalPrivacyMode.current,
 ) {
-    val total = slices.sumOf { it.value.coerceAtLeast(0.0) }.coerceAtLeast(0.0001)
-    val selected = slices.firstOrNull { it.id == selectedId }
-    val surface = MaterialTheme.colorScheme.surface
-    val onSurface = MaterialTheme.colorScheme.onSurface
-    val muted = MaterialTheme.colorScheme.onSurfaceVariant
-    val surfaceLow = MaterialTheme.colorScheme.surfaceContainerLowest
-
+    if (masked) {
+        InsufficientData(tr("نمودار مالی در حالت حریم خصوصی پنهان است", "Financial chart hidden in privacy mode"), modifier)
+        return
+    }
+    val data = remember(slices) { slices.filter { it.id != "empty" && it.value.isFinite() && it.value > 0 } }
+    if (data.isEmpty()) {
+        InsufficientData(tr("در این بازه رکوردی ثبت نشده است", "No records in this period"), modifier)
+        return
+    }
+    val shares = remember(data) { ChartGeometry.shares(data.map { it.value }) }
+    val total = data.sumOf { it.value }
+    val selected = data.firstOrNull { it.id == selectedId }
+    val track = MaterialTheme.colorScheme.surfaceContainerHigh
+    val ringDescription = tr("نمودار سهم دسته‌ها؛ جزئیات در فهرست زیر", "Category shares; details in the list below")
     val reveal = remember { Animatable(0f) }
-    LaunchedEffect(slices.map { it.id to it.value }) {
-        reveal.snapTo(0f)
-        reveal.animateTo(1f, tween(700, easing = FastOutSlowInEasing))
-    }
-    val selBoost by animateFloatAsState(
-        targetValue = if (selectedId != null) 1f else 0f,
-        animationSpec = tween(280),
-        label = "donutSel",
-    )
-
-    Column(modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
-        Box(
-            Modifier
-                .size(size)
-                .shadow(8.dp, CircleShape, clip = false)
-                .clip(CircleShape)
-                .background(surfaceLow),
-            contentAlignment = Alignment.Center,
-        ) {
-            Canvas(
-                Modifier
-                    .fillMaxSize()
-                    .pointerInput(slices, selectedId, total) {
-                        val canvasW = this.size.width.toFloat()
-                        val canvasH = this.size.height.toFloat()
-                        detectTapGestures { tap ->
-                            val cx = canvasW / 2f
-                            val cy = canvasH / 2f
-                            val dx = tap.x - cx
-                            val dy = tap.y - cy
-                            val dist = sqrt(dx * dx + dy * dy)
-                            val outer = min(canvasW, canvasH) / 2f
-                            val stroke = outer * 0.28f
-                            val inner = outer - stroke - 6.dp.toPx()
-                            if (dist < inner * 0.55f || dist > outer - 2.dp.toPx()) {
-                                // center / outside — deselect
-                                if (selectedId != null) onSelect("")
-                                return@detectTapGestures
-                            }
-                            // angle: -90° is top, clockwise positive like drawArc
-                            var deg = Math.toDegrees(atan2(dy.toDouble(), dx.toDouble())).toFloat()
-                            // atan2: 0 = east, convert to start at top (-90)
-                            deg = (deg + 90f + 360f) % 360f
-                            var start = 0f
-                            for (slice in slices) {
-                                val sweep = ((slice.value.coerceAtLeast(0.0) / total) * 360.0).toFloat()
-                                if (deg >= start && deg < start + sweep) {
-                                    onSelect(if (slice.id == selectedId) "" else slice.id)
-                                    return@detectTapGestures
-                                }
-                                start += sweep
-                            }
-                        }
-                    },
-            ) {
-                val strokeBase = min(this.size.width, this.size.height) * 0.28f
-                val radiusPad = strokeBase / 2f + 6.dp.toPx()
-                val diam = min(this.size.width, this.size.height) - radiusPad * 2
-                val topLeft = Offset(radiusPad, radiusPad)
-                val arcSize = androidx.compose.ui.geometry.Size(diam, diam)
+    LaunchedEffect(data) { reveal.snapTo(0f); reveal.animateTo(1f, tween(360)) }
+    Column(modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        Box(Modifier.sizeIn(maxWidth = size, maxHeight = size).fillMaxWidth().aspectRatio(1f), contentAlignment = Alignment.Center) {
+            Canvas(Modifier.fillMaxSize().semantics { contentDescription = ringDescription }.pointerInput(data, selectedId) {
+                detectTapGestures { tap ->
+                    val stroke = 18.dp.toPx()
+                    val radius = min(this.size.width, this.size.height) / 2f - stroke
+                    val i = ChartGeometry.ringIndex(tap.x - this.size.width / 2f, tap.y - this.size.height / 2f, radius, stroke + 12.dp.toPx(), shares)
+                    onSelect(i?.let { if (data[it].id == selectedId) "" else data[it].id } ?: "")
+                }
+            }) {
+                val stroke = 18.dp.toPx()
+                val radius = min(this.size.width, this.size.height) / 2f - stroke
+                val topLeft = Offset(center.x - radius, center.y - radius)
+                val arcSize = Size(radius * 2, radius * 2)
+                drawCircle(track.copy(alpha = 0.35f), radius * 0.66f)
+                drawCircle(track.copy(alpha = 0.65f), radius - stroke, style = Stroke(1.dp.toPx()))
+                drawCircle(track, radius, style = Stroke(stroke))
                 var start = -90f
-                val progress = reveal.value
-                slices.forEach { slice ->
-                    val fullSweep = ((slice.value.coerceAtLeast(0.0) / total) * 360.0).toFloat()
-                    val sweep = fullSweep * progress
-                    val isSel = slice.id == selectedId
-                    val gap = 2.8f
-                    val strokeW = strokeBase * if (isSel) (1f + 0.12f * selBoost) else 1f
-                    val inset = if (isSel) 0f else 3.dp.toPx()
-                    val alpha = when {
-                        selectedId == null -> 1f
-                        isSel -> 1f
-                        else -> 0.38f
-                    }
-                    drawArc(
-                        color = slice.color.copy(alpha = alpha),
-                        startAngle = start + gap / 2f,
-                        sweepAngle = (sweep - gap).coerceAtLeast(0.4f),
-                        useCenter = false,
-                        topLeft = Offset(topLeft.x + inset, topLeft.y + inset),
-                        size = androidx.compose.ui.geometry.Size(arcSize.width - inset * 2, arcSize.height - inset * 2),
-                        style = Stroke(width = strokeW, cap = StrokeCap.Butt),
-                    )
-                    start += fullSweep
+                data.forEachIndexed { i, slice ->
+                    val sweep = (shares[i] * 360).toFloat()
+                    val gap = min(3f, sweep * 0.14f)
+                    drawArc(slice.color.copy(alpha = reveal.value * if (selected == null || selected.id == slice.id) 1f else 0.35f),
+                        start + gap / 2, (sweep - gap).coerceAtLeast(0f), false, topLeft, arcSize,
+                        style = Stroke(if (selected?.id == slice.id) stroke + 4.dp.toPx() else stroke))
+                    start += sweep
                 }
-                // inner disc
-                drawCircle(
-                    color = surface,
-                    radius = (diam / 2f) - strokeBase * 0.55f,
-                )
             }
-
-            // center labels
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                modifier = Modifier.padding(horizontal = 28.dp),
-            ) {
-                if (selected != null && selected.id != "empty") {
-                    Text(
-                        selected.label,
-                        style = MaterialTheme.typography.labelLarge,
-                        color = selected.color,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        fontWeight = FontWeight.SemiBold,
-                    )
-                    Spacer(Modifier.height(2.dp))
-                    Text(
-                        Analytics.formatNumber(selected.value),
-                        style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
-                        color = onSurface,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                    val pct = ((selected.value / total) * 100.0)
-                    Text(
-                        String.format("%.1f%%", pct),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = muted,
-                    )
-                } else {
-                    if (centerTitle.isNotBlank()) {
-                        Text(
-                            centerTitle,
-                            style = MaterialTheme.typography.labelMedium,
-                            color = muted,
-                            maxLines = 1,
-                        )
-                    }
-                    Text(
-                        centerSubtitle.ifBlank { Analytics.formatNumber(total) },
-                        style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold),
-                        color = onSurface,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis,
-                        textAlign = TextAlign.Center,
-                    )
-                    if (centerSubtitle.isNotBlank() && slices.none { it.id == "empty" }) {
-                        Spacer(Modifier.height(2.dp))
-                        Text(
-                            "مجموع " + Analytics.formatNumber(total),
-                            style = MaterialTheme.typography.labelSmall,
-                            color = muted,
-                            maxLines = 1,
-                        )
-                    }
-                }
+            Column(Modifier.fillMaxWidth(0.63f), horizontalAlignment = Alignment.CenterHorizontally) {
+                Text(selected?.label ?: centerTitle, style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2, textAlign = TextAlign.Center)
+                Text(money(selected?.value ?: total), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold,
+                    maxLines = 2, textAlign = TextAlign.Center, overflow = TextOverflow.Ellipsis)
+                Text(tr("تومان", "Toman"), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
-
-        Spacer(Modifier.height(14.dp))
-
-        // Legend — tappable chips
-        slices.chunked(3).forEach { row ->
-            Row(
-                Modifier
-                    .fillMaxWidth()
-                    .padding(bottom = 8.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
-            ) {
-                row.forEach { slice ->
-                    val selectedSlice = slice.id == selectedId
-                    val pct = ((slice.value / total) * 100.0)
-                    Surface(
-                        modifier = Modifier.clickable {
-                            onSelect(if (selectedSlice) "" else slice.id)
-                        },
-                        shape = RoundedCornerShape(20.dp),
-                        color = if (selectedSlice) {
-                            slice.color.copy(alpha = 0.20f)
-                        } else {
-                            MaterialTheme.colorScheme.surfaceContainerHighest
-                        },
-                        border = BorderStroke(
-                            1.dp,
-                            slice.color.copy(alpha = if (selectedSlice) 0.95f else 0.35f),
-                        ),
-                        shadowElevation = if (selectedSlice) 2.dp else 0.dp,
-                    ) {
-                        Row(
-                            Modifier.padding(horizontal = 10.dp, vertical = 7.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Box(
-                                Modifier
-                                    .size(8.dp)
-                                    .clip(CircleShape)
-                                    .background(slice.color),
-                            )
-                            Spacer(Modifier.width(6.dp))
-                            Text(
-                                slice.label,
-                                maxLines = 1,
-                                style = MaterialTheme.typography.labelMedium,
-                                color = if (selectedSlice) slice.color else onSurface,
-                                fontWeight = if (selectedSlice) FontWeight.SemiBold else FontWeight.Normal,
-                            )
-                            if (selectedSlice && slice.id != "empty") {
-                                Spacer(Modifier.width(4.dp))
-                                Text(
-                                    String.format("%.0f%%", pct),
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = muted,
-                                    maxLines = 1,
-                                )
-                            }
+        if (centerSubtitle.isNotBlank()) Text(centerSubtitle, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            data.forEachIndexed { i, slice ->
+                val active = selected?.id == slice.id
+                Surface(modifier = Modifier.fillMaxWidth().selectable(active, role = Role.RadioButton,
+                    onClick = { onSelect(if (active) "" else slice.id) }), shape = RoundedCornerShape(12.dp),
+                    color = if (active) slice.color.copy(alpha = 0.10f) else MaterialTheme.colorScheme.surfaceContainerLow) {
+                    Row(Modifier.padding(horizontal = 12.dp, vertical = 12.dp).heightIn(min = 28.dp),
+                        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Box(Modifier.size(9.dp).clip(RoundedCornerShape(3.dp)).background(slice.color))
+                        Column(Modifier.weight(1f)) {
+                            Text(slice.label, style = MaterialTheme.typography.labelLarge)
+                            Text("${percentage(shares[i])}٪", style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
+                        Text(money(slice.value), Modifier.weight(1f), style = MaterialTheme.typography.titleSmall,
+                            maxLines = 2, textAlign = TextAlign.End, overflow = TextOverflow.Ellipsis)
                     }
                 }
             }
@@ -709,40 +367,4 @@ fun InteractiveDonutChart(
     }
 }
 
-/* ---------------------------------------------------------------- tooltip */
-
-@Composable
-private fun ChartTooltip(
-    title: String,
-    value: String,
-    modifier: Modifier = Modifier,
-) {
-    Surface(
-        modifier = modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(12.dp),
-        color = MaterialTheme.colorScheme.inverseSurface,
-        shadowElevation = 4.dp,
-    ) {
-        Row(
-            Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween,
-        ) {
-            Text(
-                title,
-                style = MaterialTheme.typography.labelLarge,
-                color = MaterialTheme.colorScheme.inverseOnSurface.copy(alpha = 0.85f),
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f, fill = false),
-            )
-            Spacer(Modifier.width(12.dp))
-            Text(
-                value,
-                style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
-                color = MaterialTheme.colorScheme.inverseOnSurface,
-                maxLines = 1,
-            )
-        }
-    }
-}
+private fun percentage(share: Double): String = String.format(Locale.ROOT, "%.1f", share * 100).removeSuffix(".0")

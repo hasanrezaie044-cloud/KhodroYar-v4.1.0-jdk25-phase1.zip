@@ -4,6 +4,8 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import androidx.compose.foundation.background
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -34,6 +36,25 @@ import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.DeleteSweep
 import androidx.compose.material.icons.outlined.History
 import androidx.compose.material.icons.outlined.Settings
+import androidx.compose.material.icons.outlined.Visibility
+import androidx.compose.material.icons.outlined.VisibilityOff
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.ui.window.DialogProperties
+import androidx.compose.ui.window.SecureFlagPolicy
+import androidx.compose.ui.text.input.VisualTransformation
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.material.icons.automirrored.outlined.ArrowBack
+import com.khodroyar.app.ai.AIModelState
+import com.khodroyar.app.ai.AISelectionMode
+import com.khodroyar.app.ai.AIModelHealthMonitor
+import kotlinx.coroutines.delay
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import com.khodroyar.app.ai.OpenRouterFreePolicy
+import com.khodroyar.app.ai.VerifiedFreeModel
+import com.khodroyar.app.ai.PersianAgentLimits
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -45,6 +66,7 @@ import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -57,8 +79,11 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -69,35 +94,59 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.khodroyar.app.ai.AiAssistantViewModel
 import com.khodroyar.app.ai.AiErrorKind
 import com.khodroyar.app.ai.AiLimits
+import com.khodroyar.app.ai.AiMode
 import com.khodroyar.app.ai.AiSettings
 import com.khodroyar.app.ai.ChatEntry
 import com.khodroyar.app.ai.ChatRole
 import com.khodroyar.app.ai.ConnectionState
 import com.khodroyar.app.ai.Conversation
 import com.khodroyar.app.ai.PendingAction
+import com.khodroyar.app.ai.AgentSection
+import com.khodroyar.app.ai.LocalDialogueEngine
 import com.khodroyar.app.ui.components.ConfirmDialog
 import com.khodroyar.app.ui.components.FieldShape
 import com.khodroyar.app.ui.components.LocalToast
 import com.khodroyar.app.ui.components.fieldColors
+import com.khodroyar.app.ui.components.IconBadge
+import com.khodroyar.app.ui.components.SurfaceCard
+import com.khodroyar.app.ui.components.StatusPill
+import com.khodroyar.app.ui.components.tr
+import com.khodroyar.app.ui.theme.appAccents
 
 /**
  * «دستیار هوشمند»: chat with the KhodroYar AI agent. Layout direction and language come from
  * the app shell (RTL by default), so nothing here hard-codes a direction.
  */
 @Composable
-fun AiAssistantScreen(vm: AiAssistantViewModel = viewModel()) {
+fun AiAssistantScreen(vm: AiAssistantViewModel = viewModel(), onNavigate: (AgentSection) -> Unit = {}, onBack: () -> Unit = {}) {
     val context = LocalContext.current
     val toast = LocalToast.current
+    val focusManager = LocalFocusManager.current
+    val keyboard = LocalSoftwareKeyboardController.current
     val settings = vm.settings
     var input by remember { mutableStateOf("") }
     var showSettings by remember { mutableStateOf(false) }
+    var showMenu by remember { mutableStateOf(false) }
     var showHistory by remember { mutableStateOf(false) }
+    var showTasks by remember { mutableStateOf(false) }
+    var showSections by remember { mutableStateOf(false) }
+    LaunchedEffect(vm.navigation) { vm.navigation?.let { vm.consumeNavigation(); onNavigate(it) } }
     var confirmNew by remember { mutableStateOf(false) }
     var confirmClear by remember { mutableStateOf(false) }
     val listState = rememberLazyListState()
 
-    val extraRows = (if (vm.pending != null) 1 else 0) + (if (vm.busy) 1 else 0) + (if (vm.failure != null) 1 else 0)
-    LaunchedEffect(vm.messages.size, extraRows) {
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    LaunchedEffect(Unit) {
+        while (true) {
+            delay(AIModelHealthMonitor.FOREGROUND_REFRESH_MS)
+            if (lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) vm.refreshModels()
+        }
+    }
+    LaunchedEffect(showSettings) { if (showSettings) vm.refreshModels() }
+    LaunchedEffect(vm.modelState.notice) { vm.modelState.notice?.let { toast.show(it); vm.dismissModelNotice() } }
+
+    val extraRows = (if (vm.streamingText.isNotBlank()) 1 else 0) + (if (vm.pending != null) 1 else 0) + (if (vm.busy) 1 else 0) + (if (vm.failure != null) 1 else 0)
+    LaunchedEffect(vm.messages.size, extraRows, vm.streamingText.length / 120) {
         val total = vm.messages.size + extraRows
         if (total > 0) listState.animateScrollToItem(total - 1)
     }
@@ -108,25 +157,17 @@ fun AiAssistantScreen(vm: AiAssistantViewModel = viewModel()) {
         toast.show("متن کپی شد")
     }
 
-    Column(Modifier.fillMaxSize()) {
-        AssistantHeader(
-            model = vm.activeModel,
-            state = vm.connection,
-            canClear = vm.messages.isNotEmpty(),
-            onNew = { if (vm.messages.isEmpty()) vm.newChat() else confirmNew = true },
-            onHistory = { vm.loadHistory(); showHistory = true },
-            onClear = { confirmClear = true },
-            onSettings = { showSettings = true },
-        )
-        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+    Column(Modifier.fillMaxSize().imePadding().testTag("ai-agent-screen")) {
+        CompactAssistantBar(onBack = onBack, onSettings = { showMenu = true })
+        if (settings.mode == AiMode.LOCAL) AgentDraftBar(vm.localContext, onCancel = { if (vm.pending != null) vm.cancelPending() else vm.send("لغو") })
 
         Box(Modifier.weight(1f).fillMaxWidth()) {
             when {
-                !settings.enabled -> DisabledCard(onEnable = { vm.saveSettings(settings.copy(enabled = true)) })
-                vm.messages.isEmpty() && !vm.busy -> EmptyState(vm.connection) { showSettings = true }
+                !settings.enabled && vm.pending == null -> DisabledCard(onEnable = { vm.saveSettings(settings.copy(enabled = true)) })
+                vm.messages.isEmpty() && !vm.busy && vm.pending == null -> EmptyState(vm.connection, settings.mode, onSettings = { showSettings = true }, onExample = vm::send)
                 else -> LazyColumn(
                     state = listState,
-                    modifier = Modifier.fillMaxSize(),
+                    modifier = Modifier.fillMaxSize().testTag("ai-chat-list"),
                     contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 14.dp, vertical = 12.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
@@ -134,33 +175,87 @@ fun AiAssistantScreen(vm: AiAssistantViewModel = viewModel()) {
                     vm.pending?.let { p ->
                         item(key = "pending") { ConfirmCard(p, onConfirm = vm::confirmPending, onCancel = vm::cancelPending) }
                     }
-                    if (vm.busy) item(key = "busy") { TypingBubble(onStop = vm::stop) }
+                    if (vm.streamingText.isNotBlank()) item(key = "stream") {
+                        Column { StatusPill("در حال دریافت · متن مدل، نه تأیید ثبت", color = MaterialTheme.colorScheme.tertiary)
+                            Bubble(ChatEntry("stream", ChatRole.ASSISTANT, vm.streamingText, 0L), onCopy = {}) }
+                    }
+                    if (vm.busy) item(key = "busy") { TypingBubble(canStop = !vm.executingAction, status = if (vm.modelState.checking) vm.modelState.message else null, onStop = vm::stop) }
                     vm.failure?.let { f ->
-                        item(key = "failure") { ErrorCard(f.message, retryable = f.kind != AiErrorKind.NOT_CONFIGURED, onRetry = vm::retry, onSettings = { showSettings = true }) }
+                        item(key = "failure") {
+                            ErrorCard(
+                                f.message,
+                                retryable = !vm.networkBusy && f.kind !in (setOf(AiErrorKind.NOT_CONFIGURED, AiErrorKind.NOT_FOUND) + com.khodroyar.app.ai.ProviderFailurePolicy.NEVER_RETRY),
+                                onRetry = vm::retry, onSettings = { showSettings = true },
+                                onLocal = null,
+                                onDirect = null,
+                            )
+                        }
                     }
                 }
             }
         }
 
+        if (settings.mode == AiMode.LOCAL) AgentSuggestions(vm.localContext.suggestions,
+            enabled = settings.enabled && !vm.busy && !vm.savingSettings, onPick = vm::send)
         InputBar(
             value = input,
-            onChange = { input = it.take(AiLimits.MAX_USER_CHARS) },
-            enabled = settings.enabled && vm.pending == null,
+            onChange = { input = it.take(if (settings.mode == AiMode.LOCAL) AiLimits.MAX_USER_CHARS else PersianAgentLimits.USER_CHARS) },
+            maxChars = if (settings.mode == AiMode.LOCAL) AiLimits.MAX_USER_CHARS else PersianAgentLimits.USER_CHARS,
+            enabled = settings.enabled && !vm.networkBusy && (vm.pending == null || settings.mode == AiMode.LOCAL) && !vm.savingSettings,
             busy = vm.busy,
-            placeholder = if (vm.pending != null) "ابتدا عملیات بالا را تأیید یا لغو کنید" else "پیام خود را بنویسید…",
-            onSend = { vm.send(input); if (settings.consented) input = "" },
+            placeholder = if (settings.mode == AiMode.LOCAL) "پیام شما…" else if (vm.pending != null) "ابتدا عملیات بالا را تأیید یا لغو کنید" else "پیام خود را بنویسید…",
+            onSend = {
+                focusManager.clearFocus(); keyboard?.hide()
+                vm.send(input)
+                if (settings.mode == AiMode.LOCAL || settings.consented) input = ""
+            },
         )
     }
 
-    if (vm.needsConsent) ConsentDialog(onAccept = { vm.acceptConsent(); input = "" }, onDecline = vm::declineConsent)
+    if (showMenu) {
+        AlertDialog(onDismissRequest = { showMenu = false }, title = { Text("گزینه‌های گفتگو") },
+            text = { Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).testTag("ai-options-menu")) {
+                TextButton(onClick = { showMenu = false; showSettings = true }, modifier = Modifier.fillMaxWidth()) { Text("تنظیمات هوش مصنوعی و مدل‌ها") }
+                TextButton(onClick = { showMenu = false; if (vm.messages.isEmpty()) vm.newChat() else confirmNew = true }, enabled = !vm.executingAction, modifier = Modifier.fillMaxWidth()) { Text("گفتگوی نو") }
+                TextButton(onClick = { showMenu = false; vm.loadHistory(); showHistory = true }, enabled = !vm.executingAction, modifier = Modifier.fillMaxWidth()) { Text("تاریخچه") }
+                TextButton(onClick = { showMenu = false; confirmClear = true }, enabled = !vm.executingAction, modifier = Modifier.fillMaxWidth()) { Text("پاک‌سازی گفتگوها") }
+                HorizontalDivider()
+                TextButton(onClick = { showMenu = false; showTasks = true }, modifier = Modifier.fillMaxWidth()) { Text("کارهای خودکار · ${vm.automations.count { it.enabled }}") }
+                TextButton(onClick = { showMenu = false; showSections = true }, modifier = Modifier.fillMaxWidth()) { Text("بخش‌های برنامه") }
+                Text(vm.activeModel, style = MaterialTheme.typography.labelSmall.copy(textDirection = TextDirection.Content))
+            } }, confirmButton = { TextButton(onClick = { showMenu = false }) { Text("بستن") } })
+    }
 
-    if (showSettings) {
-        SettingsDialog(
+    if (showTasks) AutomationManagerSheet(vm.automations, vm.automationStorageError,
+        onToggle = { showTasks = false; vm.setAutomation(it.id, !it.enabled) },
+        onEdit = { showTasks = false; vm.editAutomation(it.id) },
+        onRemove = { showTasks = false; vm.removeAutomation(it.id) },
+        onCreate = { showTasks = false; if (settings.mode != AiMode.LOCAL) vm.useLocalMode(); vm.send("روزای کاری هزینه قهوه‌مو ثبت کن") },
+        onDismiss = { showTasks = false })
+    if (showSections) AgentSectionsSheet(onPick = { section ->
+        showSections = false
+        // Explicit user navigation, never a model-produced arbitrary Intent.
+        onNavigate(section)
+    }, onDismiss = { showSections = false })
+
+    if (vm.needsConsent) ConsentDialog(settings = settings, onAccept = { vm.acceptConsent(); input = "" }, onDecline = vm::declineConsent)
+
+    if (showSettings && !vm.needsConsent) {
+        AIProviderSettingsDialog(
             current = settings,
-            testMessage = vm.testMessage,
-            onTest = vm::testConnection,
-            onSave = { vm.saveSettings(it); vm.clearTestMessage(); showSettings = false },
-            onDismiss = { vm.clearTestMessage(); showSettings = false },
+            message = vm.testMessage,
+            hasKey = vm.hasOpenRouterKey,
+            models = vm.modelState,
+            onRefresh = vm::refreshModels,
+            saving = vm.networkBusy,
+            error = vm.settingsError, diagnostics = vm.diagnostics, ledger = vm.usageLedger,
+            onClearHistory = { showSettings = false; confirmClear = true },
+            onEvaluate = { new, key, forget -> vm.configure(new, key, forget) { vm.testModels() } },
+            onTest = { new, key, forget -> vm.configure(new, key, forget) { vm.testConnection() } },
+            onSave = { new, key, forget -> vm.configure(new, key, forget) {
+                vm.clearTestMessage(); vm.clearSettingsError(); showSettings = false
+            } },
+            onDismiss = { vm.clearTestMessage(); vm.clearSettingsError(); showSettings = false },
         )
     }
     if (showHistory) {
@@ -195,47 +290,27 @@ fun AiAssistantScreen(vm: AiAssistantViewModel = viewModel()) {
 /* -------------------------------------------------------------------- header */
 
 @Composable
-private fun AssistantHeader(
-    model: String,
-    state: ConnectionState,
-    canClear: Boolean,
-    onNew: () -> Unit,
-    onHistory: () -> Unit,
-    onClear: () -> Unit,
-    onSettings: () -> Unit,
-) {
-    Row(
-        Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 6.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Column(Modifier.weight(1f)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                val (label, color) = connectionLook(state)
-                Box(Modifier.size(9.dp).clip(CircleShape).background(color))
-                Spacer(Modifier.width(7.dp))
-                Text(label, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
-            }
-            Text(
-                "مدل فعال: " + model.ifBlank { "تعیین‌نشده" },
-                style = MaterialTheme.typography.labelSmall.copy(textDirection = TextDirection.Content),
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
-            )
+private fun CompactAssistantBar(onBack: () -> Unit, onSettings: () -> Unit) {
+    Surface(color = MaterialTheme.colorScheme.background, modifier = Modifier.testTag("ai-chat-toolbar")) {
+        Row(Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 8.dp, vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = onBack, modifier = Modifier.testTag("ai-back")) { Icon(Icons.AutoMirrored.Outlined.ArrowBack, "بازگشت") }
+            Text("دستیار هوشمند", Modifier.weight(1f), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            IconButton(onClick = onSettings, modifier = Modifier.testTag("ai-options")) { Icon(Icons.Outlined.Settings, "تنظیمات دستیار") }
         }
-        IconButton(onClick = onNew) { Icon(Icons.Outlined.Add, contentDescription = "گفتگوی جدید") }
-        IconButton(onClick = onHistory) { Icon(Icons.Outlined.History, contentDescription = "تاریخچه") }
-        IconButton(onClick = onClear, enabled = canClear) { Icon(Icons.Outlined.DeleteSweep, contentDescription = "پاک کردن تاریخچه") }
-        IconButton(onClick = onSettings) { Icon(Icons.Outlined.Settings, contentDescription = "تنظیمات دستیار") }
     }
 }
 
+@Composable
 private fun connectionLook(s: ConnectionState): Pair<String, Color> = when (s) {
-    ConnectionState.ONLINE -> "متصل" to Color(0xFF2E7D32)
-    ConnectionState.CHECKING, ConnectionState.UNKNOWN -> "در حال بررسی اتصال…" to Color(0xFFF9A825)
-    ConnectionState.OFFLINE -> "قطع (اینترنت یا سرور)" to Color(0xFFC62828)
-    ConnectionState.NOT_CONFIGURED -> "سرور تنظیم نشده" to Color(0xFF757575)
-    ConnectionState.DISABLED -> "غیرفعال از سمت سرور" to Color(0xFF757575)
-    ConnectionState.ERROR -> "سرور آماده نیست" to Color(0xFFC62828)
+    ConnectionState.READY -> "تنظیم شده — اتصال آزمایش نشده" to MaterialTheme.colorScheme.tertiary
+    ConnectionState.LOCAL -> "داخلی · آماده، بدون API" to appAccents.positive
+    ConnectionState.NEEDS_CONSENT -> "آنلاین — نیاز به رضایت ارسال داده" to MaterialTheme.colorScheme.tertiary
+    ConnectionState.ONLINE -> "متصل" to appAccents.positive
+    ConnectionState.CHECKING, ConnectionState.UNKNOWN -> "در حال بررسی اتصال…" to MaterialTheme.colorScheme.tertiary
+    ConnectionState.OFFLINE -> "قطع (اینترنت یا سرور)" to MaterialTheme.colorScheme.error
+    ConnectionState.NOT_CONFIGURED -> "اتصال یا کلید تنظیم نشده" to MaterialTheme.colorScheme.onSurfaceVariant
+    ConnectionState.DISABLED -> "غیرفعال" to MaterialTheme.colorScheme.onSurfaceVariant
+    ConnectionState.ERROR -> "هوش مصنوعی موقتاً در دسترس نیست" to MaterialTheme.colorScheme.error
 }
 
 /* ------------------------------------------------------------------- bubbles */
@@ -244,12 +319,13 @@ private fun connectionLook(s: ConnectionState): Pair<String, Color> = when (s) {
 private fun Bubble(entry: ChatEntry, onCopy: (String) -> Unit) {
     val isUser = entry.role == ChatRole.USER
     val (bg, fg) = when (entry.role) {
-        ChatRole.USER -> MaterialTheme.colorScheme.primaryContainer to MaterialTheme.colorScheme.onPrimaryContainer
-        ChatRole.ASSISTANT -> MaterialTheme.colorScheme.surfaceContainerHigh to MaterialTheme.colorScheme.onSurface
+        ChatRole.USER -> MaterialTheme.colorScheme.primary to MaterialTheme.colorScheme.onPrimary
+        ChatRole.ASSISTANT -> MaterialTheme.colorScheme.surfaceContainerLowest to MaterialTheme.colorScheme.onSurface
         ChatRole.RESULT -> MaterialTheme.colorScheme.tertiaryContainer to MaterialTheme.colorScheme.onTertiaryContainer
         ChatRole.ERROR -> MaterialTheme.colorScheme.errorContainer to MaterialTheme.colorScheme.onErrorContainer
     }
-    val shape = RoundedCornerShape(18.dp)
+    val shape = if (isUser) RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp, bottomStart = 20.dp, bottomEnd = 6.dp)
+        else RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp, bottomStart = 6.dp, bottomEnd = 20.dp)
     Row(
         Modifier.fillMaxWidth(),
         horizontalArrangement = if (isUser) Arrangement.Absolute.Right else Arrangement.Absolute.Left,
@@ -281,14 +357,14 @@ private fun Bubble(entry: ChatEntry, onCopy: (String) -> Unit) {
 }
 
 @Composable
-private fun TypingBubble(onStop: () -> Unit) {
+private fun TypingBubble(canStop: Boolean, status: String? = null, onStop: () -> Unit) {
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Absolute.Left) {
         Surface(shape = RoundedCornerShape(18.dp), color = MaterialTheme.colorScheme.surfaceContainerHigh) {
             Row(Modifier.padding(horizontal = 14.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
                 CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
                 Spacer(Modifier.width(10.dp))
-                Text("دستیار در حال پاسخ دادن است…", style = MaterialTheme.typography.bodyMedium)
-                TextButton(onClick = onStop) { Text("توقف") }
+                Text(status ?: if (canStop) "دستیار در حال پاسخ دادن است…" else "در حال انجام عملیات تأییدشده…", modifier = Modifier.weight(1f), maxLines = 3, style = MaterialTheme.typography.bodyMedium)
+                if (canStop) TextButton(onClick = onStop) { Text("توقف") }
             }
         }
     }
@@ -306,10 +382,13 @@ private fun ConfirmCard(p: PendingAction, onConfirm: () -> Unit, onCancel: () ->
     ) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text(
-                if (danger) "تأیید حذف (غیرقابل بازگشت)" else "تأیید عملیات",
+                if (danger) "تأیید حذف (غیرقابل بازگشت)" else if (p.call.spec.name.startsWith("bulk_")) "تأیید تغییرات گروهی" else "تأیید عملیات",
                 style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold, color = accent,
             )
-            Text(p.summary, style = LocalTextStyle.current.copy(textDirection = TextDirection.Content))
+            SelectionContainer {
+                Text(p.summary, modifier = Modifier.fillMaxWidth().heightIn(max = 240.dp).verticalScroll(rememberScrollState()).testTag("agent-action-summary"),
+                    style = LocalTextStyle.current.copy(textDirection = TextDirection.Content))
+            }
             p.target?.let {
                 Text("رکورد: $it", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
@@ -320,20 +399,22 @@ private fun ConfirmCard(p: PendingAction, onConfirm: () -> Unit, onCancel: () ->
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 Button(
                     onClick = onConfirm,
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier.weight(1f).heightIn(min = 48.dp).testTag("agent-confirm-action"),
                     colors = if (danger) ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error, contentColor = MaterialTheme.colorScheme.onError) else ButtonDefaults.buttonColors(),
                 ) { Text(if (danger) "بله، حذف شود" else "تأیید و انجام") }
-                OutlinedButton(onClick = onCancel, modifier = Modifier.weight(1f)) { Text("لغو") }
+                OutlinedButton(onClick = onCancel, modifier = Modifier.weight(1f).heightIn(min = 48.dp).testTag("agent-cancel-action")) { Text("لغو") }
             }
         }
     }
 }
 
 @Composable
-private fun ErrorCard(message: String, retryable: Boolean, onRetry: () -> Unit, onSettings: () -> Unit) {
+private fun ErrorCard(message: String, retryable: Boolean, onRetry: () -> Unit, onSettings: () -> Unit, onLocal: (() -> Unit)?, onDirect: (() -> Unit)?) {
     Surface(shape = RoundedCornerShape(18.dp), color = MaterialTheme.colorScheme.errorContainer) {
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text(message, color = MaterialTheme.colorScheme.onErrorContainer)
+            if (onDirect != null) Button(onClick = onDirect) { Text("تنظیم اتصال مستقیم GapGPT") }
+            if (onLocal != null) Button(onClick = onLocal) { Text("ادامه با دستیار داخلی — بدون API") }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 if (retryable) OutlinedButton(onClick = onRetry) { Text("تلاش دوباره") }
                 TextButton(onClick = onSettings) { Text("تنظیمات دستیار") }
@@ -345,24 +426,33 @@ private fun ErrorCard(message: String, retryable: Boolean, onRetry: () -> Unit, 
 /* ----------------------------------------------------------------- empty/off */
 
 @Composable
-private fun EmptyState(state: ConnectionState, onSettings: () -> Unit) {
+private fun EmptyState(state: ConnectionState, mode: AiMode, onSettings: () -> Unit, onExample: (String) -> Unit) {
     Column(
-        Modifier.fillMaxSize().padding(24.dp),
+        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
     ) {
-        Icon(Icons.Outlined.AutoAwesome, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(44.dp))
+        IconBadge(Icons.Outlined.AutoAwesome, size = 64.dp)
         Spacer(Modifier.height(12.dp))
-        Text("دستیار هوشمند خودرویار", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+        Text("چی برات انجام بدم؟", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
         Spacer(Modifier.height(6.dp))
         Text(
-            "بپرسید: «این ماه چقدر برای ماشین خرج کردم؟» یا بگویید: «امروز دو میلیون تومان هزینه تعمیر داشتم ثبتش کن».",
+            when (mode) {
+                AiMode.LOCAL -> "دستیار تخصصی خودرو · بدون API"
+                AiMode.ONLINE -> "بک‌اند خودرویار · آنلاین"
+                AiMode.GAPGPT_DIRECT -> "تاریخچهٔ اتصال قدیمی"
+                AiMode.OPENROUTER -> "گفتگوی فارسی · اتصال انتخابی شما"
+                else -> "گفتگوی فارسی · ${com.khodroyar.app.ai.AIProviderRegistry.get(mode).title}"
+            },
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
+        Spacer(Modifier.height(8.dp))
+        (if (mode == AiMode.LOCAL) LocalDialogueEngine.STARTERS + "گزارش این ماه" else listOf("گزارش این ماه", "وضعیت خودرو", "راهنما")).forEach { example ->
+            OutlinedButton(onClick = { onExample(example) }, modifier = Modifier.fillMaxWidth()) { Text(example) }
+        }
         if (state == ConnectionState.NOT_CONFIGURED) {
-            Spacer(Modifier.height(14.dp))
-            Button(onClick = onSettings) { Text("تنظیم آدرس سرور دستیار") }
+            Button(onClick = onSettings) { Text("تنظیم اتصال یا حالت داخلی") }
         }
     }
 }
@@ -372,7 +462,7 @@ private fun DisabledCard(onEnable: () -> Unit) {
     Column(Modifier.fillMaxSize().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
         Text("دستیار هوشمند غیرفعال است", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
         Spacer(Modifier.height(6.dp))
-        Text("تا فعال نکنید هیچ داده‌ای به سرور ارسال نمی‌شود.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text("گفتگو خاموش است؛ قوانین قبلاً تأییدشده مستقل‌اند. برای توقفشان از «کارهای خودکار» استفاده کنید. محاسبات داخلی API هوش مصنوعی نمی‌خواهد.", color = MaterialTheme.colorScheme.onSurfaceVariant)
         Spacer(Modifier.height(14.dp))
         Button(onClick = onEnable) { Text("فعال کردن دستیار") }
     }
@@ -384,36 +474,37 @@ private fun DisabledCard(onEnable: () -> Unit) {
 private fun InputBar(
     value: String,
     onChange: (String) -> Unit,
+    maxChars: Int,
     enabled: Boolean,
     busy: Boolean,
     placeholder: String,
     onSend: () -> Unit,
 ) {
-    Surface(color = MaterialTheme.colorScheme.surfaceContainerLowest, shadowElevation = 6.dp) {
+    Surface(color = MaterialTheme.colorScheme.background) {
         Row(
-            Modifier.fillMaxWidth().navigationBarsPadding().padding(horizontal = 12.dp, vertical = 8.dp),
+            Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp),
             verticalAlignment = Alignment.Bottom,
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             OutlinedTextField(
                 value = value,
                 onValueChange = onChange,
-                modifier = Modifier.weight(1f),
+                modifier = Modifier.weight(1f).testTag("ai-message-input"),
                 enabled = enabled,
                 placeholder = { Text(placeholder, maxLines = 1) },
                 maxLines = 5,
                 shape = FieldShape,
                 colors = fieldColors(),
                 textStyle = LocalTextStyle.current.copy(textDirection = TextDirection.Content),
-                supportingText = if (value.length > AiLimits.MAX_USER_CHARS * 8 / 10) {
-                    { Text("${value.length} / ${AiLimits.MAX_USER_CHARS}") }
+                supportingText = if (value.length > maxChars * 8 / 10) {
+                    { Text("${value.length} / ${maxChars}") }
                 } else null,
             )
             val canSend = enabled && !busy && value.isNotBlank()
             Surface(
-                shape = CircleShape,
+                shape = RoundedCornerShape(14.dp),
                 color = if (canSend) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant,
-                modifier = Modifier.padding(bottom = if (value.length > AiLimits.MAX_USER_CHARS * 8 / 10) 22.dp else 4.dp),
+                modifier = Modifier.padding(bottom = if (value.length > maxChars * 8 / 10) 22.dp else 4.dp),
             ) {
                 IconButton(onClick = onSend, enabled = canSend, modifier = Modifier.size(48.dp)) {
                     Icon(
@@ -430,82 +521,16 @@ private fun InputBar(
 /* ----------------------------------------------------------------- dialogs */
 
 @Composable
-private fun ConsentDialog(onAccept: () -> Unit, onDecline: () -> Unit) {
-    AlertDialog(
-        onDismissRequest = onDecline,
-        title = { Text("قبل از شروع") },
-        text = {
-            Text(
-                "برای پاسخ دادن، متن پیام شما و در صورت نیاز خلاصه‌ای از سوابق مرتبط (مثل مبلغ‌ها، تاریخ‌ها و عنوان هزینه‌ها) " +
-                    "به سرور دستیار و از آنجا به سرویس هوش مصنوعی (GapGPT) ارسال می‌شود. بدون موافقت شما چیزی ارسال نمی‌شود.\n\n" +
-                    "گفتگوها فقط روی همین دستگاه ذخیره می‌شوند و هر زمان می‌توانید آن‌ها را پاک یا دستیار را غیرفعال کنید. " +
-                    "موقعیت مکانی، مخاطبین، پیامک، فایل‌ها و اطلاعات پرسنل ارسال نمی‌شود. ثبت، ویرایش و حذف فقط با تأیید شما انجام می‌شود.\n\n" +
-                    "توجه: استفاده از سرویس هوش مصنوعی رایگان یا نامحدود نیست و ممکن است هزینهٔ توکن داشته باشد.",
-            )
-        },
+private fun ConsentDialog(settings: AiSettings, onAccept: () -> Unit, onDecline: () -> Unit) {
+    val provider = com.khodroyar.app.ai.AIProviderRegistry.get(settings.mode)
+    AlertDialog(onDismissRequest = onDecline, title = { Text("اجازهٔ ارسال به ${provider.title}") },
+        text = { Text("پیام و حداکثر ${settings.usage.historyMessages} پیام قبلی در سقف محلی به همین ارائه‌دهنده ارسال می‌شود. کل دیتابیس، اصل سند، عکس/PDF و اطلاعات نامرتبط ارسال نمی‌شود. کلید فقط در هدر HTTPS همان اتصال است و در تاریخچه/عیب‌یابی نمایش داده نمی‌شود.\n\n" +
+            provider.conditions + "\n\n" + provider.iran + "\n\n" +
+            "آزمون مدل اختیاری است و در گفتگوی عادی، سلام یا پس‌زمینه اجرا نمی‌شود. بررسی اتصال فقط فراداده است؛ ارزیابی جداگانه حداکثر۴ درخواست ساختگی و هشدار مصرف مستقل دارد. رایگان‌بودن نامحدود یا دائمی نیست و برنامه طرح حساب/صورتحساب ثالث را تضمین نمی‌کند. پرداخت، خرید اعتبار و ارتقای حساب انجام نمی‌شود.\n\n" +
+            "فقط خلاصهٔ لازمِ ابزارِ فعال ممکن است برای همین درخواست ارسال شود. هر ثبت/ویرایش/حذف واقعی پیش‌نمایش و تأیید جداگانه دارد. ارائه‌دهنده هرگز خودکار عوض نمی‌شود؛ تعویض اتصال/کلید رضایت تازه می‌خواهد و تاریخچهٔ اتصال دیگر خودکار ارسال نمی‌شود. امکانات داخلی و ثبت دستی آفلاین مستقل‌اند.",
+            modifier = Modifier.verticalScroll(rememberScrollState()).testTag("openrouter-consent")) },
         confirmButton = { Button(onClick = onAccept) { Text("موافقم و ادامه") } },
-        dismissButton = { TextButton(onClick = onDecline) { Text("انصراف") } },
-    )
-}
-
-@Composable
-private fun SettingsDialog(
-    current: AiSettings,
-    testMessage: String?,
-    onTest: () -> Unit,
-    onSave: (AiSettings) -> Unit,
-    onDismiss: () -> Unit,
-) {
-    var enabled by remember { mutableStateOf(current.enabled) }
-    var url by remember { mutableStateOf(current.backendUrl) }
-    var model by remember { mutableStateOf(current.model) }
-    var token by remember { mutableStateOf(current.clientToken) }
-    val ltr = LocalTextStyle.current.copy(textDirection = TextDirection.Ltr)
-
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("تنظیمات دستیار") },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("فعال بودن دستیار", Modifier.weight(1f))
-                    Switch(checked = enabled, onCheckedChange = { enabled = it })
-                }
-                OutlinedTextField(
-                    value = url, onValueChange = { url = it }, singleLine = true, shape = FieldShape, colors = fieldColors(),
-                    label = { Text("آدرس سرور دستیار (https)") }, textStyle = ltr,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                OutlinedTextField(
-                    value = model, onValueChange = { model = it }, singleLine = true, shape = FieldShape, colors = fieldColors(),
-                    label = { Text("نام مدل (خالی = پیش‌فرض سرور)") }, textStyle = ltr,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Ascii),
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                OutlinedTextField(
-                    value = token, onValueChange = { token = it }, singleLine = true, shape = FieldShape, colors = fieldColors(),
-                    label = { Text("توکن برنامه (اختیاری)") }, textStyle = ltr,
-                    visualTransformation = PasswordVisualTransformation(),
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Ascii),
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                Text(
-                    "کلید GapGPT هرگز در برنامه وارد نمی‌شود؛ فقط روی سرور شما نگهداری می‌شود.",
-                    style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                OutlinedButton(onClick = {
-                    onSave(current.copy(enabled = enabled, backendUrl = url, model = model, clientToken = token))
-                    onTest()
-                }) { Text("ذخیره و آزمایش اتصال") }
-                testMessage?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
-            }
-        },
-        confirmButton = {
-            Button(onClick = { onSave(current.copy(enabled = enabled, backendUrl = url, model = model, clientToken = token)) }) { Text("ذخیره") }
-        },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("بستن") } },
-    )
+        dismissButton = { TextButton(onClick = onDecline) { Text("انصراف") } })
 }
 
 @Composable
