@@ -37,13 +37,18 @@ data class ServiceBatchPlan(
         val old = changes.mapNotNull { it.before }; val next = created
         append("قبل: ${old.size} سرویس · ${old.sumOf { it.km }} کیلومتر · ${old.sumOf { it.hours }} ساعت\n")
         append("بعد: ${next.size} سرویس · ${next.sumOf { it.km }} کیلومتر · ${next.sumOf { it.hours }} ساعت\n")
+        append("عوارض قبل: ${old.sumOf { it.tollCount }} → بعد: ${next.sumOf { it.tollCount }} نوبت\n")
         append("درآمد قبل: ${old.sumOf { it.income }} → بعد: ${next.sumOf { it.income }} تومان؛ با نرخ سال هر تاریخ\n")
         fun types(rows: List<ServiceEntity>) = rows.groupingBy { ServiceType.fromWire(it.type).label }.eachCount().entries.joinToString("، ") { "${it.key}: ${it.value}" }.ifBlank { "هیچ" }
         append("نوع قبل: ${types(old)}\nنوع بعد: ${types(next)}\n")
-        append("کیلومتر خودرو: $mileageBefore ← $mileageAfter\n\nروزهای دقیقِ تغییر:\n")
+        append("کیلومتر خودرو (قبل → بعد): $mileageBefore → $mileageAfter\n\nروزهای دقیقِ تغییر:\n")
         changes.groupBy { (it.after ?: it.before)!!.date }.toSortedMap().forEach { (date, rows) ->
             val b = rows.mapNotNull { it.before }; val a = rows.mapNotNull { it.after }
-            append("$date: ${b.size} → ${a.size} سرویس؛ ${b.sumOf { it.km }} → ${a.sumOf { it.km }} km؛ ${b.sumOf { it.hours }} → ${a.sumOf { it.hours }} ساعت\n")
+            append("$date: ${b.size} → ${a.size} سرویس؛ ${b.sumOf { it.km }} → ${a.sumOf { it.km }} km؛ ${b.sumOf { it.hours }} → ${a.sumOf { it.hours }} ساعت؛ عوارض ${b.sumOf { it.tollCount }} → ${a.sumOf { it.tollCount }}؛ درآمد ${b.sumOf { it.income }} → ${a.sumOf { it.income }} تومان\n")
+        }
+        if (changes.size <= 20) changes.forEach { change ->
+            fun row(r: ServiceEntity?) = r?.let { "${it.id} · ${it.date} · ${ServiceType.fromWire(it.type).label} · ${it.origin} ← ${it.destination} · ${it.km} km · ${it.hours} ساعت · زمان ${it.startTime.ifBlank { "نامشخص" }} تا ${it.endTime.ifBlank { "نامشخص" }} · عوارض ${it.tollCount} · غذا ${it.missionFood} / عوارض مأموریت ${it.missionToll} / جریمه ${it.missionFine} · درآمد ${it.income} تومان" } ?: "وجود ندارد"
+            append("\nقبل: ${row(change.before)}\nبعد: ${row(change.after)}\n")
         }
         if (reportAfter) append("\nپس از انجام همین عملیات، گزارش تازهٔ همین بازه از پایگاه‌داده خوانده می‌شود.\n")
         append("\nهیچ تاریخ یا مقدار ناخوانایی حدس زده نمی‌شود. فقط همین خلاصه با دکمهٔ تأیید اجرا می‌شود.")
@@ -56,16 +61,18 @@ class ServiceBatchOperations(private val db: AppDatabase, private val settings: 
             s.autoServiceHours, s.autoServiceStartTime, s.autoServiceEndTime, s.autoServiceTollCount, s.autoServicePassengers)
     private fun presetHash() = savedTemplate()?.let { hash(it.toString()) }
     suspend fun prepare(action: String, start: String, end: String, type: String, perDay: Int?, workdays: Boolean,
-        km: Double?, hours: Double?, newType: String?): ServiceBatchPlan = withContext(Dispatchers.IO) {
+        km: Double?, hours: Double?, newType: String?, selectedIds: Set<String>? = null,
+        suppliedTemplate: ServiceTemplate? = null): ServiceBatchPlan = withContext(Dispatchers.IO) {
         val dates = requireNotNull(PersianInput.days(start, end)) { "بازه باید معتبر و حداکثر ۳۶۶ روز باشد." }
         require(end <= Jalali.todayString()) { "برای آینده ثبت/تغییر انجام نمی‌شود." }
         require(type == "all" || ServiceType.fromWireOrNull(type) != null)
         require(km == null || km.isFinite() && km in 0.0..3000.0)
         require(hours == null || hours.isFinite() && hours in 0.0..24.0)
         val s = settings.current
-        val originalTemplate = savedTemplate(s)
+        val originalTemplate = suppliedTemplate ?: savedTemplate(s)
         val source = db.services().rangeOnce(start, end)
-        val selected = source.filter { type == "all" || it.type == type }
+        val selected = source.filter { (type == "all" || it.type == type) && (selectedIds == null || it.id in selectedIds) }
+        require(selectedIds == null || selectedIds.size in 1..1000 && selected.map { it.id }.toSet() == selectedIds) { "شناسهٔ دقیق سرویس پیدا نشد یا تغییر کرده است." }
         val changes = mutableListOf<ServiceChange>()
         val rateRows = mutableMapOf<Int, Rates>()
         suspend fun rates(date: String): Rates {
@@ -113,8 +120,33 @@ class ServiceBatchOperations(private val db: AppDatabase, private val settings: 
         val delta = changes.sumOf { mileage(it.after) - mileage(it.before) }
         val before = s.vehicleCurrentKm.toFloat().toDouble()
         ServiceBatchPlan(action, op, start, end, hashRows(source), changes.toList(), skipped,
-            if (template != null) hash(requireNotNull(originalTemplate).toString()) else null, rateRows.mapValues { it.value.toString() }, before,
+            if (template != null && suppliedTemplate == null) hash(requireNotNull(originalTemplate).toString()) else null, rateRows.mapValues { it.value.toString() }, before,
             (before + delta).coerceAtLeast(0.0).toFloat().toDouble(), template, perDay, workdays)
+    }
+
+    /** One selected service; same pricing, optimistic transaction and mileage journal as bulk operations. */
+    suspend fun prepareSingle(id: String?, proposed: ServiceEntity?): ServiceBatchPlan = withContext(Dispatchers.IO) {
+        val before = id?.let { requireNotNull(db.services().byId(it)) { "سرویس مبنا پیدا نشد." } }
+        require(before != null || proposed != null)
+        require(proposed == null || before == null || proposed.id == before.id)
+        val next = proposed?.let { row ->
+            require(PersianInput.date(row.date) == row.date && row.date <= Jalali.todayString()) { "تاریخ سرویس معتبر نیست یا در آینده است." }
+            val template = ServiceTemplate(row.type, row.carType, row.origin, row.destination, row.km, row.hours, row.startTime, row.endTime, row.tollCount)
+            require(template.valid()) { "نوع، مسیر، زمان، کیلومتر یا ساعت سرویس کامل/معتبر نیست." }
+            require(listOf(row.missionFood, row.missionToll, row.missionFine).all { it.isFinite() && it in 0.0..1.0e9 })
+            require(settings.current.isRental || ServiceType.fromWire(row.type) !in ServiceType.RENTAL_TYPES) { "نوع اجاره‌ای در تنظیمات خودرو فعال نیست." }
+            row.copy(income = IncomeCalculator.calculate(ServiceType.fromWire(row.type), row.km, row.hours, row.tollCount,
+                row.missionFood, row.missionToll, row.missionFine, ratesFor(row.date.take(4).toInt()), row.startTime.ifBlank { null }, row.endTime.ifBlank { null }))
+        }
+        val dates = listOfNotNull(before?.date, next?.date)
+        val start = dates.min(); val end = dates.max()
+        require(PersianInput.days(start, end) != null && end <= Jalali.todayString()) { "تغییر تاریخ باید در یک بازهٔ حداکثر ۳۶۶ روزه باشد." }
+        val mileageBefore = settings.current.vehicleCurrentKm.toFloat().toDouble()
+        fun km(r: ServiceEntity?) = r?.takeIf { ServiceType.fromWire(it.type) !in ServiceType.FIXED_AMOUNT_TYPES }?.km ?: 0.0
+        ServiceBatchPlan(if (before == null) "bulk_register_services" else if (next == null) "bulk_delete_services" else "bulk_edit_services",
+            UUID.randomUUID().toString(), start, end, hashRows(db.services().rangeOnce(start, end)), listOf(ServiceChange(before, next)), 0,
+            null, next?.let { mapOf(it.date.take(4).toInt() to ratesFor(it.date.take(4).toInt()).toString()) }.orEmpty(), mileageBefore,
+            (mileageBefore + km(next) - km(before)).coerceAtLeast(0.0).toFloat().toDouble(), null, null, false)
     }
 
     suspend fun execute(plan: ServiceBatchPlan): Int = withContext(Dispatchers.IO + NonCancellable) {

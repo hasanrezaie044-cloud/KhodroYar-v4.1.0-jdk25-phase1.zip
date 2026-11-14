@@ -11,10 +11,15 @@ object ServiceCommandSpecs {
         ToolParam("service_type", ParamType.ENUM, true, options = types + "all"))
     private val after = ToolParam("report_after", ParamType.ENUM, options = listOf("on", "off"))
     val tools = listOf(
-        ToolSpec("bulk_register_services", ToolKind.WRITE, "ثبت محدود و تأییددار سرویس‌ها در بازهٔ شمسی؛ فقط از الگوی واقعی ذخیره‌شده",
+        ToolSpec("bulk_register_services", ToolKind.WRITE, "تکمیل تعداد هدف روزانه در بازهٔ شمسی؛ الگوی واقعی ذخیره‌شده یا مشخصات صریح کاربر. رکوردهای موجود بازنویسی نمی‌شوند",
             range + listOf(ToolParam("per_day", ParamType.INT, true, min = 1.0, max = 20.0),
                 ToolParam("days", ParamType.ENUM, true, options = listOf("all", "workdays")),
-                ToolParam("km", ParamType.NUMBER, max = 3000.0), ToolParam("hours", ParamType.NUMBER, max = 24.0), after)),
+                ToolParam("km", ParamType.NUMBER, max = 3000.0), ToolParam("hours", ParamType.NUMBER, max = 24.0),
+                ToolParam("template_source", ParamType.ENUM, desc = "saved: الگوی واقعی موجود (پیش‌فرض)، explicit: مسیر و km/hours صریح کاربر", options = listOf("saved", "explicit")),
+                ToolParam("origin", ParamType.TEXT), ToolParam("destination", ParamType.TEXT),
+                ToolParam("car_type", ParamType.ENUM, options = listOf("soren", "tara")),
+                ToolParam("start_time", ParamType.TEXT), ToolParam("end_time", ParamType.TEXT),
+                ToolParam("toll_count", ParamType.INT, min = 0.0, max = 100.0), after)),
         ToolSpec("bulk_edit_services", ToolKind.WRITE, "ویرایش سرویس‌های انتخاب‌شده پس از خلاصهٔ قبل/بعد و تأیید تازه",
             range + listOf(ToolParam("km", ParamType.NUMBER, max = 3000.0), ToolParam("hours", ParamType.NUMBER, max = 24.0), ToolParam("new_type", ParamType.ENUM, options = types), after)),
         ToolSpec("bulk_delete_services", ToolKind.DELETE, "حذف سرویس‌های دقیقاً انتخاب‌شده؛ فقط با دکمهٔ تأیید حذف", range + after),

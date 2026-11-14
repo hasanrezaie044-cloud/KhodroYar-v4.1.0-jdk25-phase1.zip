@@ -5,6 +5,8 @@ import com.khodroyar.app.automation.*
 import com.khodroyar.app.core.analytics.*
 import com.khodroyar.app.core.finance.PurchaseCategory
 import com.khodroyar.app.data.repo.QuickDraft
+import com.khodroyar.app.data.repo.ServiceBatchPlan
+import com.khodroyar.app.data.db.ServiceEntity
 import kotlinx.coroutines.flow.first
 import com.khodroyar.app.core.jalali.Jalali
 import com.khodroyar.app.data.repo.AppRepository
@@ -23,7 +25,8 @@ import java.util.UUID
 /** Connects the agent to the SAME repositories used by the tabs, not simulated UI clicks. */
 class AppAgentTools(context: Context, private val repo: AppRepository) : AgentToolRunner {
     private val app = context.applicationContext
-    private val records = AgentToolExecutor(repo)
+    private val records = SafeRecordTools(repo)
+    private val domain = DomainAgentTools(app, repo)
     private val serviceRecords = ServiceRecordTools(repo)
     private val store = AutomationStore.get(app)
     private val extraNames = (AutomationToolSpecs.tools + DailyToolSpecs.tools).map { it.name }.toSet()
@@ -37,6 +40,7 @@ class AppAgentTools(context: Context, private val repo: AppRepository) : AgentTo
     }
 
     override suspend fun prepare(call: ValidatedCall): ValidatedCall {
+        if (call.spec.name in DomainToolSpecs.names) return domain.prepare(call)
         if (call.spec.name in ServiceCommandSpecs.names) return serviceRecords.prepare(call)
         if (call.spec.name !in extraNames) return records.prepare(call)
         val args = call.args.toMutableMap()
@@ -67,6 +71,13 @@ class AppAgentTools(context: Context, private val repo: AppRepository) : AgentTo
             val chosen = if (requestedType == null) saved else saved.copy(type = requestedType)
             userCheck(chosen.valid(), "الگوی سرویس با نوع انتخاب‌شده کامل نیست؛ مقادیر واقعی را بررسی کن.")
             args["service_snapshot"] = AutomationCodec.templateJson(chosen).toString()
+            if (call.spec.name == "add_service_from_preset") {
+                val date = call.str("date") ?: Jalali.todayString()
+                val id = requireNotNull(args["operation_id"] as? String)
+                val row = ServiceEntity(id, date, chosen.type, chosen.carType, chosen.km, chosen.hours, chosen.hours, chosen.startTime, chosen.endTime,
+                    chosen.origin, chosen.destination, chosen.passengers, "", chosen.tollCount, 0.0, 0.0, 0.0, 0, java.time.Instant.now().toString())
+                args["preset_single_plan"] = repo.serviceBatches.prepareSingle(null, row)
+            }
         }
         if (call.spec.name in setOf("set_automation_enabled", "update_expense_rule", "remove_automation_rule")) {
             val rule = find(call.str("id"))
@@ -88,13 +99,13 @@ class AppAgentTools(context: Context, private val repo: AppRepository) : AgentTo
     }
 
     override fun describe(call: ValidatedCall): String = when (call.spec.name) {
+        in DomainToolSpecs.names -> domain.describe(call)
         in ServiceCommandSpecs.names -> serviceRecords.describe(call)
         "repeat_expense" -> "تکرار هزینهٔ «${call.str("source_title") }» از ${call.str("source_date")} برای ${call.str("date")}\nمبلغ: ${Analytics.formatNumber(call.dbl("source_amount") ?: 0.0)} تومان\nیک ثبت جدید؛ سابقهٔ قبلی تغییر نمی‌کند."
         "create_expense_rule", "create_service_rule", "create_traffic_rule" -> ruleSummary(ruleFrom(call)) +
             (if (call.spec.name == "create_traffic_rule") "\n\nاجازهٔ دریافت آنلاین و اعلان ترافیک در زمان‌های همین قانون؛ مصرف سهمیهٔ نشان محتمل است، نه API هوش مصنوعی." else "\n\nاجازهٔ ثبت خودکار واقعی برای همین قانون؛ تا توقف یا پایان آن.") +
             " اجرای پس‌زمینه تقریبی است، فقط همان روز؛ روزهای ازدست‌رفته جبران نمی‌شوند."
-        "add_service_from_preset" -> "ثبت یک سرویس رفت‌وآمد در ${call.str("date") ?: Jalali.todayString()}\n" + snapshot(call).summary() +
-            "\nدرآمد با نرخ سال تاریخ ثبت محاسبه می‌شود؛ کیلومتر خودرو به‌روز خواهد شد."
+        "add_service_from_preset" -> (call.args["preset_single_plan"] as? ServiceBatchPlan)?.summary() ?: throw AgentUserException("پیش‌نمایش دقیق سرویس موجود نیست.")
         "set_automation_enabled" -> (if (call.str("state") == "on") "فعال‌سازی دوبارهٔ" else "توقف") +
             " قانون «${find(call.str("id")).title}»\n" + ruleSummary(find(call.str("id"))) + "\nسوابق قبلی حذف یا بازنویسی نمی‌شوند."
         "remove_automation_rule" -> "حذف قانون «${find(call.str("id")).title}» و توقف اجراهای آینده؛ رکوردهای مالی و سرویس‌های قبلی حذف نمی‌شوند."
@@ -105,10 +116,11 @@ class AppAgentTools(context: Context, private val repo: AppRepository) : AgentTo
         else -> records.describe(call)
     }
 
-    override suspend fun describeTarget(call: ValidatedCall): String? = if (call.spec.name in ServiceCommandSpecs.names) serviceRecords.describeTarget(call) else if (call.spec.name == "remove_automation_rule")
+    override suspend fun describeTarget(call: ValidatedCall): String? = if (call.spec.name in DomainToolSpecs.names) domain.describeTarget(call) else if (call.spec.name in ServiceCommandSpecs.names) serviceRecords.describeTarget(call) else if (call.spec.name == "remove_automation_rule")
         store.rules.value.singleOrNull { it.id == call.str("id") }?.let { ruleSummary(it) } else records.describeTarget(call)
 
     override suspend fun execute(call: ValidatedCall): ToolOutcome {
+        if (call.spec.name in DomainToolSpecs.names) return domain.execute(call)
         if (call.spec.name in ServiceCommandSpecs.names) return serviceRecords.execute(call)
         if (call.spec.name !in extraNames) return records.execute(call)
         return try {
@@ -230,14 +242,14 @@ class AppAgentTools(context: Context, private val repo: AppRepository) : AgentTo
             ToolOutcome(true, "قانون حذف و اجراهای آینده‌اش متوقف شد؛ هیچ رکورد مالی یا سرویس قبلی پاک نشد.")
         }
         "add_service_from_preset" -> {
-            val date = c.str("date") ?: Jalali.todayString()
-            val rule = AutomationRule(requireNotNull(c.str("operation_id")), RuleKind.SERVICE, "سرویس تأییدشده از الگو",
-                RepeatSchedule(RepeatFrequency.DAILY, date), service = snapshot(c))
-            repo.recordAutomation(rule, date, rule.occurrenceId(date))
-            ToolOutcome(true, "سرویس $date در دیتابیس ثبت و بازخوانی شد. آن را در تقویم و گزارش‌ها می‌بینید.")
+            val plan = callPlan(c)
+            val count = repo.serviceBatches.execute(plan)
+            ToolOutcome(true, "$count سرویس با همان تاریخ/درآمد/مشخصات پیش‌نمایش در دیتابیس ثبت و بازخوانی شد؛ کیلومتر خودرو نیز تأیید شد.")
         }
         else -> ToolOutcome(false, "ابزار مجاز نیست.")
     }
+
+    private fun callPlan(c: ValidatedCall) = c.args["preset_single_plan"] as? ServiceBatchPlan ?: throw AgentUserException("پیش‌نمایش معتبر موجود نیست؛ چیزی ثبت نمی‌شود.")
 
     private fun notificationNote() = if (!Notifications.canPost(app)) "\nمجوز اعلان بسته است؛ ثبت‌ها اجرا می‌شوند اما اعلانشان را نمی‌بینید." else ""
     private fun snapshot(c: ValidatedCall) = AutomationCodec.templateFromJson(JSONObject(requireNotNull(c.str("service_snapshot"))))

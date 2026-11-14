@@ -1,6 +1,7 @@
 package com.khodroyar.app.ai
 
 import com.khodroyar.app.core.analytics.Analytics
+import com.khodroyar.app.automation.ServiceTemplate
 import com.khodroyar.app.core.rates.ServiceType
 import com.khodroyar.app.core.text.PersianInput
 import com.khodroyar.app.data.repo.AppRepository
@@ -13,8 +14,18 @@ class ServiceRecordTools(private val repository: AppRepository) : AgentToolRunne
         require(call.spec.name in ServiceCommandSpecs.names)
         if (call.spec.kind == ToolKind.READ) return call
         return try {
+        val explicitFields = listOf("origin", "destination", "car_type", "start_time", "end_time", "toll_count")
+        if (call.str("template_source") != "explicit" && explicitFields.any(call::has))
+            throw AgentUserException("برای مسیر/زمان/عوارض صریح باید template_source=explicit باشد؛ هیچ مشخصه‌ای بی‌صدا نادیده گرفته نمی‌شود.")
+        val supplied = if (call.str("template_source") == "explicit") {
+            val start = requireNotNull(call.str("start_date"))
+            ServiceTemplate(requireNotNull(call.str("service_type")), call.str("car_type") ?: repository.ratesFor(start.take(4).toInt()).defaultCarType.wire,
+                requireNotNull(call.str("origin")) { "مبدأ صریح لازم است." }, requireNotNull(call.str("destination")) { "مقصد صریح لازم است." },
+                requireNotNull(call.dbl("km")) { "کیلومتر هر سرویس لازم است." }, requireNotNull(call.dbl("hours")) { "ساعت هر سرویس لازم است." },
+                call.str("start_time").orEmpty(), call.str("end_time").orEmpty(), call.int("toll_count") ?: 0)
+        } else null
         val plan = repository.serviceBatches.prepare(call.spec.name, requireNotNull(call.str("start_date")), requireNotNull(call.str("end_date")),
-            requireNotNull(call.str("service_type")), call.int("per_day"), call.str("days") == "workdays", call.dbl("km"), call.dbl("hours"), call.str("new_type")).copy(reportAfter = call.str("report_after") == "on")
+            requireNotNull(call.str("service_type")), call.int("per_day"), call.str("days") == "workdays", call.dbl("km"), call.dbl("hours"), call.str("new_type"), suppliedTemplate = supplied).copy(reportAfter = call.str("report_after") == "on")
         ValidatedCall(call.spec, call.args + ("service_plan" to plan))
     } catch (e: CancellationException) { throw e }
     catch (e: IllegalArgumentException) { throw AgentUserException(e.message ?: "اطلاعات سرویس کامل نیست؛ چیزی تغییر نکرد.") }
@@ -50,9 +61,9 @@ class ServiceRecordTools(private val repository: AppRepository) : AgentToolRunne
         if (rows.isEmpty()) return ToolOutcome(true, "از $start تا $end سرویس مطابق این نوع پیدا نشد.")
         fun n(value: Double) = Analytics.formatNumber(value)
         val text = buildString {
-            append("$start تا $end\n${rows.size} سرویس · ${n(rows.sumOf { it.km })} کیلومتر · ${n(rows.sumOf { it.hours })} ساعت\nدرآمد: ${Analytics.formatNumber(rows.sumOf { it.income })} تومان\n")
+            append("$start تا $end\n${rows.size} سرویس · ${n(rows.sumOf { it.km })} کیلومتر · ${n(rows.sumOf { it.hours })} ساعت · ${rows.sumOf { it.tollCount }} نوبت عوارض\nدرآمد: ${Analytics.formatNumber(rows.sumOf { it.income })} تومان\n")
             if (call.spec.name == "search_services_range") {
-                rows.take(20).forEach { append("${it.id.take(8)} | ${it.date} | ${ServiceType.fromWire(it.type).label} | ${n(it.km)} km | ${n(it.hours)} ساعت\n") }
+                rows.take(20).forEach { append("${it.id} | ${it.date} | ${ServiceType.fromWire(it.type).label} | ${n(it.km)} km | ${n(it.hours)} ساعت\n") }
                 if (rows.size > 20) append("فقط ۲۰ نتیجهٔ اول نمایش داده شد؛ جمع‌ها برای همهٔ ${rows.size} رکورد است. برای انتخاب دقیق بازه را کوتاه‌تر کن.\n")
             } else {
                 val days = rows.groupBy { it.date }.toSortedMap()

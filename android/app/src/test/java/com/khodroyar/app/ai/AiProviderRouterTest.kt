@@ -37,6 +37,14 @@ class AiProviderRouterTest {
         assertEquals(1, direct.checks)
     }
 
+    @Test fun nativeOpenRouterCanNeverFallBackIntoEitherLegacyPaidProtocol() = runBlocking {
+        val backend = Fake("backend"); val direct = Fake("direct")
+        val router = AiProviderRouter({ AiMode.OPENROUTER }, backend, direct)
+        assertTrue(router.chat(listOf(AiMessage("user", "private")), null, 32) is AiResult.Failure)
+        router.status()
+        assertEquals(0, backend.calls + direct.calls + backend.checks + direct.checks)
+    }
+
     @Test fun errorsNeverSilentlyFallBackAndTransmitToAnotherService() = runBlocking {
         val backend = Fake("backend").apply { result = AiResult.Failure(AiErrorKind.NOT_FOUND, "404") }
         val direct = Fake("direct")

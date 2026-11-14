@@ -31,6 +31,9 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.runningFold
 
+/** Frozen side effect of the SAME manual maintenance rule, approved along with its record. */
+data class AgentMaintenanceChange(val change: TrackedChange, val rateYear: Int, val rateSnapshot: String)
+
 /**
  * Single write/read surface over Room. All suspend functions hop to the IO
  * dispatcher; all reads are Flows so the UI observes the database rather than a
@@ -73,41 +76,69 @@ class AppRepository(context: Context) {
             "expense" -> db.insights().expenseByIdPrefix(prefix).singleOrNull()
             "fuel" -> db.insights().fuelByIdPrefix(prefix).singleOrNull()
             "maintenance" -> db.insights().maintenanceByIdPrefix(prefix).singleOrNull()
+            "service" -> db.services().byIdPrefix(prefix).singleOrNull()
+            "insurance" -> db.insurance().byIdPrefix(prefix).singleOrNull()
             else -> null
         }
     }
 
     /** Expected-row check and write/readback share one Room transaction and writer gate. */
-    suspend fun applyApprovedAgentRecord(before: Any, after: Any?) = withContext(io + kotlinx.coroutines.NonCancellable) {
+    /** Same newest-odometer rule as the maintenance form, without mutating any state. */
+    suspend fun prepareAgentMaintenance(row: MaintenanceEntity): AgentMaintenanceChange? = withContext(io) {
+        val type = com.khodroyar.app.core.finance.MaintenanceType.fromWire(row.type)
+        val latest = latestMaintenance(row.type)
+        if (type !in com.khodroyar.app.core.finance.MaintenanceType.TRACKED || row.km <= 0 || latest != null && row.km < latest.km) return@withContext null
+        val year = Jalali.currentYear(); val rates = ratesFor(year); val before = settingsStore.current
+        val next = row.km + com.khodroyar.app.core.analytics.Analytics.intervalFor(row.type, rates)
+        AgentMaintenanceChange(TrackedChange(row.type, before.currentKmFor(row.type), before.nextKmFor(row.type), row.km, next), year, rates.toString())
+    }
+
+    suspend fun applyApprovedAgentRecord(before: Any?, after: Any?, maintenance: AgentMaintenanceChange? = null) = withContext(io + kotlinx.coroutines.NonCancellable) {
+        val identity = requireNotNull(before ?: after)
+        fun id(row: Any): String = when (row) {
+            is PersonalExpenseEntity -> row.id
+            is FuelEntity -> row.id
+            is MaintenanceEntity -> row.id
+            is InsuranceEntity -> row.id
+            else -> error("نوع رکورد مجاز نیست.")
+        }
+        require(before == null || after == null || before::class == after::class && id(before) == id(after))
+        suspend fun read(): Any? = when (identity) {
+            is PersonalExpenseEntity -> db.insights().expense(identity.id)
+            is FuelEntity -> db.insights().fuel(identity.id)
+            is MaintenanceEntity -> db.insights().maintenance(identity.id)
+            is InsuranceEntity -> db.insurance().byId(identity.id)
+            else -> error("نوع رکورد مجاز نیست.")
+        }
         RecordMutations.mutate(db, settingsStore, invalidateReceipt = true) {
-            db.withTransaction {
-                val actual: Any? = when (before) {
-                    is PersonalExpenseEntity -> db.insights().expense(before.id)
-                    is FuelEntity -> db.insights().fuel(before.id)
-                    is MaintenanceEntity -> db.insights().maintenance(before.id)
-                    else -> error("نوع رکورد مجاز نیست.")
-                }
-                if (actual == after) return@withTransaction
-                check(actual == before) { "رکورد بعد از پیش‌نمایش تغییر یا حذف شده؛ دوباره انتخاب و تأیید کنید." }
-                when (before) {
-                    is PersonalExpenseEntity -> if (after == null) db.personalExpenses().deleteById(before.id) else {
-                        require(after is PersonalExpenseEntity && after.id == before.id); db.personalExpenses().insert(after)
-                    }
-                    is FuelEntity -> if (after == null) db.fuels().deleteById(before.id) else {
-                        require(after is FuelEntity && after.id == before.id); db.fuels().insert(after)
-                    }
-                    is MaintenanceEntity -> if (after == null) db.maintenances().deleteById(before.id) else {
-                        require(after is MaintenanceEntity && after.id == before.id); db.maintenances().insert(after)
-                    }
-                }
-                val saved: Any? = when (before) {
-                    is PersonalExpenseEntity -> db.insights().expense(before.id)
-                    is FuelEntity -> db.insights().fuel(before.id)
-                    is MaintenanceEntity -> db.insights().maintenance(before.id)
-                    else -> null
-                }
-                check(saved == after) { "بازخوانی رکورد تأیید نشد." }
+            if (read() == after) return@mutate // Matching stable ID: no reinsert and no repeated settings side effect.
+            val change = maintenance?.change
+            require(change == null || before == null && after is MaintenanceEntity && change.wire == after.type)
+            val state = settingsStore.current
+            val journal = if (change == null) null else {
+                val latest = latestMaintenance(change.wire)
+                check(latest == null || latest.km <= change.afterCurrent) { "سرویس دوره‌ای جدیدتری ثبت شده؛ پیش‌نمایش تازه لازم است." }
+                check(state.currentKmFor(change.wire) == change.beforeCurrent && state.nextKmFor(change.wire) == change.beforeNext) { "موعد نگهداری پس از پیش‌نمایش تغییر کرده است." }
+                QuickMileageJournal.plan(QuickKind.MAINTENANCE, id(identity), before, after, state,
+                    state.withTrackedKm(change.wire, change.afterCurrent, change.afterNext), false, change.wire)
             }
+            journal?.let { settingsStore.stageQuickMileage(it.encode(), it::beforeMatches) }
+            var recovered = QuickMileageJournal.Recovery.NONE
+            try {
+                db.withTransaction {
+                    val actual = read()
+                    check(actual == before) { "رکورد بعد از پیش‌نمایش تغییر یا حذف شده؛ دوباره انتخاب و تأیید کنید." }
+                    if (maintenance != null) check(ratesFor(maintenance.rateYear).toString() == maintenance.rateSnapshot) { "نرخ/فاصلهٔ نگهداری تغییر کرده؛ پیش‌نمایش تازه لازم است." }
+                    when (identity) {
+                        is PersonalExpenseEntity -> if (after == null) db.personalExpenses().deleteById(identity.id) else db.personalExpenses().insert(after as PersonalExpenseEntity)
+                        is FuelEntity -> if (after == null) db.fuels().deleteById(identity.id) else db.fuels().insert(after as FuelEntity)
+                        is MaintenanceEntity -> if (after == null) db.maintenances().deleteById(identity.id) else db.maintenances().insert(after as MaintenanceEntity)
+                        is InsuranceEntity -> if (after == null) db.insurance().deleteById(identity.id) else db.insurance().insert(after as InsuranceEntity)
+                    }
+                    check(read() == after) { "بازخوانی رکورد تأیید نشد." }
+                }
+            } finally { if (journal != null) recovered = QuickMileageJournal.recover(db, settingsStore) }
+            check(recovered != QuickMileageJournal.Recovery.CONFLICT) { "رکورد ثبت شد؛ تنظیم دستی موعد نگهداری حفظ شد. سوابق را بررسی کنید و دوباره ثبت نکنید." }
         }
     }
 

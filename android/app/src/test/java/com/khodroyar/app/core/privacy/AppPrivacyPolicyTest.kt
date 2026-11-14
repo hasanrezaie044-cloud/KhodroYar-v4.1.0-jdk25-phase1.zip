@@ -6,7 +6,7 @@ import org.junit.Test
 class AppPrivacyPolicyTest {
     private val text = AppPrivacyPolicy.sections.joinToString("\n") { it.body }
     @Test fun materialPolicyChangeRequiresExplicitAcceptanceAgain() {
-        assertEquals(2, AppPrivacyPolicy.VERSION)
+        assertEquals(3, AppPrivacyPolicy.VERSION)
         assertTrue(AppPrivacyPolicy.INTRO.contains("پذیرش صریح"))
     }
     @Test fun policyDisclosesInternetUploadsAndNeverMakesTheRetiredOfflineOnlyClaim() {
@@ -15,6 +15,9 @@ class AppPrivacyPolicyTest {
         assertTrue(text.contains("رمزنگاری"))
         assertFalse(text.contains("اپ به اینترنت متصل نمی‌شود"))
         assertFalse(text.contains("هیچ داده‌ای"))
+    }
+    @Test fun freeAgentDisclosesModelProviderConsentAndVerifiedWriteBoundary() {
+        for (term in listOf("OpenRouter", "ارائه‌دهندهٔ مدل", "رضایت جداگانه", "قیمت‌صفر", "منع جایگزینی پولی", "Android Keystore", "بازخوانی‌شده", "پیش‌نمایش و تأیید صریح", "ثبت دستی")) assertTrue(term, text.contains(term))
     }
     @Test fun inputOcrThirdPartyDecisionsAndUnofficialDocumentRisksAreCovered() {
         for (term in listOf("کیلومترشمار", "پیمایش", "فواصل نگهداری", "ارقام گزارش شرکت", "یادآورها", "مقایسه‌ها", "برآورد هزینه", "پیشنهادهای نگهداری",

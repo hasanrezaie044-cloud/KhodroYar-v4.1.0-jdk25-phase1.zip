@@ -13,8 +13,8 @@ import java.util.UUID
  */
 data class AiSettings(
     val enabled: Boolean = true,
-    /** Safe default for new installs AND upgrades: no backend, key, credit or consent required. */
-    val mode: AiMode = AiMode.LOCAL,
+    /** OpenRouter is the new online provider; nothing is sent without a key and fresh consent. Explicit local mode is preserved. */
+    val mode: AiMode = AiMode.OPENROUTER,
     /** The user has read and accepted what is sent to the server. Nothing is sent before this. */
     val consented: Boolean = false,
     val backendUrl: String = "",
@@ -24,9 +24,13 @@ data class AiSettings(
     /** Public URL/model for the explicitly selected direct connection. No API key here. */
     val gapGptBaseUrl: String = GapGptDirectContract.PRIMARY_BASE_URL,
     val gapGptModel: String = GapGptDirectContract.DEFAULT_MODEL,
+    val openRouterModel: String = OpenRouterFreePolicy.INITIAL_MODEL,
 ) {
-    val requestedModel: String? get() = if (mode == AiMode.GAPGPT_DIRECT)
-        GapGptDirectContract.selectedModel(this) else model.ifBlank { null }
+    val requestedModel: String? get() = when (mode) {
+        AiMode.OPENROUTER -> openRouterModel
+        AiMode.GAPGPT_DIRECT -> GapGptDirectContract.selectedModel(this)
+        else -> model.ifBlank { null }
+    }
 }
 
 class AiSettingsStore(context: Context) {
@@ -34,20 +38,22 @@ class AiSettingsStore(context: Context) {
 
     fun load(): AiSettings = AiSettings(
         enabled = prefs.getBoolean("enabled", true),
-        mode = runCatching { AiMode.valueOf(prefs.getString("mode", null).orEmpty()) }.getOrDefault(AiMode.LOCAL),
-        consented = prefs.getBoolean("consented", false),
+        mode = runCatching { AiMode.valueOf(prefs.getString("mode", null).orEmpty()) }.getOrDefault(AiMode.OPENROUTER).let { if (it in setOf(AiMode.ONLINE, AiMode.GAPGPT_DIRECT)) AiMode.OPENROUTER else it },
+        consented = prefs.getBoolean("openrouter_consented_v1", false),
         backendUrl = prefs.getString("backend_url", null) ?: BuildConfig.AI_BACKEND_URL,
         model = prefs.getString("model", "") ?: "",
         clientToken = prefs.getString("client_token", "") ?: "",
         gapGptBaseUrl = prefs.getString("gapgpt_base_url", null) ?: GapGptDirectContract.PRIMARY_BASE_URL,
         gapGptModel = prefs.getString("gapgpt_model", null) ?: GapGptDirectContract.DEFAULT_MODEL,
+        openRouterModel = prefs.getString("openrouter_model", null) ?: OpenRouterFreePolicy.INITIAL_MODEL,
     )
 
     fun save(s: AiSettings) {
         prefs.edit()
             .putBoolean("enabled", s.enabled)
             .putString("mode", s.mode.name)
-            .putBoolean("consented", s.consented)
+            .putBoolean("openrouter_consented_v1", s.mode == AiMode.OPENROUTER && s.consented)
+            .putString("openrouter_model", s.openRouterModel.trim())
             .putString("backend_url", AiBackendContract.normalizeRoot(s.backendUrl) ?: s.backendUrl.trim())
             .putString("model", s.model.trim())
             .putString("client_token", s.clientToken.trim())

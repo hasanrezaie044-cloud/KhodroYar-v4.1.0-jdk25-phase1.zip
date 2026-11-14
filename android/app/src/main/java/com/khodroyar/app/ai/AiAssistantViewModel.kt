@@ -23,16 +23,16 @@ import kotlin.coroutines.coroutineContext
 
 enum class ConnectionState { LOCAL, READY, UNKNOWN, CHECKING, ONLINE, OFFLINE, NOT_CONFIGURED, NEEDS_CONSENT, DISABLED, ERROR }
 
-class AiAssistantViewModel(app: Application) : AndroidViewModel(app) {
+class AiAssistantViewModel @JvmOverloads constructor(
+    app: Application, http: AiHttpTransport = OpenRouterHttp(), toolRunner: AgentToolRunner? = null,
+) : AndroidViewModel(app) {
     private val settingsStore = AiSettingsStore(app)
     private val conversations = ConversationRepository(app)
     private val automationStore = AutomationStore.get(app)
-    private val tools = AppAgentTools(app, AppRepository(app))
-    private val keyStore = AiApiKeyStore(app)
-    private val backend = GapGPTProvider(app, settingsStore)
-    private val direct = DirectGapGptProvider(settingsStore::load, keyStore)
-    private val provider = AiProviderRouter({ settingsStore.load().mode }, backend, direct)
-    private val orchestrator = AgentOrchestrator(provider, tools, settingsStore)
+    private val tools = toolRunner ?: AppAgentTools(app, AppRepository(app))
+    private val keyStore = OpenRouterApiKeyStore(app)
+    private val openRouter = OpenRouterClient(settingsStore::load, keyStore, http)
+    private val agent = PersianToolAgent(openRouter, tools)
     private val local = LocalAssistant(tools, dialogue = LocalDialogueEngine(rules = { automationStore.rules.value }))
 
     var localContext by mutableStateOf(LocalDialogueContext())
@@ -65,11 +65,16 @@ class AiAssistantViewModel(app: Application) : AndroidViewModel(app) {
         private set
     var testMessage by mutableStateOf<String?>(null)
         private set
-    var hasGapGptKey by mutableStateOf(false)
+    var hasOpenRouterKey by mutableStateOf(false)
         private set
     var savingSettings by mutableStateOf(false)
         private set
     var settingsError by mutableStateOf<String?>(null)
+        private set
+
+    var availableModels by mutableStateOf<List<VerifiedFreeModel>>(emptyList())
+        private set
+    var streamingText by mutableStateOf("")
         private set
 
     private var conversationId = UUID.randomUUID().toString()
@@ -77,196 +82,118 @@ class AiAssistantViewModel(app: Application) : AndroidViewModel(app) {
     private var queuedText: String? = null
     private var queuedTest = false
     private var job: Job? = null
+    private var historySave: Job? = null
     private var statusJob: Job? = null
     private var testJob: Job? = null
     private var generation = 0
     private var keyRevision = 0
+    private var pendingFromAgent = false
 
-    val activeModel: String get() = when (settings.mode) {
-        AiMode.LOCAL -> "ایجنت داخلی · بدون API هوش مصنوعی"
-        AiMode.ONLINE -> settings.model.ifBlank { serverModel }
-        AiMode.GAPGPT_DIRECT -> "GapGPT مستقیم · ${GapGptDirectContract.selectedModel(settings)}"
-    }
+    val activeModel: String get() = if (settings.mode == AiMode.LOCAL) "داخلی · بدون مدل/شبکه" else "OpenRouter · ${settings.openRouterModel}"
 
     init {
         viewModelScope.launch { automationStore.rules.collect { automations = it } }
+        viewModelScope.launch { openRouter.models.collect { availableModels = it } }
         viewModelScope.launch {
             val revision = keyRevision
             val storedKey = withContext(Dispatchers.IO) {
-                runCatching { keyStore.read()?.let(GapGptDirectContract::normalizeApiKey) != null }.getOrDefault(false)
+                runCatching { keyStore.read()?.let(OpenRouterFreePolicy::normalizeKey) != null }.getOrDefault(false)
             }
-            if (revision == keyRevision) hasGapGptKey = storedKey
+            if (revision == keyRevision) hasOpenRouterKey = storedKey
             val last = conversations.load().filter { it.mode == settings.mode }.maxByOrNull { it.updatedAt }
             if (last != null && messages.isEmpty() && !busy) openConversation(last)
             refreshStatus()
         }
     }
 
-    // Local status/testing are synchronous and NEVER call the online provider.
+    /** No network probes on screen open; the first send/test always needs explicit account/data consent. */
     fun refreshStatus() {
         statusJob?.cancel()
         connection = when {
             !settings.enabled -> ConnectionState.DISABLED
             settings.mode == AiMode.LOCAL -> ConnectionState.LOCAL
-            settings.mode == AiMode.GAPGPT_DIRECT && (!hasGapGptKey || GapGptDirectContract.normalizeBaseUrl(settings.gapGptBaseUrl) == null) -> ConnectionState.NOT_CONFIGURED
-            settings.mode == AiMode.ONLINE && !AiSettingsStore.isValidBackendUrl(settings.backendUrl) -> ConnectionState.NOT_CONFIGURED
+            settings.mode != AiMode.OPENROUTER || !hasOpenRouterKey -> ConnectionState.NOT_CONFIGURED
             !settings.consented -> ConnectionState.NEEDS_CONSENT
-            // A direct connection test consumes credit: NEVER probe automatically on screen open.
-            settings.mode == AiMode.GAPGPT_DIRECT -> ConnectionState.READY
-            else -> ConnectionState.CHECKING
-        }
-        if (connection != ConnectionState.CHECKING) return
-        statusJob = viewModelScope.launch {
-            applyStatus(provider.status())
+            else -> ConnectionState.READY
         }
     }
-
     private fun applyStatus(s: AiProviderStatus) {
         serverModel = s.defaultModel
         connection = when {
             s.errorKind == AiErrorKind.NOT_CONFIGURED -> ConnectionState.NOT_CONFIGURED
-            !s.reachable -> ConnectionState.OFFLINE
+            s.errorKind in setOf(AiErrorKind.OFFLINE, AiErrorKind.TIMEOUT) -> ConnectionState.OFFLINE
             s.errorKind != null -> ConnectionState.ERROR
-            !s.enabled -> ConnectionState.DISABLED
-            !s.configured -> ConnectionState.NOT_CONFIGURED
+            !s.reachable -> ConnectionState.OFFLINE
+            !s.enabled || !s.configured -> ConnectionState.ERROR
             else -> ConnectionState.ONLINE
         }
     }
-
     fun testConnection() {
         testJob?.cancel()
         if (settings.mode == AiMode.LOCAL) {
-            testMessage = "حالت داخلی آماده است؛ بدون اینترنت، سرور، کلید API و هزینهٔ توکن کار می‌کند. برای آزمایش «روزای کاری هزینه قهوه‌مو ثبت کن» بفرستید؛ جزئیات را مرحله‌به‌مرحله می‌پرسم. ترافیک زنده جداگانه اینترنت و کلید نشان می‌خواهد. این حالت مدل زبانی عمومی نیست."
-            refreshStatus()
-            return
+            testMessage = "حالت داخلی و همهٔ ثبت‌های دستی بدون اینترنت یا مدل آفلاین کار می‌کنند. برای گفتگوی طبیعی و ایجنت چندمرحله‌ای OpenRouter رایگان را انتخاب کنید."
+            refreshStatus(); return
         }
-        if (!settings.enabled) {
-            testMessage = "ابتدا دستیار را فعال کنید."
-            return
+        if (!settings.enabled || !hasOpenRouterKey) {
+            testMessage = "دستیار را فعال و کلید واقعی OpenRouter را در همین تنظیمات امن ذخیره کنید."; return
         }
-        if (settings.mode == AiMode.GAPGPT_DIRECT) {
-            if (GapGptDirectContract.normalizeBaseUrl(settings.gapGptBaseUrl) == null || !hasGapGptKey) {
-                testMessage = "آدرس رسمی و کلید واقعی GapGPT را در قسمت اتصال مستقیم تنظیم کنید. جای‌نگهدار YOUR_GAPGPT_API_KEY کار نمی‌کند."
-                return
-            }
-        } else if (!AiSettingsStore.isValidBackendUrl(settings.backendUrl)) {
-            testMessage = "برای آدرس api.gapgpt.app یا api.gapapi.com حالت «اتصال مستقیم GapGPT» را انتخاب کنید؛ این آدرس‌ها بک‌اند خودرویار نیستند."
-            return
-        }
-        if (!settings.consented) {
-            queuedTest = true
-            needsConsent = true
-            return
-        }
-        testMessage = "در حال آزمایش…"
+        if (!settings.consented) { queuedTest = true; needsConsent = true; return }
+        connection = ConnectionState.CHECKING
+        testMessage = "در حال بررسی قیمت صفر، پشتیبانی ابزار و اتصال واقعی مدل رایگان…"
         testJob = viewModelScope.launch {
-            val s = provider.status()
-            applyStatus(s)
-            testMessage = when {
-                settings.mode == AiMode.GAPGPT_DIRECT -> "POST ${GapGptDirectContract.chatUrl(settings.gapGptBaseUrl)}\n${s.message}"
-                s.errorKind != null || !s.reachable -> s.message
-                !s.enabled -> "سرور در دسترس است ولی دستیار آنلاین غیرفعال است."
-                !s.configured -> "سرور در دسترس است ولی کلید سرویس مدل روی سرور تنظیم نشده است. حالت داخلی به کلید نیاز ندارد."
-                else -> when (backend.checkModel()) {
-                    true -> "اتصال برقرار است و مدل «${settings.model.ifBlank { s.defaultModel }}» موجود است."
-                    false -> "مدل «${settings.model.ifBlank { s.defaultModel }}» در حساب سرور پیدا نشد؛ نام مدل را بررسی کنید."
-                    null -> "بک‌اند آماده است ولی بررسی فهرست مدل‌ها ممکن نبود."
-                }
-            }
+            try {
+                val status = openRouter.testConnection(); applyStatus(status); testMessage = status.message
+            } catch (e: CancellationException) { throw e }
+            catch (_: Exception) { connection = ConnectionState.ERROR; testMessage = "آزمایش کامل نشد؛ کلید یا پیام خطای خام نمایش داده نمی‌شود." }
         }
     }
-
     fun clearTestMessage() { testMessage = null }
+    fun clearSettingsError() { settingsError = null }
 
-    /** Encrypt a user-supplied key off the main thread; never put it in normal settings. */
+    /** Key material never enters ordinary settings, history, SavedStateHandle or backups. */
     fun configure(new: AiSettings, apiKey: String, forgetKey: Boolean, afterSave: () -> Unit) {
-        if (executingAction || savingSettings) return
+        if (busy || executingAction || savingSettings) return
         settingsError = null
+        if (new.mode !in setOf(AiMode.LOCAL, AiMode.OPENROUTER) || !OpenRouterFreePolicy.isFreeId(new.openRouterModel)) {
+            settingsError = "فقط OpenRouter رایگانِ تأییدشده یا حالت داخلی مجاز است؛ اتصال پولی/قدیمی جایگزین نمی‌شود."; return
+        }
         val typed = apiKey.trim()
-        if (typed.isNotEmpty() && GapGptDirectContract.normalizeApiKey(typed) == null) {
-            settingsError = "کلید معتبر نیست. کلید واقعی حساب را وارد کنید، نه YOUR_GAPGPT_API_KEY؛ کلید را در چت نفرستید."
-            return
+        if (typed.isNotEmpty() && OpenRouterFreePolicy.normalizeKey(typed) == null) {
+            settingsError = "قالب کلید OpenRouter معتبر نیست؛ کلید واقعی حساب را فقط همین‌جا وارد کنید، نه در گفتگو."; return
         }
-        if (new.mode == AiMode.GAPGPT_DIRECT && GapGptDirectContract.normalizeBaseUrl(new.gapGptBaseUrl) == null) {
-            settingsError = "یکی از دو آدرس رسمی GapGPT را انتخاب کنید."
-            return
-        }
-        val credentialChanged = typed.isNotEmpty() || forgetKey
-        statusJob?.cancel()
-        testJob?.cancel()
-        stop()
-        if (credentialChanged) {
+        val changed = typed.isNotEmpty() || forgetKey
+        statusJob?.cancel(); testJob?.cancel(); stop()
+        if (changed) {
             keyRevision++
-            // Revoke consent BEFORE writing a different account key, even if the app is stopped.
-            settingsStore.save(settings.copy(consented = false))
-            settings = settingsStore.load()
-            newChat()
+            settingsStore.save(settings.copy(consented = false)); settings = settingsStore.load(); newChat()
         }
         savingSettings = true
         viewModelScope.launch {
             try {
-                if (credentialChanged || new.mode == AiMode.GAPGPT_DIRECT) {
-                    hasGapGptKey = withContext(Dispatchers.IO) {
-                        if (typed.isNotEmpty()) keyStore.save(typed)
-                        else if (forgetKey) keyStore.clear()
-                        keyStore.read()?.let(GapGptDirectContract::normalizeApiKey) != null
-                    }
+                hasOpenRouterKey = withContext(Dispatchers.IO) {
+                    if (typed.isNotEmpty()) keyStore.save(typed) else if (forgetKey) keyStore.clear()
+                    keyStore.read()?.let(OpenRouterFreePolicy::normalizeKey) != null
                 }
-                if (new.enabled && new.mode == AiMode.GAPGPT_DIRECT && !hasGapGptKey && !forgetKey) {
-                    settingsError = "اتصال مستقیم به API Key واقعی حساب نیاز دارد. برای استفاده بدون کلید، حالت داخلی را انتخاب کنید."
-                    return@launch
-                }
-                // Remove a legacy plaintext copy only when the user explicitly re-enters that
-                // SAME value as their direct provider key. Never guess/migrate a backend token.
-                val oldTokenIsKey = typed.isNotEmpty() && new.mode == AiMode.GAPGPT_DIRECT &&
-                    GapGptDirectContract.normalizeApiKey(new.clientToken) == GapGptDirectContract.normalizeApiKey(typed)
-                val cleaned = if (oldTokenIsKey) new.copy(clientToken = "") else new
-                saveSettings(cleaned, forceNewConsent = credentialChanged)
+                saveSettings(new, forceNewConsent = changed)
                 afterSave()
-            } catch (e: CancellationException) {
-                throw e
-            } catch (_: Exception) {
-                settingsError = "ذخیره/خواندن امن کلید روی گوشی انجام نشد. هیچ کلیدی در متن ساده ذخیره نمی‌شود؛ دوباره تلاش کنید."
-            } finally {
-                savingSettings = false
-            }
+            } catch (e: CancellationException) { throw e }
+            catch (_: Exception) { settingsError = "ذخیره/خواندن امن کلید انجام نشد. هیچ متن ساده یا ذخیرهٔ جایگزین نداریم؛ دوباره تلاش کنید." }
+            finally { savingSettings = false }
         }
     }
-
-    fun clearSettingsError() { settingsError = null }
-
     fun saveSettings(new: AiSettings, forceNewConsent: Boolean = false) {
         if (executingAction) return
-        val root = AiBackendContract.normalizeRoot(new.backendUrl) ?: new.backendUrl.trim()
-        val directUrl = GapGptDirectContract.normalizeBaseUrl(new.gapGptBaseUrl) ?: new.gapGptBaseUrl.trim()
-        val targetChanged = when (new.mode) {
-            AiMode.LOCAL -> false
-            AiMode.ONLINE -> root != settings.backendUrl
-            AiMode.GAPGPT_DIRECT -> directUrl != settings.gapGptBaseUrl
-        }
-        val modeChanged = new.mode != settings.mode
-        if (modeChanged || targetChanged || forceNewConsent) newChat()
-        else if (!new.enabled) { stop(); pending = null; local.dialogue.reset(); localContext = local.dialogue.context }
-        statusJob?.cancel()
-        testJob?.cancel()
-        settingsStore.save(new.copy(
-            backendUrl = root, gapGptBaseUrl = directUrl,
-            consented = if (targetChanged || modeChanged || forceNewConsent) false else new.consented,
-        ))
+        if (new.mode !in setOf(AiMode.LOCAL, AiMode.OPENROUTER)) return
+        val changed = new.mode != settings.mode || new.openRouterModel != settings.openRouterModel || forceNewConsent
+        if (changed) newChat() else if (!new.enabled) { stop(); pending = null; local.dialogue.reset(); localContext = local.dialogue.context }
+        testJob?.cancel(); statusJob?.cancel()
+        settingsStore.save(new.copy(consented = !changed && new.consented))
         settings = settingsStore.load()
-        needsConsent = false
-        queuedText = null
-        queuedTest = false
-        testMessage = null
-        failure = null
+        needsConsent = false; queuedText = null; queuedTest = false; testMessage = null; failure = null
         refreshStatus()
     }
-
-    fun chooseDirectGapGpt() {
-        if (busy || savingSettings) return
-        val url = GapGptDirectContract.normalizeBaseUrl(settings.backendUrl) ?: settings.gapGptBaseUrl
-        saveSettings(settings.copy(mode = AiMode.GAPGPT_DIRECT, gapGptBaseUrl = url))
-    }
+    /** Explicit opt-in to the new provider; no network/fallback is triggered by this action. */
+    fun chooseOpenRouter() { if (!busy && !savingSettings) saveSettings(settings.copy(mode = AiMode.OPENROUTER)) }
 
     fun acceptConsent() {
         val text = queuedText
@@ -296,7 +223,11 @@ class AiAssistantViewModel(app: Application) : AndroidViewModel(app) {
 
     fun send(raw: String) {
         val text = raw.trim()
-        if (text.isEmpty() || busy || savingSettings || !settings.enabled || text.length > AiLimits.MAX_USER_CHARS) return
+        if (text.isEmpty() || busy || savingSettings || !settings.enabled || text.length > (if (settings.mode == AiMode.LOCAL) AiLimits.MAX_USER_CHARS else PersianAgentLimits.USER_CHARS)) return
+        if (OpenRouterFreePolicy.containsCredential(text)) {
+            failure = AiResult.Failure(AiErrorKind.BAD_REQUEST, "این متن شبیه کلید API است؛ در تاریخچه ذخیره یا ارسال نشد. کلید را فقط در تنظیمات امن وارد کنید.")
+            return
+        }
         if (pending != null) {
             if (settings.mode != AiMode.LOCAL) return
             messages.add(ChatEntry(UUID.randomUUID().toString(), ChatRole.USER, text, System.currentTimeMillis()))
@@ -332,85 +263,87 @@ class AiAssistantViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun retry() {
-        if (busy || savingSettings || pending != null || !settings.enabled || messages.lastOrNull()?.role != ChatRole.USER) return
+        if (busy || savingSettings || pending != null || !settings.enabled) return
         if (settings.mode != AiMode.LOCAL && !settings.consented) return
+        if (settings.mode == AiMode.LOCAL && messages.lastOrNull()?.role != ChatRole.USER) return
         failure = null
-        runAgent()
+        runAgent(retrying = settings.mode == AiMode.OPENROUTER && agent.canResume)
     }
-
-    private fun runAgent() {
-        busy = true
-        val run = ++generation
-        val mode = settings.mode
-        val snapshot = messages.toList()
-        job = viewModelScope.launch {
-            try {
-                val step = if (mode == AiMode.LOCAL) local.run(snapshot.last().text) else orchestrator.run(snapshot)
-                coroutineContext.ensureActive()
-                if (run != generation) return@launch
-                if (mode == AiMode.LOCAL) localContext = local.dialogue.context
-                if (mode == AiMode.GAPGPT_DIRECT && step !is AgentStep.Failure) connection = ConnectionState.ONLINE
-                when (step) {
-                    is AgentStep.Reply -> add(ChatRole.ASSISTANT, step.text)
-                    is AgentStep.Result -> {
-                        add(ChatRole.RESULT, (if (step.outcome.ok) "" else "⚠️ ") + step.outcome.text)
-                        if (step.outcome.ok) navigation = step.outcome.section
-                    }
-                    is AgentStep.Confirm -> {
-                        if (step.pending.lead.isNotBlank()) add(ChatRole.ASSISTANT, step.pending.lead)
-                        pending = step.pending
-                    }
-                    is AgentStep.Failure -> {
-                        failure = step.error
-                        connection = when (step.error.kind) {
-                            AiErrorKind.OFFLINE, AiErrorKind.TIMEOUT -> ConnectionState.OFFLINE
-                            AiErrorKind.NOT_CONFIGURED -> ConnectionState.NOT_CONFIGURED
-                            AiErrorKind.DISABLED -> ConnectionState.DISABLED
-                            else -> ConnectionState.ERROR
-                        }
-                    }
+    private fun textCallback(run: Int): (String) -> Unit = { text ->
+        viewModelScope.launch { if (run == generation && busy) streamingText = text }
+    }
+    private suspend fun toolResult(name: String, out: ToolOutcome) {
+        streamingText = ""
+        add(ChatRole.RESULT, "ابزار $name · ${if (out.ok) "تأیید شد" else "ناموفق"}\n${out.text}")
+        if (out.ok && out.section != null) navigation = out.section
+    }
+    private fun applyStep(step: AgentStep) {
+        streamingText = ""
+        when (step) {
+            is AgentStep.Reply -> add(ChatRole.ASSISTANT, step.text)
+            is AgentStep.Result -> { add(ChatRole.RESULT, (if (step.outcome.ok) "" else "⚠️ ") + step.outcome.text); if (step.outcome.ok) navigation = step.outcome.section }
+            is AgentStep.Confirm -> { pendingFromAgent = settings.mode == AiMode.OPENROUTER; if (step.pending.lead.isNotBlank()) add(ChatRole.ASSISTANT, step.pending.lead); pending = step.pending }
+            is AgentStep.Failure -> {
+                failure = step.error
+                connection = when (step.error.kind) {
+                    AiErrorKind.OFFLINE, AiErrorKind.TIMEOUT -> ConnectionState.OFFLINE
+                    AiErrorKind.NOT_CONFIGURED -> ConnectionState.NOT_CONFIGURED
+                    AiErrorKind.DISABLED -> ConnectionState.DISABLED
+                    else -> ConnectionState.ERROR
                 }
-            } catch (e: CancellationException) {
-                throw e
-            } catch (_: Exception) {
-                if (run == generation) failure = AiResult.Failure(AiErrorKind.UNKNOWN, "دریافت پاسخ انجام نشد. دوباره تلاش کنید؛ هیچ عملیات تأییدنشده‌ای اجرا نمی‌شود.")
-            } finally {
-                if (run == generation) busy = false
             }
         }
     }
-
+    private fun runAgent(retrying: Boolean = false) {
+        busy = true; streamingText = ""
+        val run = ++generation; val mode = settings.mode; val snapshot = messages.toList()
+        job = viewModelScope.launch {
+            try {
+                val step = if (mode == AiMode.LOCAL) local.run(snapshot.last().text)
+                    else if (retrying) agent.retry(textCallback(run), ::toolResult)
+                    else agent.start(snapshot, textCallback(run), ::toolResult)
+                coroutineContext.ensureActive()
+                if (run != generation) return@launch
+                if (mode == AiMode.LOCAL) localContext = local.dialogue.context
+                if (mode == AiMode.OPENROUTER && step !is AgentStep.Failure) connection = ConnectionState.ONLINE
+                applyStep(step)
+            } catch (e: CancellationException) { throw e }
+            catch (_: Exception) { if (run == generation) failure = AiResult.Failure(AiErrorKind.UNKNOWN, "دریافت پاسخ کامل نشد؛ عملیات تأییدنشده اجرا نمی‌شود.") }
+            finally { if (run == generation) { busy = false; streamingText = "" } }
+        }
+    }
     fun confirmPending() {
         val p = pending ?: return
         if (busy || savingSettings || (!settings.enabled && p.call.spec.name !in setOf("set_automation_enabled", "remove_automation_rule"))) return
-        pending = null
-        busy = true
-        executingAction = true
+        pending = null; busy = true; executingAction = true
+        val run = ++generation
         job = viewModelScope.launch {
             try {
-                val out = tools.execute(p.call)
-                add(ChatRole.RESULT, (if (out.ok) "✅ " else "⚠️ ") + out.text)
-                local.dialogue.completed(p.call, out.ok)
-                localContext = local.dialogue.context
-                if (out.ok) navigation = out.section else pending = p
-            } catch (e: CancellationException) {
-                throw e
-            } catch (_: Exception) {
-                pending = p
-                add(ChatRole.ERROR, "نتیجهٔ عملیات تأیید نشد؛ خلاصه را بررسی کنید. موفقیت فرضی نمایش داده نمی‌شود.")
-            } finally {
-                busy = false
-                executingAction = false
-            }
+                if (settings.mode == AiMode.OPENROUTER && pendingFromAgent) {
+                    val step = agent.confirm(p, textCallback(run)) { name, out ->
+                        toolResult(name, out); executingAction = false // The verified DB phase is finished; streaming can now be stopped.
+                    }
+                    if (run == generation) applyStep(step)
+                } else {
+                    val out = tools.execute(p.call)
+                    add(ChatRole.RESULT, (if (out.ok) "✅ " else "⚠️ ") + out.text)
+                    local.dialogue.completed(p.call, out.ok); localContext = local.dialogue.context
+                    if (out.ok) navigation = out.section else pending = p
+                }
+            } catch (e: CancellationException) { throw e }
+            catch (_: Exception) {
+                add(ChatRole.ERROR, "نتیجهٔ عملیات تأیید نشد؛ سوابق را بررسی کنید. برای جلوگیری از ثبت تکراری، خودکار دوباره اجرا نمی‌شود.")
+            } finally { if (run == generation) { busy = false; executingAction = false; streamingText = "" } }
         }
     }
 
     fun cancelPending() {
         if (pending == null) return
         pending = null
+        agent.reset()
         local.dialogue.discardDraft()
         localContext = local.dialogue.context
-        add(ChatRole.RESULT, "عملیات لغو شد. هیچ اطلاعاتی تغییر نکرد.")
+        add(ChatRole.RESULT, "این پیش‌نمایش و مراحلِ تأییدنشده لغو شد. نتایجِ قبلاً تأییدشده تغییری نمی‌کنند.")
     }
 
     fun stop() {
@@ -418,11 +351,13 @@ class AiAssistantViewModel(app: Application) : AndroidViewModel(app) {
         if (executingAction) return
         generation++
         job?.cancel()
+        agent.reset()
+        streamingText = ""
         busy = false
     }
 
     private fun add(role: ChatRole, text: String) {
-        messages.add(ChatEntry(UUID.randomUUID().toString(), role, text, System.currentTimeMillis()))
+        messages.add(ChatEntry(UUID.randomUUID().toString(), role, OpenRouterFreePolicy.redactCredentials(text), System.currentTimeMillis()))
         persist()
     }
 
@@ -430,7 +365,8 @@ class AiAssistantViewModel(app: Application) : AndroidViewModel(app) {
         if (messages.isEmpty()) return
         val title = messages.firstOrNull { it.role == ChatRole.USER }?.text?.take(40) ?: "گفتگو"
         val convo = Conversation(conversationId, title, createdAt, System.currentTimeMillis(), messages.toList(), settings.mode)
-        viewModelScope.launch { conversations.save(convo) }
+        historySave?.cancel()
+        historySave = viewModelScope.launch { conversations.save(convo) }
     }
 
     fun newChat() {
@@ -461,7 +397,7 @@ class AiAssistantViewModel(app: Application) : AndroidViewModel(app) {
                 if (validation is ValidationResult.Ok) {
                     val step = AgentApprovalGate(tools).prepare(validation.call)
                     if (run == generation) when (step) {
-                        is AgentStep.Confirm -> pending = step.pending
+                        is AgentStep.Confirm -> { pendingFromAgent = false; pending = step.pending }
                         is AgentStep.Reply -> add(ChatRole.ASSISTANT, step.text)
                         else -> Unit
                     }
@@ -477,29 +413,34 @@ class AiAssistantViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun loadHistory() {
-        viewModelScope.launch { history = conversations.load().filter { it.mode == settings.mode }.sortedByDescending { it.updatedAt } }
+        viewModelScope.launch { history = conversations.load().sortedByDescending { it.updatedAt } }
     }
 
     fun openConversation(c: Conversation) {
-        if (executingAction || c.mode != settings.mode) return
+        if (executingAction) return
         newChat()
         messages.addAll(c.messages)
-        conversationId = c.id
-        createdAt = c.createdAt
+        if (c.mode != settings.mode) {
+            settingsStore.save(settings.copy(consented = false)); settings = settingsStore.load(); refreshStatus()
+            // Viewing old history never changes providers or authorises a request. New sends fork it.
+        } else { conversationId = c.id; createdAt = c.createdAt }
     }
 
     fun deleteConversation(c: Conversation) {
         if (executingAction) return
+        if (c.id == conversationId) historySave?.cancel()
         viewModelScope.launch {
             conversations.delete(c.id)
             if (c.id == conversationId) newChat()
-            history = conversations.load().filter { it.mode == settings.mode }.sortedByDescending { it.updatedAt }
+            history = conversations.load().sortedByDescending { it.updatedAt }
         }
     }
 
     /** Wipes chat history only; never financial/vehicle records. */
     fun clearAllHistory() {
         if (executingAction) return
+        historySave?.cancel()
+        newChat()
         viewModelScope.launch {
             conversations.clearAll()
             history = emptyList()

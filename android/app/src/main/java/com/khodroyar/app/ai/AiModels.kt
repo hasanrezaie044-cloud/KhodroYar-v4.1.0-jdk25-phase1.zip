@@ -4,7 +4,7 @@ package com.khodroyar.app.ai
 data class AiMessage(val role: String, val content: String)
 
 /** Local is an explicit command assistant, not a downloaded/generative language model. */
-enum class AiMode { LOCAL, ONLINE, GAPGPT_DIRECT }
+enum class AiMode { LOCAL, ONLINE, GAPGPT_DIRECT, OPENROUTER }
 
 enum class AiErrorKind {
     OFFLINE, TIMEOUT, NOT_CONFIGURED, DISABLED, BAD_REQUEST, UNAUTHORIZED,

@@ -111,6 +111,8 @@ class GapGptDirectContractTest {
         assertEquals("gemini-2.5-pro", settings.requestedModel)
         assertEquals("backend-only", settings.copy(mode = AiMode.ONLINE).requestedModel)
         assertEquals("gpt-4o", settings.copy(gapGptModel = "").requestedModel)
-        assertEquals(AiMode.LOCAL, AiSettings().mode)
+        assertEquals(AiMode.OPENROUTER, AiSettings().mode)
+        assertEquals("openrouter/free", AiSettings().openRouterModel)
+        assertFalse(AiSettings().consented)
     }
 }

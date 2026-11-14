@@ -36,6 +36,17 @@ import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.DeleteSweep
 import androidx.compose.material.icons.outlined.History
 import androidx.compose.material.icons.outlined.Settings
+import androidx.compose.material.icons.outlined.Visibility
+import androidx.compose.material.icons.outlined.VisibilityOff
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.ui.window.DialogProperties
+import androidx.compose.ui.window.SecureFlagPolicy
+import androidx.compose.ui.text.input.VisualTransformation
+import androidx.compose.foundation.layout.imePadding
+import com.khodroyar.app.ai.OpenRouterFreePolicy
+import com.khodroyar.app.ai.VerifiedFreeModel
+import com.khodroyar.app.ai.PersianAgentLimits
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -74,13 +85,11 @@ import com.khodroyar.app.ai.AiAssistantViewModel
 import com.khodroyar.app.ai.AiErrorKind
 import com.khodroyar.app.ai.AiLimits
 import com.khodroyar.app.ai.AiMode
-import com.khodroyar.app.ai.AiSettingsStore
 import com.khodroyar.app.ai.AiSettings
 import com.khodroyar.app.ai.ChatEntry
 import com.khodroyar.app.ai.ChatRole
 import com.khodroyar.app.ai.ConnectionState
 import com.khodroyar.app.ai.Conversation
-import com.khodroyar.app.ai.GapGptDirectContract
 import com.khodroyar.app.ai.PendingAction
 import com.khodroyar.app.ai.AgentSection
 import com.khodroyar.app.ai.LocalDialogueEngine
@@ -113,8 +122,8 @@ fun AiAssistantScreen(vm: AiAssistantViewModel = viewModel(), onNavigate: (Agent
     var confirmClear by remember { mutableStateOf(false) }
     val listState = rememberLazyListState()
 
-    val extraRows = (if (vm.pending != null) 1 else 0) + (if (vm.busy) 1 else 0) + (if (vm.failure != null) 1 else 0)
-    LaunchedEffect(vm.messages.size, extraRows) {
+    val extraRows = (if (vm.streamingText.isNotBlank()) 1 else 0) + (if (vm.pending != null) 1 else 0) + (if (vm.busy) 1 else 0) + (if (vm.failure != null) 1 else 0)
+    LaunchedEffect(vm.messages.size, extraRows, vm.streamingText.length / 120) {
         val total = vm.messages.size + extraRows
         if (total > 0) listState.animateScrollToItem(total - 1)
     }
@@ -125,7 +134,7 @@ fun AiAssistantScreen(vm: AiAssistantViewModel = viewModel(), onNavigate: (Agent
         toast.show("متن کپی شد")
     }
 
-    Column(Modifier.fillMaxSize()) {
+    Column(Modifier.fillMaxSize().imePadding().testTag("ai-agent-screen")) {
         AssistantHeader(
             model = vm.activeModel,
             state = vm.connection,
@@ -153,6 +162,10 @@ fun AiAssistantScreen(vm: AiAssistantViewModel = viewModel(), onNavigate: (Agent
                     vm.pending?.let { p ->
                         item(key = "pending") { ConfirmCard(p, onConfirm = vm::confirmPending, onCancel = vm::cancelPending) }
                     }
+                    if (vm.streamingText.isNotBlank()) item(key = "stream") {
+                        Column { StatusPill("در حال دریافت · متن مدل، نه تأیید ثبت", color = MaterialTheme.colorScheme.tertiary)
+                            Bubble(ChatEntry("stream", ChatRole.ASSISTANT, vm.streamingText, 0L), onCopy = {}) }
+                    }
                     if (vm.busy) item(key = "busy") { TypingBubble(canStop = !vm.executingAction, onStop = vm::stop) }
                     vm.failure?.let { f ->
                         item(key = "failure") {
@@ -161,9 +174,7 @@ fun AiAssistantScreen(vm: AiAssistantViewModel = viewModel(), onNavigate: (Agent
                                 retryable = f.kind !in setOf(AiErrorKind.NOT_CONFIGURED, AiErrorKind.NOT_FOUND),
                                 onRetry = vm::retry, onSettings = { showSettings = true },
                                 onLocal = if (settings.mode != AiMode.LOCAL) vm::useLocalMode else null,
-                                onDirect = if (settings.mode == AiMode.ONLINE && GapGptDirectContract.isProviderHost(settings.backendUrl)) {
-                                    { vm.chooseDirectGapGpt(); showSettings = true }
-                                } else null,
+                                onDirect = null,
                             )
                         }
                     }
@@ -175,7 +186,8 @@ fun AiAssistantScreen(vm: AiAssistantViewModel = viewModel(), onNavigate: (Agent
             enabled = settings.enabled && !vm.busy && !vm.savingSettings, onPick = vm::send)
         InputBar(
             value = input,
-            onChange = { input = it.take(AiLimits.MAX_USER_CHARS) },
+            onChange = { input = it.take(if (settings.mode == AiMode.LOCAL) AiLimits.MAX_USER_CHARS else PersianAgentLimits.USER_CHARS) },
+            maxChars = if (settings.mode == AiMode.LOCAL) AiLimits.MAX_USER_CHARS else PersianAgentLimits.USER_CHARS,
             enabled = settings.enabled && (vm.pending == null || settings.mode == AiMode.LOCAL) && !vm.savingSettings,
             busy = vm.busy,
             placeholder = if (settings.mode == AiMode.LOCAL) "پیام شما…" else if (vm.pending != null) "ابتدا عملیات بالا را تأیید یا لغو کنید" else "پیام خود را بنویسید…",
@@ -195,13 +207,14 @@ fun AiAssistantScreen(vm: AiAssistantViewModel = viewModel(), onNavigate: (Agent
         onNavigate(section)
     }, onDismiss = { showSections = false })
 
-    if (vm.needsConsent) ConsentDialog(mode = settings.mode, onAccept = { vm.acceptConsent(); input = "" }, onDecline = vm::declineConsent)
+    if (vm.needsConsent) ConsentDialog( onAccept = { vm.acceptConsent(); input = "" }, onDecline = vm::declineConsent)
 
     if (showSettings && !vm.needsConsent) {
         SettingsDialog(
             current = settings,
             testMessage = vm.testMessage,
-            hasDirectKey = vm.hasGapGptKey,
+            hasOpenRouterKey = vm.hasOpenRouterKey,
+            models = vm.availableModels,
             saving = vm.savingSettings,
             settingsError = vm.settingsError,
             onTest = { new, key, forget -> vm.configure(new, key, forget) { vm.testConnection() } },
@@ -417,7 +430,8 @@ private fun EmptyState(state: ConnectionState, mode: AiMode, onSettings: () -> U
             when (mode) {
                 AiMode.LOCAL -> "دستیار تخصصی خودرو · بدون API"
                 AiMode.ONLINE -> "بک‌اند خودرویار · آنلاین"
-                AiMode.GAPGPT_DIRECT -> "GapGPT · اتصال مستقیم"
+                AiMode.GAPGPT_DIRECT -> "تاریخچهٔ اتصال قدیمی"
+                AiMode.OPENROUTER -> "ایجنت فارسی · OpenRouter رایگان"
             },
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -427,7 +441,7 @@ private fun EmptyState(state: ConnectionState, mode: AiMode, onSettings: () -> U
             OutlinedButton(onClick = { onExample(example) }, modifier = Modifier.fillMaxWidth()) { Text(example) }
         }
         if (state == ConnectionState.NOT_CONFIGURED) {
-            Button(onClick = onSettings) { Text("انتخاب حالت داخلی یا تنظیم سرور") }
+            Button(onClick = onSettings) { Text("تنظیم کلید OpenRouter یا حالت داخلی") }
         }
     }
 }
@@ -449,6 +463,7 @@ private fun DisabledCard(onEnable: () -> Unit) {
 private fun InputBar(
     value: String,
     onChange: (String) -> Unit,
+    maxChars: Int,
     enabled: Boolean,
     busy: Boolean,
     placeholder: String,
@@ -463,22 +478,22 @@ private fun InputBar(
             OutlinedTextField(
                 value = value,
                 onValueChange = onChange,
-                modifier = Modifier.weight(1f),
+                modifier = Modifier.weight(1f).testTag("ai-message-input"),
                 enabled = enabled,
                 placeholder = { Text(placeholder, maxLines = 1) },
                 maxLines = 5,
                 shape = FieldShape,
                 colors = fieldColors(),
                 textStyle = LocalTextStyle.current.copy(textDirection = TextDirection.Content),
-                supportingText = if (value.length > AiLimits.MAX_USER_CHARS * 8 / 10) {
-                    { Text("${value.length} / ${AiLimits.MAX_USER_CHARS}") }
+                supportingText = if (value.length > maxChars * 8 / 10) {
+                    { Text("${value.length} / ${maxChars}") }
                 } else null,
             )
             val canSend = enabled && !busy && value.isNotBlank()
             Surface(
                 shape = RoundedCornerShape(14.dp),
                 color = if (canSend) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant,
-                modifier = Modifier.padding(bottom = if (value.length > AiLimits.MAX_USER_CHARS * 8 / 10) 22.dp else 4.dp),
+                modifier = Modifier.padding(bottom = if (value.length > maxChars * 8 / 10) 22.dp else 4.dp),
             ) {
                 IconButton(onClick = onSend, enabled = canSend, modifier = Modifier.size(48.dp)) {
                     Icon(
@@ -495,22 +510,16 @@ private fun InputBar(
 /* ----------------------------------------------------------------- dialogs */
 
 @Composable
-private fun ConsentDialog(mode: AiMode, onAccept: () -> Unit, onDecline: () -> Unit) {
+private fun ConsentDialog( onAccept: () -> Unit, onDecline: () -> Unit) {
     AlertDialog(
         onDismissRequest = onDecline,
-        title = { Text("قبل از شروع") },
-        text = {
-            Text(
-                "فقط در حالت آنلاین، متن پیام و حداکثر ۱۰ پیام اخیر همین گفتگو و در صورت نیاز خلاصه‌ای از سوابق مرتبط (مثل مبلغ‌ها، تاریخ‌ها و عنوان هزینه‌ها) " +
-                    (if (mode == AiMode.GAPGPT_DIRECT) "مستقیماً به آدرس رسمی GapGPT یا CDN انتخابی شما ارسال می‌شود. کلید حساب فقط در هدر Authorization همان مقصد استفاده می‌شود. "
-                     else "به بک‌اند خودرویار و از آنجا به سرویس مدل ارسال می‌شود. ") +
-                    "بدون موافقت شما چیزی ارسال نمی‌شود. تغییر حساب/آدرس/حالت نیازمند رضایت دوباره است.\n\n" +
-                    "گفتگوها فقط روی همین دستگاه ذخیره می‌شوند و هر زمان می‌توانید آن‌ها را پاک یا دستیار را غیرفعال کنید. " +
-                    "موقعیت مکانی، مخاطبین، پیامک، فایل‌ها و اطلاعات پرسنل ارسال نمی‌شود. ثبت، ویرایش و حذف فقط با تأیید شما انجام می‌شود.\n\n" +
-                    "سرویس آنلاین به اعتبار حساب نیاز دارد. در اتصال مستقیم، «آزمایش اتصال» یک پیام سلام با حداکثر خروجی ۳۲ توکن می‌فرستد و ممکن است هزینه داشته باشد؛ تاریخچه یا اطلاعات مالی را در تست نمی‌فرستد. حالت داخلی بدون API است.",
-                modifier = Modifier.verticalScroll(rememberScrollState()),
-            )
-        },
+        title = { Text("اجازهٔ ارسال به OpenRouter") },
+        text = { Text(
+            "در حالت ایجنت آنلاین، پیام شما، حداکثر ۱۰ پیام اخیر و فقط خلاصهٔ لازمِ نتایج ابزار (مثل تاریخ، تعداد و مبلغ مرتبط) به OpenRouter و ارائه‌دهندهٔ مدل رایگان ارسال می‌شود. کل دیتابیس، اصل سند، عکس/PDF، شماره بیمه‌نامه، اطلاعات پرسنل، موقعیت، مخاطبین و فایل‌های دیگر ارسال نمی‌شوند. اطلاعات حساس را در پیام ننویسید.\n\n" +
+            "فقط قیمت صفر و پشتیبانی ابزار از فهرست تازهٔ سرویس پذیرفته می‌شود؛ سقف قیمت صفر و منع fallback پولی اعمال می‌شود. دسترسی/محدودیت روزانه و سیاست پردازش داده را OpenRouter و ارائه‌دهنده کنترل می‌کنند؛ برنامه سهمیه یا کیفیت پاسخ را تضمین نمی‌کند. مسیرهایی که طبق فرادادهٔ سرویس جمع‌آوری داده دارند مجاز نیستند، اما این جایگزین مطالعهٔ سیاست سرویس نیست.\n\n" +
+            "آزمایش اتصال یک پیام مصنوعی کوتاه و فراخوانی ابزار بی‌خطر می‌فرستد، نه دادهٔ مالی؛ از سهمیهٔ رایگان استفاده می‌کند. کلید فقط در هدر HTTPS همان سرویس است. پرداخت، خرید اعتبار و مدل پولی خودکار وجود ندارد.\n\n" +
+            "تمام ثبت/ویرایش/حذف‌ها پیش‌نمایش و دکمهٔ تأیید جدا دارند. گفتگو روی گوشی ذخیره می‌شود و قابل پاک‌کردن است. تغییر مدل/حساب رضایت دوباره می‌خواهد؛ امکانات دستی و حالت داخلی آفلاین مستقل می‌مانند.",
+            modifier = Modifier.verticalScroll(rememberScrollState()).testTag("openrouter-consent")) },
         confirmButton = { Button(onClick = onAccept) { Text("موافقم و ادامه") } },
         dismissButton = { TextButton(onClick = onDecline) { Text("انصراف") } },
     )
@@ -520,7 +529,8 @@ private fun ConsentDialog(mode: AiMode, onAccept: () -> Unit, onDecline: () -> U
 private fun SettingsDialog(
     current: AiSettings,
     testMessage: String?,
-    hasDirectKey: Boolean,
+    hasOpenRouterKey: Boolean,
+    models: List<VerifiedFreeModel>,
     saving: Boolean,
     settingsError: String?,
     onTest: (AiSettings, String, Boolean) -> Unit,
@@ -528,130 +538,70 @@ private fun SettingsDialog(
     onDismiss: () -> Unit,
 ) {
     var enabled by remember { mutableStateOf(current.enabled) }
-    var mode by remember { mutableStateOf(current.mode) }
-    var url by remember { mutableStateOf(current.backendUrl) }
-    var model by remember { mutableStateOf(current.model) }
-    var token by remember { mutableStateOf(current.clientToken) }
-    var directUrl by remember { mutableStateOf(current.gapGptBaseUrl) }
-    var directModel by remember { mutableStateOf(current.gapGptModel) }
-    // Never rememberSaveable: a provider key must not enter saved-instance state or backups.
+    var mode by remember { mutableStateOf(if (current.mode == AiMode.LOCAL) AiMode.LOCAL else AiMode.OPENROUTER) }
+    var model by remember { mutableStateOf(current.openRouterModel) }
+    var chooseModel by remember { mutableStateOf(false) }
+    // Never rememberSaveable: credentials must not enter saved-instance state.
     var apiKey by remember { mutableStateOf("") }
+    var showKey by remember { mutableStateOf(false) }
     var forgetKey by remember { mutableStateOf(false) }
     val ltr = LocalTextStyle.current.copy(textDirection = TextDirection.Ltr)
-    val keyValid = apiKey.isBlank() || GapGptDirectContract.normalizeApiKey(apiKey) != null
-    val valid = when (mode) {
-        AiMode.LOCAL -> true
-        AiMode.ONLINE -> !enabled || AiSettingsStore.isValidBackendUrl(url)
-        AiMode.GAPGPT_DIRECT -> GapGptDirectContract.normalizeBaseUrl(directUrl) != null && keyValid &&
-            (!enabled || hasDirectKey || apiKey.isNotBlank() || forgetKey)
-    }
-    fun candidate() = current.copy(
-        enabled = enabled, mode = mode, backendUrl = url, model = model, clientToken = token,
-        gapGptBaseUrl = directUrl, gapGptModel = directModel,
-    )
-
+    val valid = apiKey.isBlank() || OpenRouterFreePolicy.normalizeKey(apiKey) != null
+    fun candidate() = current.copy(enabled = enabled, mode = mode, openRouterModel = model)
     AlertDialog(
         onDismissRequest = { if (!saving) onDismiss() },
-        title = { Text("تنظیمات دستیار") },
+        properties = DialogProperties(securePolicy = SecureFlagPolicy.SecureOn),
+        title = { Text("تنظیمات ایجنت فارسی") },
         text = {
-            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Column(Modifier.verticalScroll(rememberScrollState()).testTag("ai-settings"), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("فعال بودن گفتگوی دستیار", Modifier.weight(1f))
-                    Switch(checked = enabled, onCheckedChange = { enabled = it }, enabled = !saving)
+                    Text("فعال بودن گفتگو", Modifier.weight(1f)); Switch(checked = enabled, onCheckedChange = { enabled = it }, enabled = !saving)
                 }
-                Text("قوانین تأییدشده مستقل از گفتگو اجرا می‌شوند؛ برای توقف یا حذفشان از کارهای خودکار استفاده کنید.", style = MaterialTheme.typography.labelMedium)
-                listOf(
-                    AiMode.LOCAL to "داخلی — بدون API",
-                    AiMode.GAPGPT_DIRECT to "اتصال مستقیم GapGPT",
-                    AiMode.ONLINE to "بک‌اند شخصی خودرویار",
-                ).forEach { (choice, title) ->
+                listOf(AiMode.OPENROUTER to "OpenRouter — فقط رایگان", AiMode.LOCAL to "دستیار داخلی — بدون مدل/شبکه").forEach { (choice, label) ->
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         RadioButton(selected = mode == choice, onClick = { mode = choice }, enabled = !saving)
-                        TextButton(onClick = { mode = choice }, enabled = !saving) { Text(title) }
+                        TextButton(onClick = { mode = choice }, enabled = !saving) { Text(label) }
                     }
                 }
-                when (mode) {
-                    AiMode.LOCAL -> Text(
-                        "محاسبات، هزینه و سرویس بدون API هوش مصنوعی یا دانلود مدل انجام می‌شوند. گفتگوی مرحله‌ای دارد، ولی مدل زبانی عمومی نیست. فقط دریافت ترافیک تازه به اینترنت و کلید نشان نیاز دارد. فعال‌سازی هر قانون تأیید می‌خواهد.",
-                        style = MaterialTheme.typography.bodyMedium,
+                Text("کارهای خودکارِ قبلاً تأییدشده مستقل‌اند؛ توقف/حذفشان از همان بخش انجام می‌شود.", style = MaterialTheme.typography.labelSmall)
+                if (mode == AiMode.OPENROUTER) {
+                    Text("ارائه‌دهنده: OpenRouter · اتصال مستقیم با کلید خودتان؛ بدون سرور واسط", fontWeight = FontWeight.SemiBold)
+                    Text(OpenRouterFreePolicy.BASE_URL, style = MaterialTheme.typography.labelSmall.copy(textDirection = TextDirection.Ltr))
+                    OutlinedTextField(
+                        value = apiKey, onValueChange = { apiKey = it.take(512); if (it.isNotBlank()) forgetKey = false }, singleLine = true,
+                        label = { Text("API Key حساب OpenRouter") },
+                        placeholder = { Text(if (hasOpenRouterKey && !forgetKey) "خالی = حفظ کلید رمزنگاری‌شده" else "کلید را فقط اینجا وارد کنید") },
+                        supportingText = { Text(if (forgetKey) "با ذخیره، کلید حذف می‌شود." else if (hasOpenRouterKey) "کلید امن موجود است؛ مقدار ذخیره‌شده بازنمایش نمی‌شود. برای تعویض، کلید جدید وارد کنید." else "کلید با Android Keystore رمزنگاری می‌شود؛ در گفتگو ننویسید.") },
+                        isError = !valid, enabled = !saving,
+                        visualTransformation = if (showKey) VisualTransformation.None else PasswordVisualTransformation(),
+                        trailingIcon = { IconButton(onClick = { showKey = !showKey }) { Icon(if (showKey) Icons.Outlined.VisibilityOff else Icons.Outlined.Visibility, if (showKey) "پنهان کردن کلید" else "نمایش کلید واردشده") } },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                        shape = FieldShape, colors = fieldColors(), textStyle = ltr, modifier = Modifier.fillMaxWidth().testTag("openrouter-key"),
                     )
-                    AiMode.GAPGPT_DIRECT -> {
-                        Text("آدرس سرویس (مطابق راهنمای GapGPT):", fontWeight = FontWeight.SemiBold)
-                        listOf(
-                            GapGptDirectContract.PRIMARY_BASE_URL to "اصلی — api.gapgpt.app",
-                            GapGptDirectContract.CDN_BASE_URL to "CDN خارجی — api.gapapi.com",
-                        ).forEach { (base, label) ->
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                RadioButton(selected = GapGptDirectContract.normalizeBaseUrl(directUrl) == base, onClick = { directUrl = base }, enabled = !saving)
-                                TextButton(onClick = { directUrl = base }, enabled = !saving) { Text(label) }
-                            }
+                    if (hasOpenRouterKey && !forgetKey) TextButton(onClick = { forgetKey = true; apiKey = "" }, enabled = !saving) { Text("حذف کلید با ذخیرهٔ تنظیمات") }
+                    Text("مدل انتخابی: $model", style = MaterialTheme.typography.bodyMedium.copy(textDirection = TextDirection.Content), modifier = Modifier.testTag("openrouter-model"))
+                    Text(if (models.any { it.id == model }) "قیمت صفر و پشتیبانی ابزار در آخرین بررسی تأیید شد؛ پیش از هر درخواست دوباره بررسی می‌شود." else "هنوز در فهرست تازه تأیید نشده؛ ابتدا ذخیره و آزمایش اتصال را بزنید.", style = MaterialTheme.typography.labelSmall)
+                    Box {
+                        OutlinedButton(onClick = { chooseModel = true }, enabled = !saving && models.isNotEmpty()) { Text("انتخاب از مدل‌های رایگان تأییدشده") }
+                        DropdownMenu(expanded = chooseModel, onDismissRequest = { chooseModel = false }) {
+                            models.forEach { choice -> DropdownMenuItem(text = { Text(choice.id, style = MaterialTheme.typography.bodySmall.copy(textDirection = TextDirection.Ltr)) },
+                                onClick = { model = choice.id; chooseModel = false }) }
                         }
-                        Text("POST " + GapGptDirectContract.chatUrl(directUrl).orEmpty(), style = MaterialTheme.typography.labelSmall.copy(textDirection = TextDirection.Ltr))
-                        OutlinedTextField(
-                            value = directModel, onValueChange = { directModel = it.take(100) }, singleLine = true,
-                            label = { Text("مدل GapGPT (خالی = gpt-4o)") },
-                            supportingText = { Text("مثلاً gpt-4o یا gemini-2.5-pro؛ باید در حساب شما قابل استفاده باشد.") },
-                            enabled = !saving, shape = FieldShape, colors = fieldColors(), textStyle = ltr,
-                            modifier = Modifier.fillMaxWidth(),
-                        )
-                        OutlinedTextField(
-                            value = apiKey, onValueChange = { apiKey = it.take(4096); if (it.isNotBlank()) forgetKey = false }, singleLine = true,
-                            label = { Text("API Key واقعی حساب GapGPT") },
-                            placeholder = { Text(if (hasDirectKey && !forgetKey) "خالی = حفظ کلید رمزنگاری‌شده" else "کلید را فقط اینجا وارد کنید") },
-                            supportingText = { Text(if (forgetKey) "کلید ذخیره‌شده با ذخیرهٔ تنظیمات پاک می‌شود." else if (hasDirectKey) "کلید رمزنگاری‌شده روی گوشی موجود است؛ نمایش داده نمی‌شود." else "YOUR_GAPGPT_API_KEY کلید واقعی نیست. کلید را در چت نفرستید.") },
-                            isError = !keyValid,
-                            visualTransformation = PasswordVisualTransformation(),
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
-                            enabled = !saving, shape = FieldShape, colors = fieldColors(), textStyle = ltr,
-                            modifier = Modifier.fillMaxWidth(),
-                        )
-                        if (hasDirectKey && !forgetKey) TextButton(onClick = { forgetKey = true; apiKey = "" }, enabled = !saving) { Text("حذف کلید از گوشی هنگام ذخیره") }
-                        Text(
-                            "کلید شخصی شما با Android Keystore رمزنگاری می‌شود؛ داخل APK، بکاپ یا تاریخچه نیست. Redirect و تغییر خودکار CDN انجام نمی‌شود. اتصال و تست واقعی ممکن است اعتبار مصرف کنند.",
-                            style = MaterialTheme.typography.labelMedium,
-                        )
                     }
-                    AiMode.ONLINE -> {
-                        OutlinedTextField(
-                            value = url, onValueChange = { url = it }, singleLine = true, shape = FieldShape, colors = fieldColors(),
-                            label = { Text("آدرس HTTPS بک‌اند خودرویار") }, textStyle = ltr, enabled = !saving,
-                            supportingText = { Text("این فیلد برای سرور واسطِ مستقرشده است، نه آدرس خود GapGPT.") },
-                            isError = url.isNotBlank() && !AiSettingsStore.isValidBackendUrl(url),
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
-                            modifier = Modifier.fillMaxWidth(),
-                        )
-                        if (GapGptDirectContract.isProviderHost(url)) {
-                            Text("این آدرس متعلق به خود GapGPT است و /v1/chat بک‌اند را ندارد. اتصال مستقیم را انتخاب کنید.", color = MaterialTheme.colorScheme.error)
-                            OutlinedButton(onClick = { directUrl = GapGptDirectContract.normalizeBaseUrl(url) ?: GapGptDirectContract.PRIMARY_BASE_URL; mode = AiMode.GAPGPT_DIRECT }, enabled = !saving) { Text("استفاده از اتصال مستقیم GapGPT") }
-                        }
-                        OutlinedTextField(
-                            value = model, onValueChange = { model = it.take(100) }, singleLine = true, shape = FieldShape, colors = fieldColors(),
-                            label = { Text("مدل (خالی = پیش‌فرض بک‌اند)") }, textStyle = ltr, enabled = !saving,
-                            modifier = Modifier.fillMaxWidth(),
-                        )
-                        OutlinedTextField(
-                            value = token, onValueChange = { token = it }, singleLine = true, shape = FieldShape, colors = fieldColors(),
-                            label = { Text("توکن بک‌اند، نه API Key") }, textStyle = ltr, enabled = !saving,
-                            visualTransformation = PasswordVisualTransformation(),
-                            modifier = Modifier.fillMaxWidth(),
-                        )
-                        Text("در این حالت کلید سرویس مدل فقط روی سرور شماست. برای API مستقیم، گزینهٔ جداگانهٔ بالا را انتخاب کنید.", style = MaterialTheme.typography.labelMedium)
-                    }
-                }
-                val canTest = valid && !saving && enabled && !(mode == AiMode.GAPGPT_DIRECT && forgetKey && apiKey.isBlank())
+                    Text("فقط openrouter/free یا :free با قیمت واقعاً صفر و ابزار مجاز است. مدل پولی، خرید اعتبار، تغییر خودکار مدل و fallback به اتصال قدیمی نداریم. سهمیه و دسترسی روزانه دست OpenRouter است؛ ممکن است مدل رایگانِ سازگار موجود نباشد.", style = MaterialTheme.typography.labelMedium)
+                    Text("پیام و خلاصهٔ لازم به OpenRouter/ارائه‌دهندهٔ مدل می‌رود؛ اصل دیتابیس/سند ارسال نمی‌شود. کلید در APK، بکاپ، تاریخچه و متن ساده ذخیره نمی‌شود. محافظت اسکرین‌شات برای همین پنجره فعال است.", style = MaterialTheme.typography.labelSmall)
+                } else Text("قابلیت‌های داخلی و ثبت دستی آفلاین حفظ‌اند. این حالت مدل زبانی عمومی نیست و چیزی دانلود نمی‌کند. برای درک آزاد فارسی از ایجنت OpenRouter استفاده کنید.")
                 OutlinedButton(onClick = {
-                    onTest(candidate(), apiKey, forgetKey)
-                    apiKey = ""
-                    forgetKey = false
-                }, enabled = canTest) {
-                    Text(if (mode == AiMode.LOCAL) "ذخیره و بررسی حالت داخلی" else if (mode == AiMode.GAPGPT_DIRECT) "ذخیره و ارسال تست واقعی (مصرف اعتبار)" else "ذخیره و آزمایش بک‌اند")
+                    onTest(candidate(), apiKey, forgetKey); apiKey = ""; showKey = false; forgetKey = false
+                }, enabled = valid && !saving && enabled && !(forgetKey && apiKey.isBlank()), modifier = Modifier.testTag("openrouter-test")) {
+                    Text(if (mode == AiMode.LOCAL) "ذخیره و بررسی داخلی" else "ذخیره و تست اتصال/ابزار رایگان")
                 }
-                if (saving) Text("در حال ذخیرهٔ امن تنظیمات…", style = MaterialTheme.typography.bodySmall)
-                settingsError?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
-                testMessage?.let { Text(it, style = MaterialTheme.typography.bodySmall.copy(textDirection = TextDirection.Content)) }
+                if (saving) Text("در حال ذخیرهٔ امن…")
+                settingsError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+                testMessage?.let { Text(it, modifier = Modifier.testTag("openrouter-test-result"), style = MaterialTheme.typography.bodySmall.copy(textDirection = TextDirection.Content)) }
             }
         },
-        confirmButton = { Button(onClick = { onSave(candidate(), apiKey, forgetKey) }, enabled = valid && !saving) { Text("ذخیره") } },
+        confirmButton = { Button(onClick = { onSave(candidate(), apiKey, forgetKey); apiKey = ""; showKey = false }, enabled = valid && !saving) { Text("ذخیره") } },
         dismissButton = { TextButton(onClick = onDismiss, enabled = !saving) { Text("بستن") } },
     )
 }

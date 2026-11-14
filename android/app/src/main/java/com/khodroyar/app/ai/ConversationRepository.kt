@@ -2,6 +2,8 @@ package com.khodroyar.app.ai
 
 import android.content.Context
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
@@ -23,8 +25,10 @@ class ConversationRepository(context: Context) {
     }
 
     suspend fun save(conversation: Conversation) = withContext(Dispatchers.IO) {
+        val coroutine = currentCoroutineContext()
         synchronized(lock) {
-            val trimmedMessages = conversation.messages.takeLast(AiLimits.MAX_STORED_MESSAGES)
+            coroutine.ensureActive()
+            val trimmedMessages = conversation.messages.takeLast(AiLimits.MAX_STORED_MESSAGES).map { it.copy(text = OpenRouterFreePolicy.redactCredentials(it.text)) }
             val updated = conversation.copy(messages = trimmedMessages)
             val all = readAll().filter { it.id != updated.id } + updated
             val kept = all.sortedByDescending { it.updatedAt }.take(AiLimits.MAX_STORED_CONVERSATIONS)
@@ -78,7 +82,7 @@ class ConversationRepository(context: Context) {
         val msgs = (0 until ma.length()).mapNotNull { i ->
             val m = ma.optJSONObject(i) ?: return@mapNotNull null
             val role = runCatching { ChatRole.valueOf(m.optString("role")) }.getOrNull() ?: return@mapNotNull null
-            ChatEntry(m.optString("id", UUID.randomUUID().toString()), role, m.optString("text", ""), m.optLong("createdAt", 0L))
+            ChatEntry(m.optString("id", UUID.randomUUID().toString()), role, OpenRouterFreePolicy.redactCredentials(m.optString("text", "")), m.optLong("createdAt", 0L))
         }
         val id = o.optString("id", "")
         if (id.isBlank()) return null

@@ -15,6 +15,11 @@ on:
         required: false
         type: boolean
         default: false
+      upload_artifact:
+        description: 'Requested signed Actions artifact only; does NOT publish a GitHub Release or Bazaar upload'
+        required: false
+        type: boolean
+        default: false
       evidence_run_id:
         description: 'Existing run ID for diagnostics-only: synthetic emulator crash evidence, never APKs'
         required: false
@@ -35,6 +40,11 @@ on:
         type: string
       publish_apk:
         description: 'Explicit owner permission to publish the verified signed APK'
+        required: false
+        type: boolean
+        default: false
+      upload_artifact:
+        description: 'Upload the verified signed Actions artifact after BOTH runtime jobs succeed'
         required: false
         type: boolean
         default: false
@@ -87,7 +97,7 @@ jobs:
           ref: ${{ inputs.ref || github.sha }}
 
       - name: Check private receiver HTTPS before building
-        if: ${{ !inputs.publish_apk && inputs.delivery_upload_url != '' }}
+        if: ${{ !inputs.publish_apk && !inputs.upload_artifact && inputs.delivery_upload_url != '' }}
         env:
           DELIVERY: ${{ inputs.delivery_upload_url }}
         run: |
@@ -102,7 +112,7 @@ jobs:
           PY
 
       - name: Check encrypted Git-object handoff permission
-        if: ${{ !inputs.publish_apk && inputs.delivery_upload_url == '' && inputs.delivery_public_key != '' }}
+        if: ${{ !inputs.publish_apk && !inputs.upload_artifact && inputs.delivery_upload_url == '' && inputs.delivery_public_key != '' }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -332,13 +342,13 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
-      - name: Prepare originally signed APK for owner-authorised public delivery
-        if: ${{ inputs.publish_apk }}
+      - name: Prepare originally signed APK for explicitly requested delivery
+        if: ${{ inputs.publish_apk || inputs.upload_artifact }}
         run: |
           python3 tools/public-apk-release.py prepare android/app/build/outputs/apk/release/app-release.apk android/app/build/outputs/apk/release/verification.json "$RUNNER_TEMP/public-apk" --head "$GITHUB_SHA"
 
-      - name: Upload owner-authorised signed APK candidate
-        if: ${{ inputs.publish_apk }}
+      - name: Upload requested signed APK candidate for final verification gate
+        if: ${{ inputs.publish_apk || inputs.upload_artifact }}
         uses: actions/upload-artifact@v4
         with:
           name: khodroyar-signed-release-candidate
@@ -347,7 +357,7 @@ jobs:
           retention-days: 14
 
       - name: End-to-end encrypted private delivery (no additional repository secret)
-        if: ${{ !inputs.publish_apk }}
+        if: ${{ !inputs.publish_apk && !inputs.upload_artifact }}
         env:
           KHODROYAR_ENCRYPTED_APK_UPLOAD_URL: ${{ inputs.delivery_upload_url }}
           KHODROYAR_DELIVERY_PUBLIC_KEY: ${{ inputs.delivery_public_key }}
@@ -374,6 +384,29 @@ jobs:
     uses: ./.github/workflows/android-ui-smoke.yml
     with:
       ref: ${{ inputs.ref || github.sha }}
+
+  artifact-release:
+    name: Deliver requested originally signed Actions artifact (no public Release)
+    needs: [release, ui-smoke]
+    if: ${{ inputs.upload_artifact && needs.release.result == 'success' && needs.ui-smoke.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - name: Read this run's signed and runtime-verified candidate
+        uses: actions/download-artifact@v4
+        with:
+          name: khodroyar-signed-release-candidate
+          path: ${{ runner.temp }}/verified-apk
+      - name: Deliver original signed APK, checksum and verification (not test APKs)
+        uses: actions/upload-artifact@v4
+        with:
+          name: khodroyar-original-signed-release
+          path: ${{ runner.temp }}/verified-apk/
+          if-no-files-found: error
+          retention-days: 14
 
   public-release:
     name: Publish verified signed APK and test actual public HTTPS download

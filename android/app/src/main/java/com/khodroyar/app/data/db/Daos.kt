@@ -43,6 +43,8 @@ interface ServiceDao {
 
     @Query("SELECT * FROM services WHERE id = :id")
     suspend fun byId(id: String): ServiceEntity?
+    @Query("SELECT * FROM services WHERE id LIKE :prefix || '%' LIMIT 2")
+    suspend fun byIdPrefix(prefix: String): List<ServiceEntity>
 
     @Query("""
         SELECT COUNT(*) AS count,
@@ -258,6 +260,8 @@ interface InsuranceDao {
     suspend fun allOnce(): List<InsuranceEntity>
     @Query("SELECT * FROM insurance WHERE id = :id")
     suspend fun byId(id: String): InsuranceEntity?
+    @Query("SELECT * FROM insurance WHERE id LIKE :prefix || '%' LIMIT 2")
+    suspend fun byIdPrefix(prefix: String): List<InsuranceEntity>
     @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun insert(item: InsuranceEntity)
     @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun insertAll(items: List<InsuranceEntity>)
     @Update suspend fun update(item: InsuranceEntity)

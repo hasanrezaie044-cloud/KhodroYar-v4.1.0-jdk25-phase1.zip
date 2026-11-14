@@ -5,6 +5,7 @@ import com.khodroyar.app.core.finance.MaintenanceType
 import com.khodroyar.app.core.finance.PurchaseCategory
 import com.khodroyar.app.core.jalali.Jalali
 import com.khodroyar.app.core.rates.FuelType
+import com.khodroyar.app.core.rates.ServiceType
 import com.khodroyar.app.data.db.FuelEntity
 import com.khodroyar.app.data.db.InsuranceEntity
 import com.khodroyar.app.data.db.MaintenanceEntity
@@ -259,9 +260,9 @@ class AgentToolExecutor(private val repo: AppRepository) : AgentToolRunner {
         val prefix = call.str("date") ?: if (call.has("year") || call.has("month")) prefixFor(call).first else ""
         val rows = repo.servicesByPrefixOnce(prefix).sortedByDescending { it.date }.take(call.int("limit") ?: 10)
         if (rows.isEmpty()) return ToolOutcome(true, "سرویسی ثبت نشده است.")
-        val sb = StringBuilder("سرویس‌های ثبت‌شده (تاریخ | نوع | کیلومتر | ساعت | درآمد):\n")
+        val sb = StringBuilder("سرویس‌های ثبت‌شده (شناسه | تاریخ | نوع | کیلومتر | ساعت | درآمد):\n")
         rows.forEach {
-            sb.append(it.date).append(" | ").append(clip(it.type, 16)).append(" | ").append(n(it.km)).append(" | ")
+            sb.append(it.id).append(" | ").append(it.date).append(" | ").append(ServiceType.fromWire(it.type).label).append(" | ").append(n(it.km)).append(" | ")
                 .append(n(it.hours)).append(" | ").append(n(it.income)).append('\n')
         }
         return ToolOutcome(true, sb.toString().trimEnd())

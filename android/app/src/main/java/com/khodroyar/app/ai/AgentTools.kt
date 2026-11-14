@@ -125,7 +125,7 @@ object AgentToolRegistry {
         ToolSpec("delete_expense", ToolKind.DELETE, "حذف یک هزینهٔ شخصی", listOf(id)),
         ToolSpec("delete_maintenance", ToolKind.DELETE, "حذف یک سابقهٔ تعمیر/سرویس", listOf(id)),
         ToolSpec("delete_fuel", ToolKind.DELETE, "حذف یک سوخت‌گیری", listOf(id)),
-    ) + AutomationToolSpecs.tools + DailyToolSpecs.tools + ServiceCommandSpecs.tools
+    ) + AutomationToolSpecs.tools + DailyToolSpecs.tools + ServiceCommandSpecs.tools + DomainToolSpecs.tools
 
     private val byName: Map<String, ToolSpec> = tools.associateBy { it.name }
 
