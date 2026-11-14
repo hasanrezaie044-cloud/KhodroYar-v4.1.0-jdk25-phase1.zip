@@ -27,8 +27,11 @@ internal fun AIModelSettingsPanel(
     state: AIModelState, selection: AISelectionMode, selectedId: String, enabled: Boolean,
     onSelection: (AISelectionMode) -> Unit, onModel: (String) -> Unit, onRefresh: () -> Unit,
 ) {
-    var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
-    LaunchedEffect(Unit) { while (true) { delay(10_000L); now = System.currentTimeMillis() } }
+    var freshnessTick by remember { mutableIntStateOf(0) }
+    LaunchedEffect(Unit) { while (true) { delay(10_000L); freshnessTick = (freshnessTick + 1) % 1_000_000 } }
+    // A result arriving after the dialog opened must be compared with its arrival-time clock,
+    // not the older dialog-open tick (which would incorrectly treat a fresh check as future-dated).
+    val now = remember(state, freshnessTick) { System.currentTimeMillis() }
     var expanded by remember { mutableStateOf(false) }
     var showAll by remember { mutableStateOf(false) }
     val approved = state.models.filter { it.readyAt(now) }.sortedWith(compareByDescending<AIModelView> { it.evaluation?.score ?: 0 }.thenBy { it.model.key.id })
@@ -47,6 +50,7 @@ internal fun AIModelSettingsPanel(
             OutlinedButton(onClick = { expanded = true }, enabled = enabled && approved.isNotEmpty(), modifier = Modifier.testTag("ai-manual-model-picker")) { Text("انتخاب مدل تأییدشده") }
             DropdownMenu(expanded, onDismissRequest = { expanded = false }) {
                 approved.forEach { item -> DropdownMenuItem(text = { Text(item.model.name, style = MaterialTheme.typography.bodySmall) },
+                    modifier = Modifier.testTag("ai-manual-option-${item.model.key.id}"),
                     onClick = { onModel(item.model.key.id); expanded = false }) }
             }
         }

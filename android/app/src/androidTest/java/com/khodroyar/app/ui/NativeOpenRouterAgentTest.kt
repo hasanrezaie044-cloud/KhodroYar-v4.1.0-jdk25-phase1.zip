@@ -434,8 +434,10 @@ class NativeOpenRouterAgentTest {
         compose.onNodeWithText("تنظیمات هوش مصنوعی و مدل‌ها").performClick()
         compose.waitUntil(10000) { vm.modelState.models.any { it.approved } && !vm.modelState.checking }
         compose.onNodeWithTag("ai-selection-MANUAL").performScrollTo().performClick()
-        compose.onNodeWithTag("ai-manual-model-picker").performScrollTo().performClick()
-        compose.onNode(hasText(free) and hasClickAction()).performClick()
+        // The refreshed evidence arrives AFTER the dialog-open clock; the option must be ready
+        // immediately, without waiting for a ten-second freshness tick or weakening TTL checks.
+        compose.onNodeWithTag("ai-manual-model-picker").performScrollTo().assertIsEnabled().performClick()
+        compose.onNodeWithTag("ai-manual-option-$free").assertIsDisplayed().performClick()
         screenshot("40-model-management-320", "ai-settings")
         compose.onNodeWithText("ذخیره", useUnmergedTree = false).performClick()
         compose.waitUntil(5000) { vm.settings.modelSelectionMode == AISelectionMode.MANUAL }
