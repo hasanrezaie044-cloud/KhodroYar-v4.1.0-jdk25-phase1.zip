@@ -93,8 +93,10 @@ class OpenRouterModelAdapterTest {
         assertTrue(http.requests.none { it.method == "POST" })
     }
     @Test fun modelContextIsCheckedAgainstTheConservativeInputAndOutputBeforeDispatch() = runBlocking {
-        val http = Http(); http.public = catalog(row().put("context_length", 8192)); http.user = http.public
-        val longQuery = query.copy(messages = listOf(FunctionMessage("user", "a".repeat(8000))))
+        // Keep metadata eligible (OpenRouter requires >=32768); exercise the request/context guard,
+        // rather than accidentally failing the independent account/model authorization gate first.
+        val http = Http(); http.public = catalog(row().put("context_length", 32768)); http.user = http.public
+        val longQuery = query.copy(messages = listOf(FunctionMessage("user", "a".repeat(32768))))
         val failure = adapter(http).infer(AIModelKey("openrouter", f.FREE), longQuery) as FunctionResult.Failed
         assertEquals(AiErrorKind.BAD_REQUEST, failure.error.kind)
         assertTrue(http.requests.none { it.method == "POST" })
