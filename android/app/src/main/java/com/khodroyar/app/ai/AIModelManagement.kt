@@ -86,7 +86,12 @@ object AIModelSelector {
                 .thenByDescending { health[it.key]?.uptime ?: 0.0 }.thenByDescending { it.capability.contextLength }.thenBy { it.key.id })
     }
 }
-data class AIModelView(val model: AIModel, val evaluation: AIModelEvaluation?, val availability: AIModelAvailability?, val approved: Boolean, val reason: String)
+data class AIModelView(val model: AIModel, val evaluation: AIModelEvaluation?, val availability: AIModelAvailability?, val approved: Boolean, val reason: String) {
+    /** UI and manual save must not turn an old approved snapshot into a new authorization. */
+    fun readyAt(now: Long): Boolean = approved && AIRequestPolicy.approved(model, evaluation, now) && availability?.let {
+        it.available && AIRequestPolicy.fresh(it.checkedAt, now, AIRequestPolicy.METADATA_TTL_MS)
+    } == true
+}
 data class AIModelState(
     val models: List<AIModelView> = emptyList(), val active: AIModelKey? = null, val checking: Boolean = false,
     val checkedAt: Long = 0, val message: String? = null, val notice: String? = null,
@@ -112,6 +117,7 @@ class ManagedAIProvider(
     private var models = emptyList<AIModel>()
     private var evaluations = emptyList<AIModelEvaluation>()
     private val health = mutableMapOf<AIModelKey, AIModelAvailability>()
+    private val healthMonitor = AIModelHealthMonitor()
     private val blocked = mutableMapOf<AIModelKey, Long>()
     private var lastSelection: AIModelKey? = null
     private var catalogFailure: AiResult.Failure? = null
@@ -121,9 +127,12 @@ class ManagedAIProvider(
     private fun account(): AISelectionSettings? {
         operationRevision = invalidations.get()
         val p = preferences()
-        if (!p.enabled || !p.consented) return null
+        if (!p.enabled || !p.consented) {
+            models = emptyList(); adapter.invalidate(); scope = ""; mutable.value = AIModelState()
+            return null
+        }
         if (scope != p.scope) {
-            scope = p.scope; models = emptyList(); health.clear(); blocked.clear(); lastSelection = store.active(scope)
+            scope = p.scope; models = emptyList(); health.clear(); healthMonitor.reset(); blocked.clear(); lastSelection = store.active(scope)
             evaluations = store.load(scope); catalogFailure = null; evaluationStop = null; adapter.invalidate(); mutable.value = AIModelState()
         }
         return p
@@ -221,6 +230,7 @@ class ManagedAIProvider(
                 publish(evaluation.explanation); break
             }
             store.save(scope, evaluation); evaluations = store.load(scope)
+            if (evaluation.passed) healthMonitor.reset(model.key)
             publish()
         }
     }
@@ -296,6 +306,21 @@ class ManagedAIProvider(
         } catch (e: CancellationException) { throw e }
         finally { mutable.value = mutable.value.copy(checking = false) }
     }
+    override fun reportToolProtocol(model: String, issue: NativeToolProtocolIssue): Boolean {
+        val current = preferences()
+        if (operationRevision != invalidations.get() || current.scope != scope || !current.enabled || !current.consented) return false
+        val key = lastSelection?.takeIf { it.id == model } ?: return false
+        val source = models.singleOrNull { it.key == key } ?: return false
+        if (!healthMonitor.reject(key, issue)) return false
+        val message = "پروتکل ابزار این مدل نامعتبر بود؛ برای ایمنی تا آزمون دوباره فعال نمی‌شود. نتایجِ قبلاً تأییدشده حفظ می‌شوند."
+        blocked[key] = clock() + 30 * 60_000L
+        health[key] = AIModelAvailability(false, clock(), explanation = message, errorKind = AiErrorKind.MODEL_INVALID)
+        store.save(scope, AIModelEvaluation(key, source.fingerprint, clock(), emptyList(), 0, explanation = message, errorKind = AiErrorKind.MODEL_INVALID))
+        evaluations = store.load(scope)
+        mutable.value = mutable.value.copy(active = null)
+        publish(message)
+        return true
+    }
     private fun stopAccount(error: AiResult.Failure): FunctionResult.Failed {
         // Preserve quality receipts, not a misleading currently-ready indication for a blocked account.
         health.keys.toList().forEach { health[it] = AIModelAvailability(false, clock(), explanation = error.message, errorKind = error.kind) }
@@ -306,8 +331,17 @@ class ManagedAIProvider(
         "هوش مصنوعی موقتاً آماده نیست. " + detail.orEmpty().take(240) + "\nمدل‌های مجاز/آزمون امن در چرخ‌دنده هستند. ثبت دستی آفلاین برقرار است؛ پرداخت یا تغییر Guardrail انجام نمی‌شود."))
 }
 
-/** Scheduling policy shared by foreground and the metadata-only background worker. */
-object AIModelHealthMonitor {
-    const val FOREGROUND_REFRESH_MS = 10 * 60_000L
-    const val BACKGROUND_INTERVAL_HOURS = 6L
+/** Model-health diagnostics contain no user/tool payload and never execute or replay any tool. */
+class AIModelHealthMonitor {
+    private val invalidTools = mutableMapOf<AIModelKey, Int>()
+    fun reject(key: AIModelKey, issue: NativeToolProtocolIssue): Boolean {
+        val count = (invalidTools.getOrDefault(key, 0) + if (issue == NativeToolProtocolIssue.INVALID_IDENTITIES) 2 else 1).coerceAtMost(2)
+        invalidTools[key] = count
+        return count >= 2
+    }
+    fun reset(key: AIModelKey? = null) { if (key == null) invalidTools.clear() else invalidTools.remove(key) }
+    companion object {
+        const val FOREGROUND_REFRESH_MS = 10 * 60_000L
+        const val BACKGROUND_INTERVAL_HOURS = 6L
+    }
 }

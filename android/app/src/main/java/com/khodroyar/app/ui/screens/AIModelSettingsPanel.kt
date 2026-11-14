@@ -13,6 +13,7 @@ import com.khodroyar.app.ai.*
 import com.khodroyar.app.core.jalali.Jalali
 import java.time.Instant
 import java.time.ZoneId
+import kotlinx.coroutines.delay
 
 private fun checkedTime(value: Long): String {
     if (value <= 0) return "هنوز بررسی نشده"
@@ -26,9 +27,11 @@ internal fun AIModelSettingsPanel(
     state: AIModelState, selection: AISelectionMode, selectedId: String, enabled: Boolean,
     onSelection: (AISelectionMode) -> Unit, onModel: (String) -> Unit, onRefresh: () -> Unit,
 ) {
+    var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(Unit) { while (true) { delay(10_000L); now = System.currentTimeMillis() } }
     var expanded by remember { mutableStateOf(false) }
     var showAll by remember { mutableStateOf(false) }
-    val approved = state.models.filter { it.approved }.sortedWith(compareByDescending<AIModelView> { it.evaluation?.score ?: 0 }.thenBy { it.model.key.id })
+    val approved = state.models.filter { it.readyAt(now) }.sortedWith(compareByDescending<AIModelView> { it.evaluation?.score ?: 0 }.thenBy { it.model.key.id })
     Text("مدیریت مدل هوش مصنوعی", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
     listOf(AISelectionMode.AUTOMATIC to "خودکار — بهترین مدلِ مجاز و آزموده‌شده", AISelectionMode.MANUAL to "دستی — فقط از مدل‌های تأییدشده").forEach { (mode, title) ->
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
@@ -70,7 +73,7 @@ internal fun AIModelSettingsPanel(
                 Text("بررسی ارائه‌دهنده: ${checkedTime(item.availability?.checkedAt ?: 0)}", style = MaterialTheme.typography.labelSmall)
                 Text("آزمون فارسی/ابزار: ${item.evaluation?.let { if (it.passed) "قبول · امتیاز ${it.score}/100" else "قبول نشد" } ?: "انجام نشده"} · ${checkedTime(item.evaluation?.checkedAt ?: 0)}", style = MaterialTheme.typography.bodySmall)
                 item.evaluation?.cases?.forEach { test -> Text("${if (test.passed) "✓" else "×"} ${test.name}", style = MaterialTheme.typography.labelSmall) }
-                Text(item.reason, color = if (item.approved) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
+                Text(if (item.approved && !item.readyAt(now)) "اعتبار بررسی قیمت/دسترسی تمام شده؛ پیش از انتخاب، فهرست را تازه کنید." else item.reason, color = if (item.readyAt(now)) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
             }
         }
     }

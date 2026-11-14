@@ -238,10 +238,14 @@ jobs:
         with:
           name: khodroyar-orbit-native-ui
           path: ${{ runner.temp }}/model-ui-review
-      - name: Publish only bounded synthetic chat/model screenshots (no user/key data)
+      - name: Set up bounded synthetic chat preview encoder
         run: |
           python3 -m venv "$RUNNER_TEMP/model-preview-env"
           "$RUNNER_TEMP/model-preview-env/bin/pip" --disable-pip-version-check -q install Pillow==12.0.0
-          for name in 38-openrouter-approval-320-large-font 39-ai-fullscreen-320 40-model-management-320; do
-            "$RUNNER_TEMP/model-preview-env/bin/python" tools/ui-previews.py "$RUNNER_TEMP/model-ui-review" "$name"
-          done
+      # Each image needs its own step: GitHub retains at most ten notice annotations per step.
+      - name: Explicit approval at compact width
+        run: '"$RUNNER_TEMP/model-preview-env/bin/python" tools/ui-previews.py "$RUNNER_TEMP/model-ui-review" 38-openrouter-approval-320-large-font'
+      - name: Full-screen chat after verified model failover
+        run: '"$RUNNER_TEMP/model-preview-env/bin/python" tools/ui-previews.py "$RUNNER_TEMP/model-ui-review" 39-ai-fullscreen-320'
+      - name: Approved-only manual model settings
+        run: '"$RUNNER_TEMP/model-preview-env/bin/python" tools/ui-previews.py "$RUNNER_TEMP/model-ui-review" 40-model-management-320'

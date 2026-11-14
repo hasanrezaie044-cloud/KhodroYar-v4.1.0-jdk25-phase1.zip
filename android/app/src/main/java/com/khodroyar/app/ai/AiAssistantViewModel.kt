@@ -178,7 +178,7 @@ class AiAssistantViewModel @JvmOverloads constructor(
             settingsError = "فقط OpenRouter رایگانِ تأییدشده یا حالت داخلی مجاز است؛ اتصال پولی/قدیمی جایگزین نمی‌شود."; return
         }
         if (new.mode == AiMode.OPENROUTER && new.modelSelectionMode == AISelectionMode.MANUAL &&
-            modelState.models.none { it.approved && it.model.key.id == new.openRouterModel }) {
+            modelState.models.none { it.readyAt(System.currentTimeMillis()) && it.model.key.id == new.openRouterModel }) {
             settingsError = "انتخاب دستی فقط از مدل‌های مجاز، رایگان و قبول‌شدهٔ همین حساب ممکن است؛ ابتدا آزمون امن را اجرا کنید."; return
         }
         val typed = apiKey.trim()

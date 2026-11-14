@@ -222,4 +222,54 @@ class AIModelManagementTest {
         assertEquals(1, adapter.requests.size)
     }
 
+    @Test fun repeatedInvalidNativeArgumentsDemoteTheModelAndTheAgentContinuesOnlyWithApprovedAlternative() = runBlocking {
+        val adapter = Adapter(); val store = Store(); adapter.records.forEach { store.save(preference.scope, passed(it)) }
+        var executions = 0
+        val runner = object : AgentToolRunner {
+            override suspend fun execute(call: ValidatedCall): ToolOutcome { executions++; return ToolOutcome(true, "نباید اجرا شود") }
+            override fun describe(call: ValidatedCall) = "نباید پیشنهاد شود"
+            override suspend fun describeTarget(call: ValidatedCall): String? = null
+        }
+        adapter.handler = { key, _ -> if (key == keyA) FunctionResult.Reply(FunctionMessage("assistant", calls = listOf(
+            FunctionCall("bad_one", "invented_tool", "{}"), FunctionCall("bad_two", "get_monthly_report", "{\"month\":true}"),
+            FunctionCall("discard_read", "get_service_catalog", "{}"))), key.id)
+            else FunctionResult.Reply(FunctionMessage("assistant", "برای ادامه سؤال روشن‌تری بپرسید؛ چیزی تغییر نکرد."), key.id) }
+        val provider = managed(adapter, store)
+        val result = PersianToolAgent(provider, runner).start(listOf(ChatEntry("user", ChatRole.USER, "سؤال ساختگی", now)))
+        assertTrue(result is AgentStep.Reply); assertEquals(0, executions)
+        assertEquals(listOf(keyA, keyB), adapter.requests.map { it.first }); assertEquals(keyB, provider.state.value.active)
+        assertFalse(store.load(preference.scope).single { it.key == keyA }.passed)
+        val continued = adapter.requests.last().second.messages
+        assertTrue(continued.any { it.role == "tool" && it.toolCallId == "discard_read" && it.content.contains("کنار گذاشته شد") })
+    }
+    @Test fun invalidNativeToolsInManualModeCannotTriggerSilentInferenceWithAnotherModel() = runBlocking {
+        preference = preference.copy(mode = AISelectionMode.MANUAL, manual = keyA)
+        val adapter = Adapter(); val store = Store(); adapter.records.forEach { store.save(preference.scope, passed(it)) }
+        adapter.handler = { key, _ -> FunctionResult.Reply(FunctionMessage("assistant", calls = listOf(
+            FunctionCall("bad_one", "invented_tool", "{}"), FunctionCall("bad_two", "another_invented_tool", "{}"))), key.id) }
+        val runner = object : AgentToolRunner {
+            override suspend fun execute(call: ValidatedCall): ToolOutcome = error("Invalid calls must never execute")
+            override fun describe(call: ValidatedCall) = ""
+            override suspend fun describeTarget(call: ValidatedCall): String? = null
+        }
+        val result = PersianToolAgent(managed(adapter, store), runner).start(listOf(ChatEntry("user", ChatRole.USER, "سؤال ساختگی", now)))
+        assertTrue(result is AgentStep.Failure); assertEquals(listOf(keyA), adapter.requests.map { it.first })
+    }
+    @Test fun healthMonitorUsesOnlyBoundedViolationsAndCanBeResetAfterASuccessfulEvaluation() {
+        val health = AIModelHealthMonitor()
+        assertFalse(health.reject(keyA, NativeToolProtocolIssue.INVALID_ARGUMENTS))
+        assertTrue(health.reject(keyA, NativeToolProtocolIssue.INVALID_ARGUMENTS))
+        health.reset(keyA); assertFalse(health.reject(keyA, NativeToolProtocolIssue.INVALID_ARGUMENTS))
+        assertTrue(health.reject(keyB, NativeToolProtocolIssue.INVALID_IDENTITIES))
+        health.reset(); assertFalse(health.reject(keyB, NativeToolProtocolIssue.INVALID_ARGUMENTS))
+    }
+
+    @Test fun manualUiSnapshotsCannotAuthorizeAfterPriceAvailabilityOrEvaluationTtlExpires() {
+        val m = model(); val e = passed(m)
+        val view = AIModelView(m, e, AIModelAvailability(true, now), true, "قبول")
+        assertTrue(view.readyAt(now)); assertFalse(view.readyAt(now + AIRequestPolicy.METADATA_TTL_MS))
+        assertFalse(view.copy(availability = AIModelAvailability(true, now - AIRequestPolicy.METADATA_TTL_MS)).readyAt(now))
+        assertFalse(view.copy(evaluation = e.copy(checkedAt = now - AIRequestPolicy.EVALUATION_TTL_MS)).readyAt(now))
+    }
+
 }

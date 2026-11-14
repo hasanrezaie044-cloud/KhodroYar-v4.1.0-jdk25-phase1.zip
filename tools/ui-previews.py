@@ -13,11 +13,15 @@ import sys
 from PIL import Image
 
 root = Path(sys.argv[1])
+required = {"38-openrouter-approval-320-large-font", "39-ai-fullscreen-320", "40-model-management-320"}
+requested = sys.argv[2] if len(sys.argv) > 2 else None
 for name in ("01-home-light-fa", "20-home-line-timeline-right", "18-dashboard-bars", "19-home-dark-320-large-text", "21-reports-annual-statistics", "22-reports-recent-services", "23-report-table-320-large-text", "25-quick-entry-320-large-text", "26-quick-entry-review", "28-quick-fuel-dark-review", "29-maintenance-forecast", "31-financial-comparison", "32-automation-health", "debug-quick-edit-state", "36-count-first-320-large-font", "35b-isfahan-full-road-catalogue", "37-traffic-legacy-response-six-routes", "38-openrouter-approval-320-large-font", "39-ai-fullscreen-320", "40-model-management-320"):
     if len(sys.argv) > 2 and sys.argv[2] != name:
         continue
     path = next(root.rglob(f"{name}.png"), None)
     if path is None:
+        if requested == name and name in required:
+            raise SystemExit(f"Missing required native chat/model screenshot: {name}")
         continue
     with Image.open(path) as image:
         image = image.convert("RGB")
@@ -29,6 +33,8 @@ for name in ("01-home-light-fa", "20-home-line-timeline-right", "18-dashboard-ba
             encoded = b64encode(buffer.getvalue()).decode("ascii")
             if len(encoded) <= 18_000:
                 break
+        if len(encoded) > 18_000 and requested == name and name in required:
+            raise SystemExit(f"Could not encode required screenshot within annotation budget: {name}")
         if len(encoded) <= 18_000:
             # Check annotations retain at most 4096 message characters. Keep each
             # piece under 3100; at most six notices per image / forty-two per preview group.

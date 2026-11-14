@@ -10,9 +10,13 @@ sealed interface FunctionResult {
     data class Failed(val error: AiResult.Failure) : FunctionResult
 }
 
+enum class NativeToolProtocolIssue { INVALID_ARGUMENTS, INVALID_IDENTITIES }
+
 /** Replaceable provider boundary; no Android Context, database, or provider-specific tool executor. */
 interface FunctionCallingProvider {
     suspend fun complete(messages: List<FunctionMessage>, onText: (String) -> Unit = {}): FunctionResult
+    /** Diagnostic only: no record, arguments, prompt or executor crosses back to model management. */
+    fun reportToolProtocol(model: String, issue: NativeToolProtocolIssue): Boolean = false
 }
 
 object PersianAgentLimits {

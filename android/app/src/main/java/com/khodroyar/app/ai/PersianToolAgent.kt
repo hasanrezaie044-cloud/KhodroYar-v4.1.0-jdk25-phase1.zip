@@ -15,7 +15,7 @@ class PersianToolAgent(private val provider: FunctionCallingProvider, private va
         val ids = mutableSetOf<String>()
         val reads = mutableMapOf<String, Int>()
         val writes = mutableSetOf<String>()
-        var rounds = 0; var verifiedWrites = 0; var verifiedReads = 0
+        var rounds = 0; var verifiedWrites = 0; var verifiedReads = 0; var sourceModel = ""
         var pending: PendingAction? = null; var pendingWire: FunctionCall? = null
         var stopped = false
     }
@@ -74,7 +74,12 @@ class PersianToolAgent(private val provider: FunctionCallingProvider, private va
             while (t.queue.isNotEmpty()) {
                 val wire = t.queue.removeFirst()
                 when (val validation = FunctionToolSchemas.validate(wire)) {
-                    is ValidationResult.Invalid -> resultMessage(t, wire, ToolOutcome(false, validation.reason))
+                    is ValidationResult.Invalid -> {
+                        val rejected = provider.reportToolProtocol(t.sourceModel, NativeToolProtocolIssue.INVALID_ARGUMENTS)
+                        resultMessage(t, wire, ToolOutcome(false, validation.reason))
+                        if (rejected) while (t.queue.isNotEmpty()) resultMessage(t, t.queue.removeFirst(), ToolOutcome(false,
+                            "ادامهٔ این پاسخ به علت پروتکل نامعتبر مدل کنار گذاشته شد؛ هیچ ابزار تأییدنشده‌ای اجرا نشد."))
+                    }
                     is ValidationResult.Ok -> {
                         val call = validation.call; val signature = signature(call)
                         if (call.spec.kind == ToolKind.READ) {
@@ -115,9 +120,10 @@ class PersianToolAgent(private val provider: FunctionCallingProvider, private va
                         return AgentStep.Reply(AiTextSafety.redact(message.content).ifBlank { "پاسخ قابل نمایش دریافت نشد." } + "\n\n" + status)
                     }
                     if (message.calls.size > PersianAgentLimits.CALLS_PER_ROUND || message.calls.any { !t.ids.add(it.id) }) {
+                        provider.reportToolProtocol(reply.model, NativeToolProtocolIssue.INVALID_IDENTITIES)
                         t.stopped = true; return AgentStep.Reply("شناسهٔ ابزار تکراری/نامعتبر یا تعداد درخواست‌ها زیاد است؛ ابزارهای این پاسخ اجرا نشدند.")
                     }
-                    t.messages += message; t.queue.addAll(message.calls)
+                    t.sourceModel = reply.model; t.messages += message; t.queue.addAll(message.calls)
                 }
             }
         }
