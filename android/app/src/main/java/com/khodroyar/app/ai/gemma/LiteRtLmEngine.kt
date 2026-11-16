@@ -51,6 +51,9 @@ class LiteRtLmEngine(
     private val lock = Any()
     private var engine: Engine? = null
     private var loadedPath: String? = null
+    private var loadedWithVision = false
+    /** Vision executor init has already failed on this device — don't retry on every call. */
+    private var visionFailed = false
     private val inferenceMutex = Mutex()
 
     @Volatile var lastLoadMs: Long = -1; private set
@@ -60,41 +63,63 @@ class LiteRtLmEngine(
 
     private class LoadFailure(val kind: LocalLlmEngine.EngineError, msg: String) : Exception(msg)
 
-    /** Idempotent + thread-safe. GPU vision with automatic CPU fallback (driver quirks). */
+    /**
+     * Idempotent + thread-safe. Cascade follows Google's LiteRT-LM compliance checklist:
+     *  1) multimodal with vision on GPU (fastest when the driver cooperates),
+     *  2) multimodal with vision strictly on CPU,
+     *  3) CPU text-only engine (vision still unavailable, chat keeps working).
+     * Stages are attempted once per process; after a known vision failure the app answers
+     * image questions with an honest "not supported here" instead of re-crashing.
+     */
     private fun ensureEngine(vision: Boolean) {
         synchronized(lock) {
             val path = modelPathProvider()?.absolutePath
                 ?: throw LoadFailure(LocalLlmEngine.EngineError.NOT_INSTALLED, "model file absent")
             val current = engine
-            if (current != null && current.isInitialized() && loadedPath == path) return
-            releaseLocked()
+            if (current != null && current.isInitialized() && loadedPath == path) {
+                if (!vision || loadedWithVision) return
+                if (visionFailed) {
+                    throw LoadFailure(LocalLlmEngine.EngineError.INIT_FAILED, "vision executor is known to fail on this device")
+                }
+                // Upgrade: text-only engine is loaded but an image was attached.
+                releaseLocked()
+            } else {
+                releaseLocked()
+            }
             if (!deviceProfile.hasHeadroomForInference()) {
                 throw LoadFailure(LocalLlmEngine.EngineError.OUT_OF_MEMORY, "load-time memory check failed")
             }
             val started = SystemClock.elapsedRealtime()
-            var e = createEngine(path, vision, visionGpu = true)
-            try {
-                e.initialize()
-            } catch (first: Throwable) {
-                if (vision) {
-                    Log.w(TAG, "GPU vision init failed (${first.message}); retrying vision on CPU")
-                    runCatching { e.close() }
-                    e = createEngine(path, vision = true, visionGpu = false)
+            var e: Engine? = null
+            var withVision = false
+            if (vision && !visionFailed) {
+                for (visionGpu in listOf(true, false)) {
                     try {
-                        e.initialize()
-                    } catch (second: Throwable) {
-                        throw LoadFailure(LocalLlmEngine.EngineError.INIT_FAILED, second.message ?: "initialize failed")
+                        e = createEngine(path, vision = true, visionGpu = visionGpu).apply { initialize() }
+                        withVision = true
+                        break
+                    } catch (t: Throwable) {
+                        Log.w(TAG, "engine init failed (vision, gpu=$visionGpu): ${t.message}")
+                        runCatching { e?.close() }
+                        e = null
                     }
-                } else {
-                    throw LoadFailure(LocalLlmEngine.EngineError.INIT_FAILED, first.message ?: "initialize failed")
+                }
+                if (!withVision) visionFailed = true
+            }
+            if (e == null) {
+                try {
+                    e = createEngine(path, vision = false, visionGpu = false).apply { initialize() }
+                } catch (t: Throwable) {
+                    throw LoadFailure(LocalLlmEngine.EngineError.INIT_FAILED, t.message ?: "initialize failed")
                 }
             }
             engine = e
             loadedPath = path
+            loadedWithVision = withVision
             lastLoadMs = SystemClock.elapsedRealtime() - started
             Log.i(
                 TAG,
-                "engine ready in ${lastLoadMs}ms | nativeHeap=${Debug.getNativeHeapAllocatedSize() / (1 shl 20)}MB" +
+                "engine ready in ${lastLoadMs}ms | vision=$withVision | nativeHeap=${Debug.getNativeHeapAllocatedSize() / (1 shl 20)}MB" +
                     " | availRam=${(availRamMb())}MB",
             )
         }
@@ -120,6 +145,14 @@ class LiteRtLmEngine(
                     ensureEngine(vision = request.imageBytes != null)
                     val e = engine
                         ?: return@withLock LocalLlmEngine.Reply.Failure(LocalLlmEngine.EngineError.NOT_INSTALLED, "")
+                    if (request.imageBytes != null && !loadedWithVision) {
+                        // The vision executor genuinely failed to init on this device —
+                        // say so, never send an image payload to a text-only engine.
+                        return@withLock LocalLlmEngine.Reply.Failure(
+                            LocalLlmEngine.EngineError.FAILED,
+                            "پردازش تصویر روی این دستگاه در دسترس نیست (ساخت ویژن بارگذاری نشد). متن همچنان کار می‌کند.",
+                        )
+                    }
                     val config = ConversationConfig(
                         systemInstruction = Contents.of(request.systemPrompt),
                         initialMessages = request.history.map { turn ->
@@ -130,8 +163,10 @@ class LiteRtLmEngine(
                         thinkingConfig = if (request.disableThinking) ThinkingConfig(enableThinking = false) else null,
                     )
                     val contents = ArrayList<Content>(2)
-                    request.imageBytes?.let { contents.add(Content.ImageBytes(it)) }
+                    // LiteRT-LM compliance checklist, multi-modal section: Content.Text goes
+                    // BEFORE media content to match the model's expected content ordering.
                     contents.add(Content.Text(request.userText))
+                    request.imageBytes?.let { contents.add(Content.ImageBytes(it)) }
 
                     val t0 = SystemClock.elapsedRealtime()
                     val nativeBefore = Debug.getNativeHeapAllocatedSize()

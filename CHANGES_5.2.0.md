@@ -44,7 +44,7 @@
 ## ۲) تغییرات در فایل‌های موجود (هر تغییر حداقلی است)
 | فایل | تغییر |
 |---|---|
-| `build.gradle` | افزودن `com.google.ai.edge.litertlm:litertlm-android:0.18.1`؛ نسخه → `versionCode 55 / versionName '5.2.0'`؛ کامنت «مدل در APK نیست» |
+| `build.gradle` | افزودن `com.google.ai.edge.litertlm:litertlm-android:0.19.1`؛ نسخه → `versionCode 55 / versionName '5.2.0'`؛ کامنت «مدل در APK نیست» |
 | `proguard-rules.pro` | keep قوانین LiteRT-LM/Gson تا رنامینگ کلاس JNI نشکند |
 | `AndroidManifest.xml` | ۳ `<uses-native-library>` برای GPUهای OpenCL/Vulkan (required=false؛ استفادهٔ اختیاری، بدون نیاز به مجوز تازه) |
 | `ai/AgentTools.kt` | ابزارهای سرویس جدید + `ParamType.TIME` + رفع باگ بحرانیِ «نرمال‌سازی ارقام» که متن نمایشی فارسی را خراب می‌کرد (فضا/کما/ZWNJ پاک می‌شدند) |
@@ -62,10 +62,35 @@
 | ۷۰ تست واحد جدید (پین مدل، JSON parser، report parser، comparator، ModelStore/Verifier/DownloadManager، اعتبارسنجی سرویس، حلقهٔ local agent با engine و executor ساختگی) | ✅ ۷۰ از ۷۰ |
 | ۲۶ تست قبلی `AgentActionValidatorTest` + `ServiceToolValidationTest` | ✅ ۲۶ از ۲۶ (عدم رگرسیون ریل) |
 
+## ۳٫۵) ممیزی سازگاری با چک‌لیست رسمی LiteRT-LM (Skill «create-litert-lm-android-demo-app»)
+
+گوگل در خود ریپوی LiteRT-LM یک چک‌لیست رسمی Compliance برای اپ‌های مصرف‌کننده دارد
+(`agents/skills/create-litert-lm-android-demo-app/references/compliance_checklist_inference.md` @ v0.19.1).
+نتیجهٔ ممیزی این پروژه بر اساس آن چک‌لیست، با مرجع دقیق کد:
+
+| الزام رسمی | وضعیت | مدرک |
+|---|---|---|
+| `libOpenCL.so` (+ `libvndksupport.so`) در manifest با `required="false"` | Pass | `AndroidManifest.xml` (سه `<uses-native-library>` در `<application>`) |
+| Data classes با آرگومان نام‌دار (نه Builder) | Pass | `LiteRtLmEngine.kt: createEngine()` → `EngineConfig(modelPath=…, backend=…, visionBackend=…, maxNumTokens=…, maxNumImages=…, cacheDir=…)` و `ConversationConfig(systemInstruction=…, initialMessages=…, samplerConfig=SamplerConfig(topK=64, topP=0.95, temperature=0.1), maxOutputToken=…, thinkingConfig=ThinkingConfig(enableThinking=false))` |
+| `engine.initialize()` صریح | Pass | `LiteRtLmEngine.kt: ensureEngine()` (`.apply { initialize() }`) |
+| `Conversation` (نه Session) | Pass | `e.createConversation(config).use { … }` در همان فایل |
+| آبشار سه‌مرحله‌ای Init: چندوجهی-GPU → چندوجهی-CPU → متن-محض-CPU | Pass | `ensureEngine`: حلقهٔ `listOf(true, false)` برای vision GPU/CPU، سپس `createEngine(vision=false)`؛ پرچم `visionFailed` تا vision «یک‌بار» بشکند نه هر بار |
+| ترتیب محتوا: `Content.Text` **قبل از** مدیا | Pass (باگ پیدا و اصلاح شد) | `complete()`: `contents.add(Content.Text(...))` سپس `contents.add(Content.ImageBytes(...))` |
+| اجرای واقعی (بدون mock) در محصول | Pass | هیچ mock/fake در مسیر `main` نیست؛ fakeها فقط در `src/test` برای حلقهٔ عامل |
+| MTP برای GPU | Skipped | MTP (speculative decoding) اختیاری است و پیش‌فرض runtime OFF است؛ برای E2B نیاز مؤثر نیست |
+| Audio executor = CPU | Skipped | ورودی صوت در این اپ پیاده‌سازی نشده؛ `audioBackend` تنظیم نشده (NULL = executor صوت ساخته نمی‌شود) |
+
+## ۳٫۶) وضعیت نسخه‌ها (تأیید با سورس واقعی)
+| مؤلفه | نسخهٔ pin‌شده | چرا |
+|---|---|---|
+| LiteRT-LM AAR | `0.19.1` (آخرین stable در `maven.google.com` metadata، ۲۰۲۶‑۱۱‑۰۵) | API در تگ `v0.19.1` سمبل‌به‌سمبل با مصرف ما تطبیق داده شد (Engine/EngineConfig/Backend/Conversation/ConversationConfig/Message/Contents/Content.Text/ImageBytes/SamplerConfig/ThinkingConfig) |
+| مدل | commit `7fa1d78473894f7e736a21d920c3aa80f950c0db` از `litert-community/gemma-4-E2B-it-litert-lm` (allowlist رسمی Gallery) | commit-pin = تغییرناپذیر؛ اندازه و RAM حداقل توسط Google تأیید شده؛ CI هر بار چک می‌کند فایل در همان commit هنوز با همان اندازه هست |
+| Kotlin (پروژه) | 2.3.10 ≥ حداقل 2.3 مورد نیاز 0.17+/0.18/0.19 | در CHANGES 5.1.9 هم مصداق داشت |
+
 ## ۴) آنچه تست نشد / نیاز به CI یا دستگاه
 - کلاس‌های صرفاً-اندروید (`LiteRtLmEngine`، `ReportImagePrep`، `DeviceProfile`، `GemmaRuntime`،
   `GemmaAssistantViewModel`، `GemmaAssistantScreen`) با **بازبینی امضا به امضا در برابر سورس واقعی
-  LiteRT-LM 0.18.1 کنترل شدند** اما با کامپایلر اندروید build نشده‌اند. وظیفهٔ CI: `./gradlew testDebugUnitTest assembleRelease`، و سپس گام جدید `Verify offline model source availability` که اندازهٔ سرور را با پین در `GemmaModelSpec` مساوی می‌خواهد.
+  LiteRT-LM 0.19.1 کنترل شدند** اما با کامپایلر اندروید build نشده‌اند. وظیفهٔ CI: `./gradlew testDebugUnitTest assembleRelease`، و سپس گام جدید `Verify offline model source availability` که اندازهٔ سرور را با پین در `GemmaModelSpec` مساوی می‌خواهد.
 - **هیچ نتیجه‌ای از دستگاه (زمان اول، latency، مصرف RAM، حرارت/باتری) به‌صورت اعداد تولیدکننده‌ای در این گزارش نیست** — چون هیچ دستگاهی در محیط نبود. تمام claimهایی که می‌گویند «سبز/آفلاین است» مربوط به کد و تست واحد است، نه تست روی گوشی.
 
 ## ۵) تأیید دقت منابع دانلود (پیش از هر تلقی کاربر)
