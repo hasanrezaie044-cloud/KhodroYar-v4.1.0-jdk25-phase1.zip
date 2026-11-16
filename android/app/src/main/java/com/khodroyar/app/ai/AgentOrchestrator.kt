@@ -3,23 +3,8 @@ package com.khodroyar.app.ai
 import com.khodroyar.app.core.jalali.Jalali
 import org.json.JSONObject
 
-/** An operation the model asked for that is waiting for the user's explicit approval. */
-class PendingAction(
-    val call: ValidatedCall,
-    /** Built by the app from validated values. This, not model text, is what the user approves. */
-    val summary: String,
-    /** For deletions: the real record that would be removed. */
-    val target: String?,
-    val lead: String,
-) {
-    val destructive: Boolean get() = call.spec.kind == ToolKind.DELETE
-}
-
-sealed interface AgentStep {
-    data class Reply(val text: String) : AgentStep
-    data class Confirm(val pending: PendingAction) : AgentStep
-    data class Failure(val error: AiResult.Failure) : AgentStep
-}
+// PendingAction and AgentStep live in AgentStep.kt (pure JVM) so the offline Gemma
+// orchestrator and the tests can use the same types without Android classes.
 
 /**
  * Detects tool needs, validates them, asks for confirmation on writes/deletes and returns

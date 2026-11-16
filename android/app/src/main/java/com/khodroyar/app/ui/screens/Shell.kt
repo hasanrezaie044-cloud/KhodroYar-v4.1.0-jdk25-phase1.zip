@@ -286,6 +286,7 @@ fun CarManagerRoot(
                             ToolDestination.INSURANCE -> InsuranceScreen(repository)
                             ToolDestination.TRAFFIC -> TrafficAssistantScreen(repository)
                             ToolDestination.AI_ASSISTANT -> AiAssistantScreen()
+                            ToolDestination.GEMMA_ASSISTANT -> GemmaAssistantScreen()
 
                             /* ----------------------------------------------- tabs */
                             AppDestination.HOME -> DashboardScreen(
@@ -355,6 +356,7 @@ fun CarManagerRoot(
                 "tool_maintenance" -> listOf("تعمیرات و تعویض روغن", "کیلومتر فعلی و کیلومتر بعدی روغن را ثبت کنید؛ برنامه با سرویس‌های ثبت‌شده موعد هشدار را تشخیص می‌دهد.")
                 "tool_rates" -> listOf("نرخ‌ها", "نرخ‌های هر سال را وارد کنید. تغییر نرخ فقط روی محاسبات همان سال اثر می‌گذارد.")
                 "tool_ai_assistant" -> listOf("دستیار هوشمند", "با دستیار گفتگو کنید، گزارش بگیرید یا ثبت هزینه و سرویس را بخواهید. هر ثبت، ویرایش یا حذف فقط پس از تأیید شما انجام می‌شود.")
+                "tool_gemma_assistant" -> listOf("دستیار آفلاین Gemma", "بعد از یک‌بار دانلود مدل، بدون اینترنت و کاملاً روی دستگاه با فارسی گفتگو کنید یا از گزارش شرکت عکس بگیرید تا با سوابق‌تان مقایسه شود. هیچ چیز به سرور ارسال نمی‌شود.")
                 else -> listOf("آموزش", "این بخش برای مدیریت اطلاعات خودرو است.")
             }
             val en = when (key) {
@@ -368,6 +370,7 @@ fun CarManagerRoot(
                 "tool_maintenance" -> listOf("Maintenance & Oil", "Enter current and next oil-change mileage; the app uses recorded services to determine when the alert is due.")
                 "tool_rates" -> listOf("Rates", "Enter rates for each year. Changing a year's rates affects calculations for that year only.")
                 "tool_ai_assistant" -> listOf("Smart Assistant", "Chat, get reports, or ask to record expenses and services. Every save, edit or delete happens only after you confirm.")
+                "tool_gemma_assistant" -> listOf("Offline Assistant (Gemma)", "After a one-time model download, chat in Persian fully on-device, or photograph a company report and compare it against your records. Nothing is sent to a server.")
                 else -> listOf("Tutorial", "This section helps manage your vehicle information.")
             }
             val titles = if (settings.language == AppSettings.LANGUAGE_EN) en else fa

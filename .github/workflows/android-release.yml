@@ -102,6 +102,28 @@ jobs:
 
 
 
+      - name: Verify offline model source availability
+        # The Gemma model is NOT in the APK; the app downloads it in-app from the pinned
+        # commit of the official litert-community repo. Here we verify (at build time, in
+        # CI where network exists) that the pinned file is still served with the pinned
+        # byte size, i.e. the values compiled into GemmaModelSpec are real and reachable.
+        run: |
+          set -euo pipefail
+          EXPECTED_SIZE=$(grep -oE 'expectedSizeBytes = [0-9_]+L' android/app/src/main/java/com/khodroyar/app/ai/gemma/GemmaModelSpec.kt | grep -oE '[0-9_]+' | tr -d '_')
+          COMMIT=$(grep -oE 'pinnedCommit = "[0-9a-f]+"' android/app/src/main/java/com/khodroyar/app/ai/gemma/GemmaModelSpec.kt | grep -oE '[0-9a-f]{40}')
+          REPO=$(grep -oE 'hfRepoId = "[^"]+"' android/app/src/main/java/com/khodroyar/app/ai/gemma/GemmaModelSpec.kt | cut -d'"' -f2)
+          FILE=$(grep -oE 'modelFileName = "[^"]+"' android/app/src/main/java/com/khodroyar/app/ai/gemma/GemmaModelSpec.kt | cut -d'"' -f2)
+          echo "Spec commit=$COMMIT repo=$REPO file=$FILE size=$EXPECTED_SIZE"
+          test ${#COMMIT} -eq 40
+          test -n "$EXPECTED_SIZE"
+          META=$(curl -fsSL --max-time 60 "https://huggingface.co/api/models/$REPO/tree/$COMMIT")
+          echo "$META" | grep -q "\"path\":\"$FILE\"" || { echo "model file not present in pinned commit"; exit 1; }
+          SIZE_ON_SERVER=$(echo "$META" | python3 -c "import json,sys; m=json.load(sys.stdin); f=[e for e in m if e.get('path')=='$FILE'][0]; print(f.get('lfs',{}).get('size') or f.get('size'))")
+          echo "Server size: $SIZE_ON_SERVER"
+          test "$SIZE_ON_SERVER" = "$EXPECTED_SIZE" || { echo "PINNED SIZE MISMATCH: server=$SIZE_ON_SERVER spec=$EXPECTED_SIZE"; exit 1; }
+          curl -fsI --max-time 60 "https://huggingface.co/$REPO/resolve/$COMMIT/$FILE" >/dev/null || { echo "model resolve URL not reachable"; exit 1; }
+          echo "✅ Offline model source verified (file exists at pinned commit, size matches spec)"
+
       - name: Static checks and unit tests
         working-directory: android
         run: |
@@ -149,7 +171,11 @@ jobs:
       - name: Verify version
         run: |
           AAPT="$ANDROID_HOME/build-tools/${ANDROID_BUILD_TOOLS}/aapt2"
-          "$AAPT" dump badging android/app/build/outputs/apk/release/app-release.apk | grep -E "versionCode='54' versionName='5\.1\.9'" || exit 1
+          VC=$(grep -oE "versionCode [0-9]+" android/app/build.gradle | grep -oE "[0-9]+")
+          VN=$(grep "versionName" android/app/build.gradle | head -1 | sed -E "s/.*versionName '([^']+)'.*/\1/")
+          echo "Expected versionCode=$VC versionName=$VN"
+          "$AAPT" dump badging android/app/build/outputs/apk/release/app-release.apk \
+            | grep -E "versionCode='$VC' versionName='$VN'" || exit 1
 
       - name: Verify package name
         run: |

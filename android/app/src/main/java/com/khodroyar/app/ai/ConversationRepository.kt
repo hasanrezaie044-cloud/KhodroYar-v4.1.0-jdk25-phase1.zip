@@ -13,10 +13,17 @@ import java.util.UUID
  * NOT in the Room database: the existing database schema, migrations and backups stay untouched.
  * Deleting the history never touches any financial or vehicle record.
  */
-class ConversationRepository(context: Context) {
+class ConversationRepository(context: Context, fileName: String = FILE_ONLINE) {
 
-    private val file = File(context.applicationContext.filesDir, "ai_conversations.json")
+    private val file = File(context.applicationContext.filesDir, fileName)
     private val lock = Any()
+
+    companion object {
+        /** History of the online assistant (server-based) — unchanged default. */
+        const val FILE_ONLINE = "ai_conversations.json"
+        /** Separate file so the two assistants' histories never mix. */
+        const val FILE_GEMMA = "gemma_conversations.json"
+    }
 
     suspend fun load(): List<Conversation> = withContext(Dispatchers.IO) {
         synchronized(lock) { readAll() }
@@ -58,7 +65,10 @@ class ConversationRepository(context: Context) {
                 put("id", c.id); put("title", c.title); put("createdAt", c.createdAt); put("updatedAt", c.updatedAt)
                 put("messages", JSONArray().also { ma ->
                     c.messages.forEach { m ->
-                        ma.put(JSONObject().put("id", m.id).put("role", m.role.name).put("text", m.text).put("createdAt", m.createdAt))
+                        ma.put(
+                            JSONObject().put("id", m.id).put("role", m.role.name).put("text", m.text).put("createdAt", m.createdAt)
+                                .also { if (m.imagePath.isNotBlank()) it.put("imagePath", m.imagePath) },
+                        )
                     }
                 })
             })
@@ -77,7 +87,10 @@ class ConversationRepository(context: Context) {
         val msgs = (0 until ma.length()).mapNotNull { i ->
             val m = ma.optJSONObject(i) ?: return@mapNotNull null
             val role = runCatching { ChatRole.valueOf(m.optString("role")) }.getOrNull() ?: return@mapNotNull null
-            ChatEntry(m.optString("id", UUID.randomUUID().toString()), role, m.optString("text", ""), m.optLong("createdAt", 0L))
+            ChatEntry(
+                m.optString("id", UUID.randomUUID().toString()), role, m.optString("text", ""), m.optLong("createdAt", 0L),
+                imagePath = m.optString("imagePath", ""),
+            )
         }
         val id = o.optString("id", "")
         if (id.isBlank()) return null

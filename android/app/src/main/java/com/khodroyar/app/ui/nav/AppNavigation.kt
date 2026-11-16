@@ -29,4 +29,9 @@ enum class ToolDestination(val title: String, val englishTitle: String, val subt
     INSURANCE("بیمه و مدارک", "Insurance", "بیمه بدنه، شخص ثالث و مدارک خودرو", "Body, third-party insurance and documents", Icons.Outlined.Shield),
     TRAFFIC("دستیار ترافیک", "Traffic Assistant", "", "", Icons.Outlined.DirectionsCar),
     AI_ASSISTANT("دستیار هوشمند", "Smart Assistant", "گفتگو و مدیریت اطلاعات با هوش مصنوعی", "Chat and manage your records with AI", Icons.Outlined.AutoAwesome),
+    GEMMA_ASSISTANT(
+        "دستیار آفلاین Gemma", "Offline Assistant (Gemma)",
+        "متن و تصویر، کاملاً روی دستگاه و بدون اینترنت", "Text and image, fully on-device, no internet",
+        Icons.Outlined.Psychology,
+    ),
 }

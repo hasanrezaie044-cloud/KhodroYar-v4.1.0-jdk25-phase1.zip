@@ -4,7 +4,7 @@ import com.khodroyar.app.core.jalali.Jalali
 import org.json.JSONObject
 
 enum class ToolKind { READ, WRITE, DELETE }
-enum class ParamType { TEXT, NUMBER, INT, DATE, ENUM, ID }
+enum class ParamType { TEXT, NUMBER, INT, DATE, ENUM, ID, TIME }
 
 data class ToolParam(
     val name: String,
@@ -43,6 +43,9 @@ object AgentToolRegistry {
     private val id = ToolParam("id", ParamType.ID, required = true, desc = "شناسهٔ رکورد از خروجی ابزار list")
     private val km = ToolParam("km", ParamType.NUMBER, desc = "کیلومتر کارکرد", min = 0.0, max = 3_000_000.0)
 
+    /** Service (work-record) types the model may pick; \"auto\" = let the app's detector decide. */
+    private val SERVICE_TYPES = listOf("auto", "night", "holiday", "request", "fixed", "available", "mission")
+
     val tools: List<ToolSpec> = listOf(
         // ---- read -------------------------------------------------------
         ToolSpec("get_today_expenses", ToolKind.READ, "هزینه‌های امروز (شخصی، سوخت، تعمیرات)"),
@@ -64,6 +67,26 @@ object AgentToolRegistry {
         ToolSpec("get_vehicle_status", ToolKind.READ, "وضعیت خودرو: کیلومتر و موعد سرویس‌ها"),
         ToolSpec("create_financial_report", ToolKind.READ, "گزارش مالی کامل یک ماه یا سال (متن)", listOf(year, month)),
         // ---- write (need user confirmation) -------------------------------
+        ToolSpec(
+            "add_service", ToolKind.WRITE,
+            "ثبت سرویس/سفر کاری جدید؛ درآمد با نرخ‌های همان سال محاسبه می‌شود. نوع (شب/تعطیل/درخواستی/ثابت) اگر داده نشود توسط برنامه تشخیص داده می‌شود",
+            listOf(
+                date,
+                ToolParam("service_type", ParamType.ENUM, options = SERVICE_TYPES, desc = "نوع سرویس؛ پیش‌فرض auto"),
+                km,
+                ToolParam("hours", ParamType.NUMBER, desc = "ساعت کلی سرویس", min = 0.0, max = 24.0),
+                ToolParam("work_hours", ParamType.NUMBER, desc = "ساعت کار مؤثر", min = 0.0, max = 24.0),
+                ToolParam("start_time", ParamType.TIME, desc = "ساعت شروع HH:MM"),
+                ToolParam("end_time", ParamType.TIME, desc = "ساعت پایان HH:MM"),
+                ToolParam("origin", ParamType.TEXT, desc = "مبدأ"),
+                ToolParam("destination", ParamType.TEXT, desc = "مقصد"),
+                ToolParam("request_number", ParamType.TEXT, desc = "شماره درخواست (برای سرویس درخواستی)"),
+                ToolParam("toll_count", ParamType.INT, desc = "تعداد عوارضی/پل", min = 0.0, max = 50.0),
+                ToolParam("mission_food", ParamType.NUMBER, desc = "هزینهٔ غذای مأموریت (تومان)", min = 0.0),
+                ToolParam("mission_toll", ParamType.NUMBER, desc = "عوارضی مأموریت (تومان)", min = 0.0),
+                ToolParam("mission_fine", ParamType.NUMBER, desc = "جریمه مأموریت (تومان)", min = 0.0),
+            ),
+        ),
         ToolSpec(
             "add_expense", ToolKind.WRITE, "ثبت هزینهٔ شخصی/عمومی (غیر از تعمیر و سوخت)",
             listOf(
@@ -121,10 +144,29 @@ object AgentToolRegistry {
             "update_fuel", ToolKind.WRITE, "ویرایش سوخت‌گیری",
             listOf(id, ToolParam("liters", ParamType.NUMBER, min = 0.1, max = 500.0), ToolParam("total_cost", ParamType.NUMBER, min = 0.0), ToolParam("date", ParamType.DATE)),
         ),
+        ToolSpec(
+            "update_service", ToolKind.WRITE, "ویرایش سرویس/سفر کاری",
+            listOf(
+                id,
+                ToolParam("date", ParamType.DATE),
+                ToolParam("service_type", ParamType.ENUM, options = SERVICE_TYPES.filter { it != "auto" }),
+                ToolParam("km", ParamType.NUMBER, min = 0.0, max = 3_000_000.0),
+                ToolParam("hours", ParamType.NUMBER, min = 0.0, max = 24.0),
+                ToolParam("work_hours", ParamType.NUMBER, min = 0.0, max = 24.0),
+                ToolParam("start_time", ParamType.TIME), ToolParam("end_time", ParamType.TIME),
+                ToolParam("origin", ParamType.TEXT), ToolParam("destination", ParamType.TEXT),
+                ToolParam("request_number", ParamType.TEXT),
+                ToolParam("toll_count", ParamType.INT, min = 0.0, max = 50.0),
+                ToolParam("mission_food", ParamType.NUMBER, min = 0.0),
+                ToolParam("mission_toll", ParamType.NUMBER, min = 0.0),
+                ToolParam("mission_fine", ParamType.NUMBER, min = 0.0),
+            ),
+        ),
         // ---- delete (separate explicit confirmation) ----------------------
         ToolSpec("delete_expense", ToolKind.DELETE, "حذف یک هزینهٔ شخصی", listOf(id)),
         ToolSpec("delete_maintenance", ToolKind.DELETE, "حذف یک سابقهٔ تعمیر/سرویس", listOf(id)),
         ToolSpec("delete_fuel", ToolKind.DELETE, "حذف یک سوخت‌گیری", listOf(id)),
+        ToolSpec("delete_service", ToolKind.DELETE, "حذف یک سرویس/سفر کاری", listOf(id)),
     )
 
     private val byName: Map<String, ToolSpec> = tools.associateBy { it.name }
@@ -172,11 +214,13 @@ object AgentActionValidator {
                 in '۰'..'۹' -> sb.append('0' + (ch - '۰'))
                 in '٠'..'٩' -> sb.append('0' + (ch - '٠'))
                 '٫' -> sb.append('.')
-                '٬', ',', ' ', '\u200c' -> Unit
+                // Only leaf-level numeric strings pass through here (coerced param values),
+                // so it is safe to drop the Persian thousands separator U+066C.
+                '٬' -> Unit
                 else -> sb.append(ch)
             }
         }
-        return sb.toString()
+        return sb.toString().trim()
     }
 
     fun validate(name: String, raw: JSONObject?): ValidationResult {
@@ -232,11 +276,23 @@ object AgentActionValidator {
                 val hit = p.options.firstOrNull { it == t }
                 if (hit == null) Coerced.Bad("${p.name} باید یکی از ${p.options.joinToString("، ")} باشد.") else Coerced.Good(hit)
             }
+            ParamType.TIME -> normalizeTime(v.toString())
             ParamType.ID -> {
                 val t = v.toString().trim()
                 if (ID_RE.matches(t)) Coerced.Good(t) else Coerced.Bad("شناسهٔ رکورد نامعتبر است.")
             }
         }
+    }
+
+    /** Accepts 6:30, ۶:۳۰, 06-30 … and stores the canonical zero-padded 24h form. */
+    private fun normalizeTime(input: String): Coerced {
+        val s = normalizeDigits(input).trim().lowercase().replace('-', ':').replace('.', ':')
+        val parts = s.split(':').filter { it.isNotBlank() }
+        if (parts.size != 2) return Coerced.Bad("ساعت باید به شکل HH:MM باشد (مثل 06:30).")
+        val h = parts[0].toIntOrNull()
+        val m = parts[1].toIntOrNull()
+        if (h == null || m == null || h !in 0..23 || m !in 0..59) return Coerced.Bad("ساعت نامعتبر است.")
+        return Coerced.Good(String.format(java.util.Locale.US, "%02d:%02d", h, m))
     }
 
     private fun normalizeDate(input: String, allowFuture: Boolean): Coerced {

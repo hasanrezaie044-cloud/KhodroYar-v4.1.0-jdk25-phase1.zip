@@ -3,8 +3,11 @@ package com.khodroyar.app.ai
 import com.khodroyar.app.core.analytics.Analytics
 import com.khodroyar.app.core.finance.MaintenanceType
 import com.khodroyar.app.core.finance.PurchaseCategory
+import com.khodroyar.app.core.holidays.WorkCalendar
 import com.khodroyar.app.core.jalali.Jalali
 import com.khodroyar.app.core.rates.FuelType
+import com.khodroyar.app.core.rates.ServiceType
+import com.khodroyar.app.core.rates.ServiceTypeDetector
 import com.khodroyar.app.data.db.FuelEntity
 import com.khodroyar.app.data.db.InsuranceEntity
 import com.khodroyar.app.data.db.MaintenanceEntity
@@ -20,10 +23,21 @@ import java.util.UUID
 data class ToolOutcome(val ok: Boolean, val text: String)
 
 /**
+ * The tool-execution surface BOTH assistants use. The offline Gemma orchestrator depends
+ * on this interface (not on the Room-backed class) so the agent loop is unit-testable
+ * with a fake; the production implementation below is unchanged in behaviour.
+ */
+interface AgentToolExecutorApi {
+    suspend fun execute(call: ValidatedCall): ToolOutcome
+    suspend fun describe(call: ValidatedCall): String
+    suspend fun describeTarget(call: ValidatedCall): String?
+}
+
+/**
  * Runs validated tools through the EXISTING [AppRepository]. The model never touches the
  * database: it only names a tool; this class performs it and reports the verified result.
  */
-class AgentToolExecutor(private val repo: AppRepository) {
+class AgentToolExecutor(private val repo: AppRepository) : AgentToolExecutorApi {
 
     // ------------------------------------------------------------ formatting
 
@@ -89,10 +103,11 @@ class AgentToolExecutor(private val repo: AppRepository) {
     // ---------------------------------------------------------- confirmation
 
     /** Persian summary the USER confirms. Built from validated values, not from model prose. */
-    fun describe(call: ValidatedCall): String {
+    override suspend fun describe(call: ValidatedCall): String {
         val a = call
         fun amt(key: String) = a.dbl(key)?.let { "${n(it)} تومان" }
         return when (a.spec.name) {
+            "add_service" -> describeAddService(a)
             "add_expense" -> "ثبت هزینه: ${amt("amount")}" +
                 (a.str("category")?.let { " · دسته: ${PurchaseCategory.fromWire(it).label}" } ?: "") +
                 (a.str("title")?.let { " · «$it»" } ?: "") + " · تاریخ ${a.str("date") ?: Jalali.todayString()}"
@@ -106,13 +121,38 @@ class AgentToolExecutor(private val repo: AppRepository) {
                 " · ${FuelType.fromWire(a.str("fuel_type")).label} · تاریخ ${a.str("date") ?: Jalali.todayString()}"
             "create_reminder" -> "ایجاد یادآور: «${a.str("title")}» · انقضا ${a.str("expiry_date")}" +
                 (a.str("company")?.let { " · $it" } ?: "") + (amt("cost")?.let { " · $it" } ?: "")
-            "update_expense", "update_maintenance", "update_fuel" -> {
+            "update_expense", "update_maintenance", "update_fuel", "update_service" -> {
                 val changes = a.args.filterKeys { it != "id" }.entries.joinToString("، ") { (k, v) -> "${fieldLabel(k)}: ${if (v is Double) n(v) else v}" }
                 "ویرایش رکورد ${short(a.str("id") ?: "")}: $changes"
             }
-            "delete_expense", "delete_maintenance", "delete_fuel" -> "حذف دائمی رکورد ${short(a.str("id") ?: "")}"
+            "delete_expense", "delete_maintenance", "delete_fuel", "delete_service" -> "حذف دائمی رکورد ${short(a.str("id") ?: "")}"
             else -> a.spec.name
         }
+    }
+
+    /** Summary for a new work/service record, including a possible-duplicate warning. */
+    private suspend fun describeAddService(a: ValidatedCall): String {
+        val date = a.str("date") ?: Jalali.todayString()
+        val type = resolveServiceType(a, date)
+        val km = a.dbl("km") ?: 0.0
+        val sb = StringBuilder("ثبت سرویس جدید")
+        sb.append(" · تاریخ $date")
+        sb.append(type?.let { " · نوع: ${it.label}" } ?: " · نوع: قابل تشخیص نیست")
+        a.str("origin")?.takeIf { it.isNotBlank() }?.let { o ->
+            sb.append(" · مسیر: $o ← ${a.str("destination") ?: "نامشخص"}")
+        }
+        if (km > 0) sb.append(" · ${n(km)} کیلومتر")
+        (a.dbl("hours") ?: a.dbl("work_hours"))?.takeIf { it > 0 }?.let { sb.append(" · ${n(it)} ساعت") }
+        a.str("start_time")?.let { st -> sb.append(" · $st تا ${a.str("end_time") ?: "؟"}") }
+        a.str("request_number")?.takeIf { it.isNotBlank() }?.let { sb.append(" · درخواست $it") }
+        (a.int("toll_count") ?: 0).takeIf { it > 0 }?.let { sb.append(" · $it عوارضی") }
+        val missionBits = (a.dbl("mission_food") ?: 0.0) + (a.dbl("mission_toll") ?: 0.0) + (a.dbl("mission_fine") ?: 0.0)
+        if (missionBits > 0) sb.append(" · مأموریت ${n(missionBits)} تومان")
+        val dups = findServiceDuplicates(date, km, a.str("origin") ?: "", a.str("destination") ?: "")
+        if (dups.isNotEmpty()) {
+            sb.append("\n⚠️ برای همین تاریخ سرویس مشابهی ثبت شده (${dups.size} مورد) — اگر تکراری است لغو کنید.")
+        }
+        return sb.toString()
     }
 
     private fun fieldLabel(k: String) = when (k) {
@@ -124,12 +164,24 @@ class AgentToolExecutor(private val repo: AppRepository) {
         "description" -> "توضیح"
         "liters" -> "لیتر"
         "total_cost" -> "مبلغ کل"
+        "service_type" -> "نوع سرویس"
+        "hours" -> "ساعت"
+        "work_hours" -> "ساعت کار"
+        "start_time" -> "ساعت شروع"
+        "end_time" -> "ساعت پایان"
+        "origin" -> "مبدأ"
+        "destination" -> "مقصد"
+        "request_number" -> "شماره درخواست"
+        "toll_count" -> "تعداد عوارضی"
+        "mission_food" -> "غذای مأموریت"
+        "mission_toll" -> "عوارضی مأموریت"
+        "mission_fine" -> "جریمه مأموریت"
         else -> k
     }
 
     // ------------------------------------------------------------- execution
 
-    suspend fun execute(call: ValidatedCall): ToolOutcome = try {
+    override suspend fun execute(call: ValidatedCall): ToolOutcome = try {
         when (call.spec.name) {
             "get_today_expenses" -> todayExpenses()
             "get_monthly_report" -> periodReport(call, withBreakdown = true)
@@ -143,6 +195,7 @@ class AgentToolExecutor(private val repo: AppRepository) {
             "analyze_fuel" -> analyzeFuel(call)
             "get_vehicle_status" -> vehicleStatus()
             "create_financial_report" -> periodReport(call, withBreakdown = true)
+            "add_service" -> addServiceRecord(call)
             "add_expense" -> addExpense(call)
             "add_repair" -> addMaintenance(call, MaintenanceType.REPAIR)
             "add_car_service" -> addMaintenance(call, MaintenanceType.fromWire(call.str("service_type")))
@@ -151,9 +204,11 @@ class AgentToolExecutor(private val repo: AppRepository) {
             "update_expense" -> updateExpense(call)
             "update_maintenance" -> updateMaintenance(call)
             "update_fuel" -> updateFuel(call)
+            "update_service" -> updateServiceRecord(call)
             "delete_expense" -> deleteExpense(call)
             "delete_maintenance" -> deleteMaintenance(call)
             "delete_fuel" -> deleteFuel(call)
+            "delete_service" -> deleteServiceRecord(call)
             else -> ToolOutcome(false, "ابزار مجاز نیست.")
         }
     } catch (e: Exception) {
@@ -398,6 +453,106 @@ class AgentToolExecutor(private val repo: AppRepository) {
         else ToolOutcome(false, "ثبت سوخت تأیید نشد. لطفاً بخش سوخت را بررسی کنید.")
     }
 
+    // ----------------------------------------------------- service records
+
+    /**
+     * Type resolution uses the SAME rules as the service form: an explicit model/user
+     * choice wins; otherwise [ServiceTypeDetector] decides from holiday status (via
+     * [WorkCalendar]), start time and request number. Null = not decidable → nothing saved.
+     */
+    private suspend fun resolveServiceType(call: ValidatedCall, date: String): ServiceType? {
+        val manual = call.str("service_type")
+        if (!manual.isNullOrBlank() && manual != "auto") return ServiceType.fromWireOrNull(manual)
+        val holiday = WorkCalendar.isNonWorkingDay(date, repo.manualHolidayDatesOnce())
+        return ServiceTypeDetector.detect(call.str("start_time"), call.str("request_number"), holiday)
+    }
+
+    /** Same-date records that look like the same trip — shown as a warning, never a block. */
+    private suspend fun findServiceDuplicates(
+        date: String, km: Double, origin: String, destination: String,
+    ): List<ServiceEntity> {
+        val sameDay = repo.servicesForDateOnce(date)
+        return sameDay.filter { s ->
+            val sameTrip = km > 0 && s.km > 0 && kotlin.math.abs(s.km - km) < 0.001
+            val sameRoute = origin.isNotBlank() && s.origin == origin &&
+                destination.isNotBlank() && s.destination == destination
+            sameTrip || sameRoute
+        }
+    }
+
+    private suspend fun addServiceRecord(call: ValidatedCall): ToolOutcome {
+        val date = call.str("date") ?: Jalali.todayString()
+        val type = resolveServiceType(call, date)
+            ?: return ToolOutcome(
+                false,
+                "نوع سرویس مشخص نیست (ساعت شروع وارد نشده و تاریخ هم تعطیل نیست). " +
+                    "ساعت شروع یا نوع سرویس (شب/تعطیل/درخواستی/ثابت/در اختیار/مأموریت) را بگویید؛ چیزی ثبت نشد.",
+            )
+        val km = call.dbl("km") ?: 0.0
+        val hours = call.dbl("hours") ?: call.dbl("work_hours") ?: 0.0
+        val workHours = call.dbl("work_hours") ?: hours
+        val carType = repo.ratesFor(Jalali.parse(date)?.year ?: curYear()).defaultCarType.wire
+        val before = repo.servicesByPrefixOnce("").size
+        val id = repo.addService(
+            date = date, type = type, carType = carType,
+            km = km, hours = hours, workHours = workHours,
+            startTime = call.str("start_time") ?: "", endTime = call.str("end_time") ?: "",
+            origin = call.str("origin") ?: "", destination = call.str("destination") ?: "",
+            passengers = "", requestNumber = call.str("request_number") ?: "",
+            tollCount = call.int("toll_count") ?: 0,
+            missionFood = call.dbl("mission_food") ?: 0.0,
+            missionToll = call.dbl("mission_toll") ?: 0.0,
+            missionFine = call.dbl("mission_fine") ?: 0.0,
+        )
+        val saved = repo.service(id)
+        return if (saved != null && repo.servicesByPrefixOnce("").size == before + 1) {
+            ToolOutcome(
+                true,
+                "ثبت شد و در پایگاه‌داده تأیید شد: سرویس ${type.label} · $date" +
+                    (if (km > 0) " · ${n(km)} کیلومتر" else "") +
+                    (if (hours > 0) " · ${n(hours)} ساعت" else "") +
+                    " · درآمد محاسبه‌شده ${n(saved.income)} تومان",
+            )
+        } else ToolOutcome(false, "ثبت سرویس تأیید نشد. لطفاً فهرست سرویس‌ها را بررسی کنید.")
+    }
+
+    private suspend fun updateServiceRecord(call: ValidatedCall): ToolOutcome {
+        val old = resolve(call.str("id") ?: "", repo.servicesByPrefixOnce("")) { it.id }
+            ?: return ToolOutcome(false, "رکورد پیدا نشد یا شناسه یکتا نیست.")
+        val typeWire = call.str("service_type")?.let { ServiceType.fromWireOrNull(it)?.wire } ?: old.type
+        val upd = old.copy(
+            date = call.str("date") ?: old.date,
+            type = typeWire,
+            km = call.dbl("km") ?: old.km,
+            hours = call.dbl("hours") ?: old.hours,
+            workHours = call.dbl("work_hours") ?: old.workHours,
+            startTime = call.str("start_time") ?: old.startTime,
+            endTime = call.str("end_time") ?: old.endTime,
+            origin = call.str("origin") ?: old.origin,
+            destination = call.str("destination") ?: old.destination,
+            requestNumber = call.str("request_number") ?: old.requestNumber,
+            tollCount = call.int("toll_count") ?: old.tollCount,
+            missionFood = call.dbl("mission_food") ?: old.missionFood,
+            missionToll = call.dbl("mission_toll") ?: old.missionToll,
+            missionFine = call.dbl("mission_fine") ?: old.missionFine,
+        )
+        // Income is recomputed by the repository with the rates of the record's own year.
+        repo.updateService(upd)
+        val saved = repo.service(upd.id)
+        return if (saved != null && saved.copy(income = upd.income) == upd) {
+            ToolOutcome(true, "ویرایش شد و تأیید شد: ${ServiceType.fromWire(saved.type).label} · ${saved.date} · درآمد ${n(saved.income)} تومان")
+        } else ToolOutcome(false, "ویرایش تأیید نشد.")
+    }
+
+    private suspend fun deleteServiceRecord(call: ValidatedCall): ToolOutcome {
+        val old = resolve(call.str("id") ?: "", repo.servicesByPrefixOnce("")) { it.id }
+            ?: return ToolOutcome(false, "رکورد پیدا نشد یا شناسه یکتا نیست. چیزی حذف نشد.")
+        repo.deleteService(old.id)
+        val gone = repo.service(old.id) == null
+        return if (gone) ToolOutcome(true, "حذف شد و تأیید شد: سرویس ${ServiceType.fromWire(old.type).label} · ${old.date} · ${n(old.income)} تومان")
+        else ToolOutcome(false, "حذف تأیید نشد.")
+    }
+
     private suspend fun createReminder(call: ValidatedCall): ToolOutcome {
         val title = call.str("title") ?: return ToolOutcome(false, "عنوان مشخص نیست.")
         val expiry = call.str("expiry_date") ?: return ToolOutcome(false, "تاریخ انقضا مشخص نیست.")
@@ -486,12 +641,14 @@ class AgentToolExecutor(private val repo: AppRepository) {
     }
 
     /** Human-readable description of the record a delete would remove (shown before confirming). */
-    suspend fun describeTarget(call: ValidatedCall): String? {
+    override suspend fun describeTarget(call: ValidatedCall): String? {
         val idArg = call.str("id") ?: return null
         return when (call.spec.name) {
             "delete_expense" -> resolve(idArg, repo.personalExpenses("").first()) { it.id }?.let { "هزینه ${n(it.amount)} تومان · ${clip(it.title)} · ${it.date}" }
             "delete_maintenance" -> resolve(idArg, repo.maintenancesByPrefixOnce("")) { it.id }?.let { "${it.typeText} · ${n(it.cost)} تومان · ${it.date}" }
             "delete_fuel" -> resolve(idArg, repo.fuelsByPrefixOnce("")) { it.id }?.let { "سوخت ${n(it.liters)} لیتر · ${n(it.total)} تومان · ${it.date}" }
+            "delete_service" -> resolve(idArg, repo.servicesByPrefixOnce("")) { it.id }
+                ?.let { "سرویس ${ServiceType.fromWire(it.type).label} · ${it.date} · ${n(it.income)} تومان · ${n(it.km)} کیلومتر" }
             else -> null
         }
     }

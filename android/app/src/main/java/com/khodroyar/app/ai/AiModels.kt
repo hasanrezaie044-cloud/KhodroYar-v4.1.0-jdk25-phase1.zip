@@ -46,6 +46,12 @@ data class ChatEntry(
     val role: ChatRole,
     val text: String,
     val createdAt: Long,
+    /**
+     * Optional absolute path of an image attached by the user (offline Gemma assistant
+     * only). Empty for the online assistant. Not restored as a vision input on reload —
+     * the thumbnail is display-only after a restart.
+     */
+    val imagePath: String = "",
 )
 
 data class Conversation(

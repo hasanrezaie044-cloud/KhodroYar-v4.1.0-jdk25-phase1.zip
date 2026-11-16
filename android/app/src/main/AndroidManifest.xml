@@ -55,6 +55,13 @@
         android:enableOnBackInvokedCallback="true"
         android:theme="@style/Theme.CarManagement">
 
+        <!-- LiteRT-LM GPU backend (optional, required=false): lets the offline Gemma
+             assistant use OpenCL when the device ships the vendor libraries. Not a
+             permission; without them the runtime falls back to CPU automatically. -->
+        <uses-native-library android:name="libvndksupport.so" android:required="false" />
+        <uses-native-library android:name="libOpenCL.so" android:required="false" />
+        <uses-native-library android:name="libOpenGL.so" android:required="false" />
+
         <activity
             android:name=".MainActivity"
             android:exported="true"
