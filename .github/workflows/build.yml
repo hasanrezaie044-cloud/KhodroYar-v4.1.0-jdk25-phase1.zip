@@ -45,6 +45,23 @@ jobs:
         run: |
           set -euo pipefail
           chmod +x ./gradlew
+          gradle_log="$RUNNER_TEMP/gradle-build.log"
+          run_gradle() {
+            local result=0
+            ./gradlew "$@" --no-daemon --stacktrace >"$gradle_log" 2>&1 || result=$?
+            cat "$gradle_log"
+            if [[ "$result" -ne 0 ]]; then
+              python3 - "$gradle_log" <<'PY'
+          import pathlib, sys
+          lines = pathlib.Path(sys.argv[1]).read_text(errors="replace").splitlines()
+          markers = [line for line in lines if "e: " in line or "error:" in line.lower() or "FAILURE:" in line]
+          excerpt = "\n".join((markers[-35:] if markers else lines[-80:]))[-8000:]
+          excerpt = excerpt.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A").replace(":", "%3A").replace(",", "%2C")
+          print(f"::error title=Gradle build failed::{excerpt}")
+          PY
+              return "$result"
+            fi
+          }
           if [[ -n "$KEYSTORE_BASE64" && -n "$KEYSTORE_PASSWORD" && -n "$KEY_ALIAS" && -n "$KEY_PASSWORD" ]]; then
             signing_dir="$RUNNER_TEMP/khodroyar-signing"
             mkdir -p "$signing_dir"
@@ -54,12 +71,12 @@ jobs:
             export ANDROID_KEYSTORE_PASSWORD="$KEYSTORE_PASSWORD"
             export ANDROID_KEY_ALIAS="$KEY_ALIAS"
             export ANDROID_KEY_PASSWORD="$KEY_PASSWORD"
-            ./gradlew :app:assembleRelease --no-daemon --stacktrace
+            run_gradle :app:assembleRelease
             cp app/build/outputs/apk/release/app-release.apk "$RUNNER_TEMP/app-release.apk"
             APK_KIND=signed-release
             echo "APK_KIND=$APK_KIND" >> "$GITHUB_ENV"
           else
-            ./gradlew :app:assembleDebug --no-daemon --stacktrace
+            run_gradle :app:assembleDebug
             cp app/build/outputs/apk/debug/app-debug.apk "$RUNNER_TEMP/app-release.apk"
             APK_KIND=debug
             echo "APK_KIND=$APK_KIND" >> "$GITHUB_ENV"
@@ -67,6 +84,15 @@ jobs:
           test -s "$RUNNER_TEMP/app-release.apk"
           sha256sum "$RUNNER_TEMP/app-release.apk" | tee "$RUNNER_TEMP/app-release.apk.sha256"
           printf 'Built %s APK: %s bytes\n' "$APK_KIND" "$(stat -c %s "$RUNNER_TEMP/app-release.apk")"
+
+      - name: Upload Gradle diagnostics on build failure
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: gradle-build-log
+          path: ${{ runner.temp }}/gradle-build.log
+          if-no-files-found: ignore
+          retention-days: 14
 
       - name: Upload APK as a workflow artifact
         uses: actions/upload-artifact@v7
