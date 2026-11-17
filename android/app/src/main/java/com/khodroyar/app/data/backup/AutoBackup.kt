@@ -11,6 +11,7 @@ import androidx.annotation.RequiresApi
 import com.khodroyar.app.core.jalali.Jalali
 import com.khodroyar.app.data.prefs.SettingsStore
 import com.khodroyar.app.data.repo.AppRepository
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -41,7 +42,13 @@ object AutoBackup {
         val today = Jalali.todayString()
         if (!force && store.current.autoBackupLastDate == today) return@withContext true
 
-        val json = AppRepository(context.applicationContext).exportBackupJson()
+        val json = try {
+            AppRepository(context.applicationContext).exportBackupJson()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            return@withContext false
+        }
         val name = PREFIX + today.replace("/", "-") + ".json"
         val place = saveToDownloads(context, json, name) ?: saveInternal(context, json, name)
             ?: return@withContext false

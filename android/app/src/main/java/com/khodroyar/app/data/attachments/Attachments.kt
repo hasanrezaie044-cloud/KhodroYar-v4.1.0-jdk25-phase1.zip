@@ -21,9 +21,10 @@ import java.io.File
  * applied. Gallery originals are often 5–10 MB; a service receipt photo does not need
  * that, and the phone's storage does.
  *
- * Only the path is stored in the database and in backup JSON. The image files are NOT
- * part of the JSON backup, so after restoring on another phone a path can point at a
- * file that is not there — callers must treat a missing file as "no photo", see [exists].
+ * Only the path is stored in the database. New full-app JSON backups embed the file bytes
+ * and replace device-specific paths with safe content IDs; older backups may contain only
+ * a local path, which can be missing after restore on another phone. Callers must treat a
+ * missing file as "no photo", see [exists].
  */
 object Attachments {
 
