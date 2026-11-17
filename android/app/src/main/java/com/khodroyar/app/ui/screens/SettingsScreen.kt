@@ -5,6 +5,8 @@ import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.*
@@ -20,10 +22,13 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.khodroyar.app.BuildConfig
+import com.khodroyar.app.R
 import com.khodroyar.app.core.holidays.IranHolidays
 import com.khodroyar.app.core.jalali.Jalali
 import com.khodroyar.app.data.backup.AutoBackup
 import com.khodroyar.app.data.backup.BackupFiles
+import com.khodroyar.app.data.backup.BackupArchive
 import com.khodroyar.app.data.legacy.LegacyBackup
 import com.khodroyar.app.data.prefs.AppSettings
 import com.khodroyar.app.data.repo.AppRepository
@@ -36,7 +41,9 @@ import com.khodroyar.app.ui.components.*
 import com.khodroyar.app.ui.theme.AppDimens
 import com.khodroyar.app.ui.theme.AppPalette
 import com.khodroyar.app.ui.theme.heroBrush
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * Settings — and settings only.
@@ -53,7 +60,7 @@ fun SettingsScreen(repository: AppRepository, settings: AppSettings, onToggleThe
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val toast = LocalToast.current
-    val sectionOpen = remember { mutableStateOf(setOf<String>()) }
+    val sectionOpen = remember { mutableStateOf(setOf("appearance")) }
     fun toggleSection(key: String) {
         sectionOpen.value = if (key in sectionOpen.value) sectionOpen.value - key else sectionOpen.value + key
     }
@@ -61,7 +68,7 @@ fun SettingsScreen(repository: AppRepository, settings: AppSettings, onToggleThe
     var profileLast by remember(settings.userLastName) { mutableStateOf(settings.userLastName) }
     val pinStore = remember { PinStore(context) }
 
-    var backupJson by remember { mutableStateOf<String?>(null) }
+    var backupArchive by remember { mutableStateOf<ByteArray?>(null) }
     var restoreJson by remember { mutableStateOf<String?>(null) }
     var restorePreview by remember { mutableStateOf<LegacyBackup.Preview?>(null) }
     var goalText by remember { mutableStateOf(settings.monthlyIncomeGoal.trimNumber().digitsOnly()) }
@@ -76,26 +83,32 @@ fun SettingsScreen(repository: AppRepository, settings: AppSettings, onToggleThe
 
     /* --- real device file storage: pick a folder/name, then actually write the file --- */
     val saveBackup = rememberLauncherForActivityResult(
-        ActivityResultContracts.CreateDocument(BackupFiles.MIME_JSON)
+        ActivityResultContracts.CreateDocument(BackupFiles.MIME_ZIP)
     ) { uri ->
-        val json = backupJson
-        if (uri == null || json == null) { toast.show("ذخیره پشتیبان لغو شد"); return@rememberLauncherForActivityResult }
-        val ok = BackupFiles.writeToUri(context, uri, json)
+        val archive = backupArchive
+        if (uri == null || archive == null) { toast.show("ذخیره پشتیبان لغو شد"); return@rememberLauncherForActivityResult }
+        val ok = BackupFiles.writeBytesToUri(context, uri, archive)
         if (ok) {
             repository.markBackupDone()
-            toast.show("فایل پشتیبان روی دستگاه ذخیره شد")
+            toast.show("فایل ZIP پشتیبان همراه تصاویر ذخیره شد")
         } else {
             toast.show("ذخیره فایل پشتیبان انجام نشد")
         }
-        backupJson = null
+        backupArchive = null
     }
 
     val pickBackup = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri == null) return@rememberLauncherForActivityResult
-        val content = BackupFiles.readFromUri(context, uri)
-        if (content == null) { toast.show("خواندن فایل انجام نشد"); return@rememberLauncherForActivityResult }
-        restoreJson = content
-        restorePreview = repository.previewBackup(content)
+        scope.launch {
+            val bytes = BackupFiles.readBytesFromUri(context, uri)
+            if (bytes == null) { toast.show("خواندن فایل انجام نشد"); return@launch }
+            runCatching { withContext(Dispatchers.IO) { BackupArchive.open(context, bytes) } }
+                .onSuccess { content ->
+                    restoreJson = content
+                    restorePreview = repository.previewBackup(content)
+                }
+                .onFailure { toast.show("فایل پشتیبان نامعتبر است: ${it.message.orEmpty()}") }
+        }
     }
 
     val requestNotifications = rememberLauncherForActivityResult(
@@ -160,7 +173,7 @@ fun SettingsScreen(repository: AppRepository, settings: AppSettings, onToggleThe
                             repository.updateSettings { it.copy(userFirstName = f, userLastName = l) }
                             toast.show(if (settings.language == AppSettings.LANGUAGE_EN) "Profile saved" else "پروفایل ذخیره شد")
                         },
-                        modifier = Modifier.fillMaxWidth().height(AppDimens.buttonHeight),
+                        modifier = Modifier.fillMaxWidth().heightIn(min = AppDimens.buttonHeight),
                         shape = FieldShape,
                     ) { Text(if (settings.language == AppSettings.LANGUAGE_EN) "Save" else "ذخیره") }
                     if (settings.displayName.isNotBlank()) {
@@ -241,12 +254,6 @@ fun SettingsScreen(repository: AppRepository, settings: AppSettings, onToggleThe
                     },
                     onSelect = { mode -> repository.updateSettings { it.copy(themeMode = mode) } },
                 )
-                Spacer(Modifier.height(8.dp))
-                Text(
-                    "حالت فعلی: ${themeLabel(settings)}",
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    style = MaterialTheme.typography.bodySmall,
-                )
             }
         }
         /* -------------------------------------------------- theme colour picker */
@@ -261,18 +268,8 @@ fun SettingsScreen(repository: AppRepository, settings: AppSettings, onToggleThe
             }
         }
         item {
-            // Privacy mode is controlled from the dashboard now, on purpose.
-            SurfaceCard {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(
-                        if (settings.privacyMode) Icons.Outlined.VisibilityOff else Icons.Outlined.Visibility,
-                        null,
-                        tint = MaterialTheme.colorScheme.primary,
-                    )
-                    Column(Modifier.weight(1f).padding(horizontal = 12.dp)) {
-                        Text("حالت حریم خصوصی", style = MaterialTheme.typography.titleMedium)
-                    }
-                }
+            SwitchRow(tr("حریم خصوصی", "Privacy"), "", settings.privacyMode) { value ->
+                repository.updateSettings { it.copy(privacyMode = value) }
             }
         }
 
@@ -290,7 +287,7 @@ fun SettingsScreen(repository: AppRepository, settings: AppSettings, onToggleThe
                         repository.updateSettings { it.copy(monthlyIncomeGoal = goalText.asDouble()) }
                         toast.show("هدف درآمد ماهانه ذخیره شد")
                     },
-                    modifier = Modifier.fillMaxWidth().height(AppDimens.buttonHeight),
+                    modifier = Modifier.fillMaxWidth().heightIn(min = AppDimens.buttonHeight),
                     shape = FieldShape,
                 ) { Text("ذخیره هدف") }
             }
@@ -301,6 +298,7 @@ fun SettingsScreen(repository: AppRepository, settings: AppSettings, onToggleThe
 
         item { CollapsibleSectionTitle("یادآورها و اعلان‌ها", icon = Icons.Outlined.NotificationsActive, expanded = "reminders" in sectionOpen.value, onToggle = { toggleSection("reminders") }, englishTitle = "Reminders & Notifications") }
         if ("reminders" in sectionOpen.value) {
+        item { BackgroundExecutionCard() }
         item {
             NotificationHealthCard(
                 status = notificationStatus,
@@ -463,8 +461,9 @@ fun SettingsScreen(repository: AppRepository, settings: AppSettings, onToggleThe
             ) {
                 scope.launch {
                     val json = repository.exportBackupJson()
-                    backupJson = json
-                    BackupFiles.writeInternalCopy(context, json, BackupFiles.suggestedFileName())
+                    val archive = withContext(Dispatchers.IO) { BackupArchive.create(context, json) }
+                    backupArchive = archive
+                    BackupFiles.writeInternalCopy(context, archive, BackupFiles.suggestedFileName())
                     saveBackup.launch(BackupFiles.suggestedFileName())
                 }
             }
@@ -473,14 +472,15 @@ fun SettingsScreen(repository: AppRepository, settings: AppSettings, onToggleThe
             ActionRow("اشتراک‌گذاری فایل پشتیبان", "ارسال با پیام‌رسان یا ایمیل", Icons.Outlined.Share) {
                 scope.launch {
                     val json = repository.exportBackupJson()
-                    val ok = BackupFiles.shareText(context, json, BackupFiles.suggestedFileName(), "اشتراک فایل پشتیبان")
-                    toast.show(if (ok) "فایل پشتیبان آماده اشتراک شد" else "ساخت فایل پشتیبان انجام نشد")
+                    val archive = withContext(Dispatchers.IO) { BackupArchive.create(context, json) }
+                    val ok = BackupFiles.shareBytes(context, archive, BackupFiles.suggestedFileName(), "اشتراک فایل پشتیبان")
+                    toast.show(if (ok) "فایل ZIP پشتیبان همراه تصاویر آماده اشتراک شد" else "ساخت فایل پشتیبان انجام نشد")
                 }
             }
         }
         item {
             ActionRow("بازگردانی از فایل", "پیش‌نمایش و تأیید قبل از جایگزینی", Icons.Outlined.Restore) {
-                pickBackup.launch(arrayOf(BackupFiles.MIME_JSON, "text/plain", "*/*"))
+                pickBackup.launch(arrayOf(BackupFiles.MIME_ZIP, BackupFiles.MIME_JSON, "text/plain", "*/*"))
             }
         }
         item {
@@ -537,7 +537,10 @@ fun SettingsScreen(repository: AppRepository, settings: AppSettings, onToggleThe
         item { CollapsibleSectionTitle("درباره برنامه", icon = Icons.Outlined.Info, expanded = "about" in sectionOpen.value, onToggle = { toggleSection("about") }, englishTitle = "About") }
         if ("about" in sectionOpen.value) {
         item { AboutCard() }
+        item { com.khodroyar.app.update.BazaarUpdateSettings() }
         item { TermsLinkCard() }
+        item { FontLicenseLink() }
+        item { BazaarLicenseLink() }
     }
 
         }
@@ -677,7 +680,7 @@ private fun NotificationHealthCard(
         if (!status.permissionGranted) {
             Button(
                 onClick = onGrant,
-                modifier = Modifier.fillMaxWidth().height(AppDimens.buttonHeight),
+                modifier = Modifier.fillMaxWidth().heightIn(min = AppDimens.buttonHeight),
                 shape = FieldShape,
             ) {
                 Icon(Icons.Outlined.NotificationsActive, null)
@@ -689,12 +692,12 @@ private fun NotificationHealthCard(
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             OutlinedButton(
                 onClick = onSendTest,
-                modifier = Modifier.weight(1f).height(AppDimens.buttonHeight),
+                modifier = Modifier.weight(1f).heightIn(min = AppDimens.buttonHeight),
                 shape = FieldShape,
             ) { Text(tr("اعلان آزمایشی", "Test notification")) }
             OutlinedButton(
                 onClick = onRecheck,
-                modifier = Modifier.weight(1f).height(AppDimens.buttonHeight),
+                modifier = Modifier.weight(1f).heightIn(min = AppDimens.buttonHeight),
                 shape = FieldShape,
             ) { Text(tr("بررسی مجدد", "Check again")) }
         }
@@ -749,7 +752,7 @@ private fun AboutCard() {
             Spacer(Modifier.height(12.dp))
             Text(tr("مدیریت خودرو", "KhodroYar"), color = Color.White, style = MaterialTheme.typography.titleLarge)
             Text(
-                "نسخه ۴",
+                "${BuildConfig.VERSION_NAME} · Orbit",
                 color = Color.White.copy(alpha = 0.82f),
                 style = MaterialTheme.typography.bodySmall,
                 textAlign = TextAlign.Center,
@@ -765,6 +768,40 @@ private fun AboutCard() {
                 textAlign = TextAlign.Center,
             )
         }
+    }
+}
+
+/** Referenced from the APK so resource shrinking also retains the full OFL copyright notice. */
+@Composable
+private fun FontLicenseLink() {
+    var show by remember { mutableStateOf(false) }
+    val context = LocalContext.current
+    OutlinedButton(onClick = { show = true }, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp), shape = FieldShape) {
+        Text(tr("مجوز فونت وزیرمتن", "Vazirmatn font licence"))
+    }
+    if (show) {
+        val licence = remember(context) { context.resources.openRawResource(R.raw.vazirmatn_license).bufferedReader().use { it.readText() } }
+        AlertDialog(onDismissRequest = { show = false }, title = { Text("Vazirmatn · OFL 1.1") },
+            text = { Column(Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState())) {
+                Text(licence, style = MaterialTheme.typography.bodySmall.copy(textDirection = androidx.compose.ui.text.style.TextDirection.Ltr))
+            } }, confirmButton = { TextButton(onClick = { show = false }) { Text(tr("بستن", "Close")) } })
+    }
+}
+
+/** Licence for the small, source-pinned official Bazaar IPC contract. */
+@Composable
+private fun BazaarLicenseLink() {
+    var show by remember { mutableStateOf(false) }
+    val context = LocalContext.current
+    TextButton(onClick = { show = true }, modifier = Modifier.fillMaxWidth()) {
+        Text(tr("مجوز رابط به‌روزرسانی بازار", "Bazaar update interface licence"))
+    }
+    if (show) {
+        val licence = remember(context) { context.resources.openRawResource(R.raw.bazaar_updater_license).bufferedReader().use { it.readText() } }
+        AlertDialog(onDismissRequest = { show = false }, title = { Text("BazaarUpdater · Apache-2.0") },
+            text = { Text(licence, modifier = Modifier.heightIn(max = 360.dp).verticalScroll(rememberScrollState()),
+                style = MaterialTheme.typography.bodySmall.copy(textDirection = androidx.compose.ui.text.style.TextDirection.Ltr)) },
+            confirmButton = { TextButton(onClick = { show = false }) { Text(tr("بستن", "Close")) } })
     }
 }
 
@@ -838,7 +875,7 @@ private fun ManualHolidaysCard(repository: AppRepository) {
                     toast.show("تعطیل دستی افزوده شد")
                 }
             },
-            modifier = Modifier.fillMaxWidth().height(AppDimens.buttonHeight),
+            modifier = Modifier.fillMaxWidth().heightIn(min = AppDimens.buttonHeight),
             shape = FieldShape,
         ) { Text(tr("افزودن تعطیل", "Add holiday")) }
 
@@ -905,7 +942,7 @@ private fun PersonnelCard(repository: AppRepository) {
                     toast.show("پرسنل افزوده شد")
                 }
             },
-            modifier = Modifier.fillMaxWidth().height(AppDimens.buttonHeight),
+            modifier = Modifier.fillMaxWidth().heightIn(min = AppDimens.buttonHeight),
             shape = FieldShape,
         ) { Text(tr("افزودن پرسنل", "Add personnel")) }
 
@@ -950,7 +987,7 @@ private fun daysAgoLabel(timestamp: Long): String {
 private fun ThemeColorPicker(selected: String, onSelect: (String) -> Unit) {
     val palettes = AppPalette.all
     Column(verticalArrangement = Arrangement.spacedBy(AppDimens.gap)) {
-        palettes.chunked(3).forEach { row ->
+        palettes.chunked(2).forEach { row ->
             Row(horizontalArrangement = Arrangement.spacedBy(AppDimens.gap)) {
                 row.forEach { palette ->
                     val isSelected = palette.wire == selected
@@ -989,7 +1026,7 @@ private fun ThemeColorPicker(selected: String, onSelect: (String) -> Unit) {
                             }
                             Spacer(Modifier.height(6.dp))
                             Text(
-                                palette.label,
+                                if (LocalLanguage.current == "en") palette.englishLabel else palette.label,
                                 style = MaterialTheme.typography.labelSmall,
                                 textAlign = TextAlign.Center,
                                 maxLines = 2,
@@ -998,7 +1035,7 @@ private fun ThemeColorPicker(selected: String, onSelect: (String) -> Unit) {
                         }
                     }
                 }
-                repeat(3 - row.size) { Spacer(Modifier.weight(1f)) }
+                repeat(2 - row.size) { Spacer(Modifier.weight(1f)) }
             }
         }
     }

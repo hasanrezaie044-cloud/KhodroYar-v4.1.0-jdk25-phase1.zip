@@ -2,14 +2,58 @@ name: KhodroYar Android APK Release
 
 on:
   push:
-    # Build on every branch push (not only main): Arena session branches arena/** then
-    # also produce the signed-release APK as a workflow artifact.
-    branches: ['**']
+    # Preserve 5.6.3's release policy: automatic release workflow only on main.
+    # Session/feature branches are built only through an explicit workflow_dispatch.
+    branches: [main]
   workflow_dispatch:
+    inputs:
+      mode:
+        description: 'Verify native UI, or build the signed release; public delivery requires publish_apk'
+        type: choice
+        options: [release, ui-only, diagnostics]
+        default: release
+      publish_apk:
+        description: 'Owner explicitly authorises a public signed APK artifact and GitHub Release after all tests pass'
+        required: false
+        type: boolean
+        default: false
+      upload_artifact:
+        description: 'Requested signed Actions artifact only; does NOT publish a GitHub Release or Bazaar upload'
+        required: false
+        type: boolean
+        default: false
+      evidence_run_id:
+        description: 'Existing run ID for diagnostics-only: synthetic emulator crash evidence, never APKs'
+        required: false
+        type: string
+      delivery_upload_url:
+        description: 'Ciphertext receiver URL (public, NEVER the user download URL)'
+        required: false
+        type: string
+      delivery_public_key:
+        description: 'Public RSA PEM for end-to-end encrypted private APK delivery'
+        required: false
+        type: string
   workflow_call:
     inputs:
       ref:
         description: 'Git ref to build'
+        required: false
+        type: string
+      publish_apk:
+        description: 'Explicit owner permission to publish the verified signed APK'
+        required: false
+        type: boolean
+        default: false
+      upload_artifact:
+        description: 'Upload the verified signed Actions artifact after BOTH runtime jobs succeed'
+        required: false
+        type: boolean
+        default: false
+      delivery_upload_url:
+        required: false
+        type: string
+      delivery_public_key:
         required: false
         type: string
     secrets:
@@ -26,7 +70,8 @@ on:
         value: ${{ jobs.release.outputs.version-name }}
 
 concurrency:
-  group: khodroyar-release-${{ github.ref }}
+  # A UI-only check must not cancel a signed APK's runtime/delivery verification.
+  group: khodroyar-release-${{ github.ref }}-${{ inputs.mode || 'release' }}
   cancel-in-progress: true
 
 env:
@@ -36,10 +81,14 @@ env:
 
 jobs:
   release:
+    if: ${{ inputs.mode != 'ui-only' && inputs.mode != 'diagnostics' }}
     name: Signed APK Release (JDK 25)
     runs-on: ubuntu-latest
+    timeout-minutes: 55
     permissions:
-      contents: read
+      # Private delivery stays the default. An explicit publish_apk=true permits
+      # a public candidate artifact; the final Release waits for BOTH test jobs.
+      contents: write
     outputs:
       version-name: ${{ steps.version.outputs.version_name }}
 
@@ -47,7 +96,36 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.ref || github.ref }}
+          ref: ${{ inputs.ref || github.sha }}
+
+      - name: Check private receiver HTTPS before building
+        if: ${{ !inputs.publish_apk && !inputs.upload_artifact && inputs.delivery_upload_url != '' }}
+        env:
+          DELIVERY: ${{ inputs.delivery_upload_url }}
+        run: |
+          python3 - <<'PY'
+          import os, urllib.parse, urllib.request
+          url = urllib.parse.urlsplit(os.environ['DELIVERY'])
+          assert url.scheme == 'https' and url.hostname and not url.username and not url.password and not url.query and not url.fragment
+          root = urllib.parse.urlunsplit((url.scheme, url.netloc, '/', '', ''))
+          with urllib.request.urlopen(urllib.request.Request(root, method='HEAD'), timeout=30) as response:
+              assert response.status == 200
+          print('::notice title=Private receiver HTTPS::Reachable with a valid HTTPS connection; no APK published and no owner capability sent to CI.')
+          PY
+
+      - name: Check encrypted Git-object handoff permission
+        if: ${{ !inputs.publish_apk && !inputs.upload_artifact && inputs.delivery_upload_url == '' && inputs.delivery_public_key != '' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 - <<'PY'
+          import base64, hashlib, json, os, secrets, subprocess
+          data = secrets.token_bytes(32)
+          payload = json.dumps(dict(encoding='base64', content=base64.b64encode(data).decode())).encode()
+          reply = json.loads(subprocess.check_output(['gh', 'api', '--method', 'POST', 'repos/' + os.environ['GITHUB_REPOSITORY'] + '/git/blobs', '--input', '-'], input=payload))
+          assert reply['sha'] == hashlib.sha1(b'blob 32\0' + data).hexdigest()
+          print('::notice title=Encrypted handoff transport::Write permission verified using random opaque bytes. No APK, ref, branch, tag or Release was published.')
+          PY
 
       - name: Set up JDK 25
         uses: actions/setup-java@v4
@@ -104,34 +182,49 @@ jobs:
 
 
 
-      - name: Verify offline model source availability
-        # The Gemma model is NOT in the APK; the app downloads it in-app from the pinned
-        # commit of the official litert-community repo. Here we verify (at build time, in
-        # CI where network exists) that the pinned file is still served with the pinned
-        # byte size, i.e. the values compiled into GemmaModelSpec are real and reachable.
+      - name: Test AI backend (mock provider, no API key)
+        working-directory: backend
+        run: npm test
+
+      - name: Verify pinned offline Gemma model source
+        # The multi-GB model is downloaded separately in-app and must never enter the APK.
+        # Check both metadata and bytes against the SAME immutable commit before release.
         run: |
           set -euo pipefail
-          EXPECTED_SIZE=$(grep -oE 'expectedSizeBytes = [0-9_]+L' android/app/src/main/java/com/khodroyar/app/ai/gemma/GemmaModelSpec.kt | grep -oE '[0-9_]+' | tr -d '_')
-          COMMIT=$(grep -oE 'pinnedCommit = "[0-9a-f]+"' android/app/src/main/java/com/khodroyar/app/ai/gemma/GemmaModelSpec.kt | grep -oE '[0-9a-f]{40}')
-          REPO=$(grep -oE 'hfRepoId = "[^"]+"' android/app/src/main/java/com/khodroyar/app/ai/gemma/GemmaModelSpec.kt | cut -d'"' -f2)
-          FILE=$(grep -oE 'modelFileName = "[^"]+"' android/app/src/main/java/com/khodroyar/app/ai/gemma/GemmaModelSpec.kt | cut -d'"' -f2)
-          echo "Spec commit=$COMMIT repo=$REPO file=$FILE size=$EXPECTED_SIZE"
-          test ${#COMMIT} -eq 40
-          test -n "$EXPECTED_SIZE"
-          META=$(curl -fsSL --max-time 60 "https://huggingface.co/api/models/$REPO/tree/$COMMIT")
-          echo "$META" | grep -q "\"path\":\"$FILE\"" || { echo "model file not present in pinned commit"; exit 1; }
-          SIZE_ON_SERVER=$(echo "$META" | python3 -c "import json,sys; m=json.load(sys.stdin); f=[e for e in m if e.get('path')=='$FILE'][0]; print(f.get('lfs',{}).get('size') or f.get('size'))")
-          echo "Server size: $SIZE_ON_SERVER"
-          test "$SIZE_ON_SERVER" = "$EXPECTED_SIZE" || { echo "PINNED SIZE MISMATCH: server=$SIZE_ON_SERVER spec=$EXPECTED_SIZE"; exit 1; }
-          curl -fsI --max-time 60 "https://huggingface.co/$REPO/resolve/$COMMIT/$FILE" >/dev/null || { echo "model resolve URL not reachable"; exit 1; }
-          echo "✅ Offline model source verified (file exists at pinned commit, size matches spec)"
+          SPEC=android/app/src/main/java/com/khodroyar/app/ai/gemma/GemmaModelSpec.kt
+          REPO=$(grep -oE 'hfRepoId = "[^"]+"' "$SPEC" | head -1 | cut -d'"' -f2)
+          FILE=$(grep -oE 'modelFileName = "[^"]+"' "$SPEC" | head -1 | cut -d'"' -f2)
+          COMMIT=$(grep -oE 'pinnedCommit = "[0-9a-f]+"' "$SPEC" | grep -oE '[0-9a-f]{40}')
+          SIZE=$(grep -oE 'expectedSizeBytes = [0-9_]+L' "$SPEC" | grep -oE '[0-9_]+' | tr -d '_')
+          test "${#COMMIT}" -eq 40
+          test -n "$REPO" && test -n "$FILE" && test -n "$SIZE"
+          META=$(curl -fsSL --retry 2 --max-time 60 "https://huggingface.co/api/models/$REPO/tree/$COMMIT")
+          echo "$META" | python3 -c 'import json,sys; x=json.load(sys.stdin); f=[e for e in x if e.get("path")==sys.argv[1]][0]; size=(f.get("lfs") or {}).get("size",f.get("size")); oid=(f.get("lfs") or {}).get("oid",""); assert int(size)==int(sys.argv[2]), (size,sys.argv[2]); assert len(oid)==64 and all(c in "0123456789abcdef" for c in oid), oid; print("Pinned commit model bytes:",size,"SHA256:",oid)' "$FILE" "$SIZE"
+          curl -fsIL --retry 2 --max-time 60 "https://huggingface.co/$REPO/resolve/$COMMIT/$FILE" >/dev/null
+          echo "Model metadata and immutable download URL verified: $REPO@$COMMIT/$FILE ($SIZE bytes)"
 
       - name: Static checks and unit tests
         working-directory: android
         run: |
           chmod +x ./gradlew
           STATIC_ONLY=1 bash ../tools/check-permissions.sh
-          ./gradlew testDebugUnitTest --stacktrace
+          python3 ../tools/verify-ocr-assets.py
+          set +e
+          ./gradlew :app:testDebugUnitTest --stacktrace 2>&1 | tee "$RUNNER_TEMP/khodroyar-tests.log"
+          TEST_EXIT=${PIPESTATUS[0]}
+          set -e
+          python3 ../tools/annotate-build-errors.py "$RUNNER_TEMP/khodroyar-tests.log"
+          python3 ../tools/summarize-tests.py app/build/test-results/testDebugUnitTest
+          test "$TEST_EXIT" -eq 0
+
+      - name: Upload Android unit test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: khodroyar-unit-tests
+          path: android/app/build/test-results/testDebugUnitTest
+          if-no-files-found: ignore
+          retention-days: 14
 
       - name: Build signed release APK
         working-directory: android
@@ -142,15 +235,39 @@ jobs:
           ANDROID_KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
           chmod +x ./gradlew
-          ./gradlew clean assembleRelease --stacktrace
+          set +e
+          ./gradlew clean :app:assembleRelease :release-smoke:assembleRelease :bazaar-fixture:assembleRelease --stacktrace 2>&1 | tee "$RUNNER_TEMP/khodroyar-release.log"
+          BUILD_EXIT=${PIPESTATUS[0]}
+          set -e
+          python3 ../tools/annotate-build-errors.py "$RUNNER_TEMP/khodroyar-release.log"
+          test "$BUILD_EXIT" -eq 0
           test -f "app/build/outputs/apk/release/app-release.apk"
           test -s "app/build/outputs/apk/release/app-release.apk"
+
+      - name: Verify Gemma model remains outside APK
+        run: |
+          APK="android/app/build/outputs/apk/release/app-release.apk"
+          if unzip -Z1 "$APK" | grep -Eqi '\.litertlm$'; then
+            echo "The multi-gigabyte Gemma model must never be bundled in the APK"; exit 1
+          fi
+          echo "No .litertlm model payload is bundled; model download remains opt-in and in-app."
+
+      - name: Enforce online-only APK size below 30 MB
+        run: |
+          APK="android/app/build/outputs/apk/release/app-release.apk"
+          BYTES=$(stat -c %s "$APK")
+          test "$BYTES" -lt 30000000 || { echo "APK exceeds the 30 MB online-only budget"; exit 1; }
+          echo "::notice title=Signed APK size::$BYTES bytes; limit 30000000 bytes"
 
       - name: Extract version
         id: version
         run: |
           VERSION=$(grep "versionName" android/app/build.gradle | head -1 | sed -E "s/.*versionName '([^']+)'.*/\1/")
+          CODE=$(grep "versionCode" android/app/build.gradle | head -1 | awk '{print $2}')
+          test -n "$VERSION"
+          [[ "$CODE" =~ ^[0-9]+$ ]]
           echo "version_name=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "version_code=$CODE" >> "$GITHUB_OUTPUT"
 
       - name: Verify APK signature
         run: |
@@ -158,6 +275,11 @@ jobs:
           APKSIGNER="$ANDROID_HOME/build-tools/${ANDROID_BUILD_TOOLS}/apksigner"
           test -x "$APKSIGNER"
           "$APKSIGNER" verify --verbose --print-certs "$APK"
+          SHA=$(sha256sum "$APK" | awk '{print $1}')
+          echo "::notice title=Signed APK SHA256::$SHA"
+          CERT=$("$APKSIGNER" verify --print-certs "$APK" | sed -n 's/^Signer #1 certificate SHA-256 digest: //p')
+          test "${#CERT}" -eq 64
+          echo "::notice title=APK signing certificate SHA256::$CERT"
           if "$APKSIGNER" verify "$APK" 2>&1 | grep -qi "DOES NOT VERIFY"; then
             echo "APK signature verification failed"
             exit 1
@@ -173,11 +295,7 @@ jobs:
       - name: Verify version
         run: |
           AAPT="$ANDROID_HOME/build-tools/${ANDROID_BUILD_TOOLS}/aapt2"
-          VC=$(grep -oE "versionCode [0-9]+" android/app/build.gradle | grep -oE "[0-9]+")
-          VN=$(grep "versionName" android/app/build.gradle | head -1 | sed -E "s/.*versionName '([^']+)'.*/\1/")
-          echo "Expected versionCode=$VC versionName=$VN"
-          "$AAPT" dump badging android/app/build/outputs/apk/release/app-release.apk \
-            | grep -E "versionCode='$VC' versionName='$VN'" || exit 1
+          "$AAPT" dump badging android/app/build/outputs/apk/release/app-release.apk | grep -F "versionCode='${{ steps.version.outputs.version_code }}' versionName='${{ steps.version.outputs.version_name }}'" || exit 1
 
       - name: Verify package name
         run: |
@@ -185,13 +303,96 @@ jobs:
           AAPT="$ANDROID_HOME/build-tools/${ANDROID_BUILD_TOOLS}/aapt2"
           "$AAPT" dump badging "$APK" | grep -E "^package: name='com\.khodroyar\.app'" || exit 1
 
-      - name: Upload signed APK
+      - name: Audit absence of retired OCR engine/models and native alignment
+        run: |
+          python3 tools/audit-ocr-apk.py android/app/build/outputs/apk/release/app-release.apk android/app/build/outputs/apk/release/verification.json
+          "$ANDROID_HOME/build-tools/${ANDROID_BUILD_TOOLS}/zipalign" -c -P 16 -v 4 android/app/build/outputs/apk/release/app-release.apk
+          AAPT="$ANDROID_HOME/build-tools/${ANDROID_BUILD_TOOLS}/aapt2"
+          if "$AAPT" dump badging android/app/build/outputs/apk/release/app-release.apk | grep -q "application-debuggable"; then
+            echo "Release APK is debuggable"; exit 1
+          fi
+          CERT=$("$ANDROID_HOME/build-tools/${ANDROID_BUILD_TOOLS}/apksigner" verify --print-certs android/app/build/outputs/apk/release/app-release.apk | sed -n 's/^Signer #1 certificate SHA-256 digest: //p')
+          test "$CERT" = "03bfbc3575667403c3259fae345f3eb1ad3045373cb62123be376ef4898caaf0" || { echo "Signing identity changed"; exit 1; }
+          python3 - <<'PY'
+          import json, subprocess
+          from pathlib import Path
+          path = Path('android/app/build/outputs/apk/release/verification.json')
+          proof = json.loads(path.read_text())
+          proof.update(package='com.khodroyar.app', version_name='${{ steps.version.outputs.version_name }}',
+              version_code=int('${{ steps.version.outputs.version_code }}'), head_sha=subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip(),
+              certificate_sha256='03bfbc3575667403c3259fae345f3eb1ad3045373cb62123be376ef4898caaf0',
+              debuggable=False, zipalign_16kb='passed', room_version=6,
+              baseline='797d7061c5f669cf4fa3e7361c0b3c2dca10490c')
+          path.write_text(json.dumps(proof, indent=2) + '\n')
+          PY
+
+      - name: Check strict instrumentation protocol parser (fixtures only)
+        run: python3 tools/test-instrumentation-summary.py
+
+      - name: Check explicit public-delivery and online-only audit guards (fixtures only)
+        run: |
+          python3 tools/test-public-apk-release.py
+          python3 tools/test-audit-ocr-apk.py
+
+      - name: Enable KVM for actual signed release verification
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Verify signed R8 daily counts, consent and Bazaar IPC (synthetic store, no live OCR)
+        uses: reactivecircus/android-emulator-runner@v2
+        env:
+          ANDROID_KEYSTORE_PATH: ${{ steps.keystore.outputs.path }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        with:
+          api-level: 35
+          arch: x86_64
+          target: google_apis
+          profile: pixel_2
+          ram-size: 3072M
+          heap-size: 512M
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none
+          script: bash tools/run-release-smoke.sh
+
+      - name: Upload signed-release runtime test evidence (not the APK)
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: khodroyar-release-signed-${{ steps.version.outputs.version_name }}
-          path: android/app/build/outputs/apk/release/app-release.apk
+          name: khodroyar-signed-release-test-evidence
+          path: |
+            android/app/build/outputs/androidTest-results/connected
+            ${{ runner.temp }}/khodroyar-release-smoke
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Prepare originally signed APK for explicitly requested delivery
+        if: ${{ inputs.publish_apk || inputs.upload_artifact }}
+        run: |
+          python3 tools/public-apk-release.py prepare android/app/build/outputs/apk/release/app-release.apk android/app/build/outputs/apk/release/verification.json "$RUNNER_TEMP/public-apk" --head "$GITHUB_SHA"
+
+      - name: Upload requested signed APK candidate for final verification gate
+        if: ${{ inputs.publish_apk || inputs.upload_artifact }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: khodroyar-signed-release-candidate
+          path: ${{ runner.temp }}/public-apk/
           if-no-files-found: error
-          retention-days: 30
+          retention-days: 14
+
+      - name: End-to-end encrypted private delivery (no additional repository secret)
+        if: ${{ !inputs.publish_apk && !inputs.upload_artifact }}
+        env:
+          KHODROYAR_ENCRYPTED_APK_UPLOAD_URL: ${{ inputs.delivery_upload_url }}
+          KHODROYAR_DELIVERY_PUBLIC_KEY: ${{ inputs.delivery_public_key }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 -m pip install --disable-pip-version-check --target "$RUNNER_TEMP/khodroyar-delivery-deps" 'cryptography==46.0.3'
+          PYTHONPATH="$RUNNER_TEMP/khodroyar-delivery-deps" python3 tools/test-private-delivery.py
+          PYTHONPATH="$RUNNER_TEMP/khodroyar-delivery-deps" python3 tools/send-private-apk.py android/app/build/outputs/apk/release/app-release.apk android/app/build/outputs/apk/release/verification.json
 
       - name: Upload R8 mapping
         if: always()
@@ -201,3 +402,127 @@ jobs:
           path: android/app/build/outputs/mapping/release/mapping.txt
           if-no-files-found: ignore
           retention-days: 30
+
+  ui-smoke:
+    if: ${{ inputs.mode != 'diagnostics' }}
+    name: Native UI smoke and screenshots
+    permissions:
+      contents: read
+    uses: ./.github/workflows/android-ui-smoke.yml
+    with:
+      ref: ${{ inputs.ref || github.sha }}
+
+  artifact-release:
+    name: Deliver requested originally signed Actions artifact (no public Release)
+    needs: [release, ui-smoke]
+    if: ${{ inputs.upload_artifact && needs.release.result == 'success' && needs.ui-smoke.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - name: Read this run's signed and runtime-verified candidate
+        uses: actions/download-artifact@v4
+        with:
+          name: khodroyar-signed-release-candidate
+          path: ${{ runner.temp }}/verified-apk
+      - name: Deliver original signed APK, checksum and verification (not test APKs)
+        uses: actions/upload-artifact@v4
+        with:
+          name: khodroyar-original-signed-release
+          path: ${{ runner.temp }}/verified-apk/
+          if-no-files-found: error
+          retention-days: 14
+
+  public-release:
+    name: Publish verified signed APK and test actual public HTTPS download
+    needs: [release, ui-smoke]
+    if: ${{ inputs.publish_apk && needs.release.result == 'success' && needs.ui-smoke.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - name: Checkout exact verified source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+      - name: Read this run's signed and runtime-verified candidate
+        uses: actions/download-artifact@v4
+        with:
+          name: khodroyar-signed-release-candidate
+          path: ${{ runner.temp }}/public-apk
+      - name: Publish only after signed runtime and all native UI tests pass
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 tools/public-apk-release.py publish "$RUNNER_TEMP/public-apk" --head "$GITHUB_SHA" --repository "$GITHUB_REPOSITORY" --run-id "$GITHUB_RUN_ID"
+
+  diagnostics:
+    name: Read synthetic emulator crash evidence
+    if: ${{ inputs.mode == 'diagnostics' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - name: Validate the existing run identifier
+        env:
+          RUN_ID: ${{ inputs.evidence_run_id }}
+        run: '[[ "$RUN_ID" =~ ^[0-9]{1,20}$ ]]'
+      - name: Read only synthetic test evidence, not an APK
+        # A ui-only source run has no signed artifact. This diagnostics-only
+        # download is not a test/publication gate; still require native evidence.
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: khodroyar-signed-release-test-evidence
+          run-id: ${{ inputs.evidence_run_id }}
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/signed-test-diagnostics
+      - name: Read only disposable native fixture evidence
+        uses: actions/download-artifact@v4
+        with:
+          name: khodroyar-orbit-native-ui
+          run-id: ${{ inputs.evidence_run_id }}
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/native-test-diagnostics
+      - name: Expose bounded synthetic online report and runtime evidence
+        run: |
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          roots = [Path(os.environ['RUNNER_TEMP']) / name for name in ('native-test-diagnostics', 'signed-test-diagnostics')]
+          for root in roots:
+              for name in ('online-report.json', 'runtime.json'):
+                  for path in root.rglob(name):
+                      assert path.stat().st_size <= 65536
+                      data = json.loads(path.read_text())
+                      assert 'synthetic' in data.get('environment', '').lower()
+                      text = json.dumps(data, ensure_ascii=False)[:24000]
+                      for index in range(0, len(text), 3500):
+                          piece = text[index:index+3500].replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
+                          print(f'::notice title=Synthetic online-only evidence {name} {index//3500+1}::' + piece)
+          PY
+      - name: Expose bounded emulator crash diagnostics through checks
+        run: |
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          root = Path(os.environ['RUNNER_TEMP']) / 'signed-test-diagnostics'
+          for path in sorted(root.rglob('logcat.txt')):
+              lines = path.read_text(errors='replace').splitlines()
+              needles = ('khodroyar', 'androidruntime', 'androidjunitrunner', 'testrunner',
+                  'fatal', 'noclassdeffound', 'nosuchmethod', 'linker', 'exception', 'instrumentation')
+              starts = [i for i, line in enumerate(lines) if any(word in line.lower() for word in needles)]
+              selected = set()
+              for start in starts:
+                  selected.update(range(max(0, start-12), min(len(lines), start+28)))
+              text = '\n'.join(lines[i] for i in sorted(selected))[:28000] if selected else '\n'.join(lines[:180])[:28000]
+              for index in range(0, len(text), 3500):
+                  piece = text[index:index+3500].replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
+                  print(f'::notice title=Synthetic signed-runtime crash {index//3500+1}::' + piece)
+          PY

@@ -47,7 +47,7 @@ fun MaintenanceScreen(
     val cost by repository.maintenanceCost("$year/").collectAsState(initial = 0.0)
     val settings by repository.settings.collectAsState(initial = repository.settingsNow)
     val ratesByYear by repository.ratesByYear.collectAsState(initial = RatesByYear.empty())
-    val allServices by repository.services().collectAsState(initial = emptyList())
+    val serviceRevision by remember { repository.maintenanceInputsChanged() }.collectAsState(initial = 0)
     val vehicleKm = settings.vehicleCurrentKm
     var editingVehicleKm by remember { mutableStateOf(false) }
     var vehicleKmText by remember(vehicleKm) {
@@ -58,7 +58,7 @@ fun MaintenanceScreen(
     // Due status: remaining = nextReplacementKm - vehicleCurrentKm
     val trackedItems by produceState(
         initialValue = emptyList<Pair<MaintenanceType, Analytics.ServiceDue>>(),
-        records, allServices, rates, settings,
+        records, serviceRevision, rates, settings,
     ) {
         val types = listOf(
             MaintenanceType.OIL_CHANGE to rates.oilChangeKmInterval,
@@ -79,20 +79,33 @@ fun MaintenanceScreen(
         }
     }
 
-    var selectedYear by remember { mutableStateOf(year) }
+    var selectedYear by remember { mutableStateOf(1404) }
+    var search by remember { mutableStateOf("") }
+    var sortMode by remember { mutableStateOf("date") }
+    var details by remember { mutableStateOf<MaintenanceEntity?>(null) }
     val yearPrefix = "$selectedYear/"
-    val yearRecords = remember(records, yearPrefix) {
-        records.filter { it.date.startsWith(yearPrefix) }
+    val yearRecords = remember(records, yearPrefix, search, sortMode) {
+        val matching = records.filter { it.date.startsWith(yearPrefix) &&
+            (search.isBlank() || listOf(it.typeText, it.description, it.replacementParts, it.notes, it.date, it.km.toString(), it.cost.toString())
+                .any { value -> value.contains(search.trim(), ignoreCase = true) }) }
+        when (sortMode) {
+            "km" -> matching.sortedByDescending { it.km }
+            "cost" -> matching.sortedByDescending { it.cost }
+            else -> matching.sortedByDescending { it.date }
+        }
     }
     val yearCost = remember(yearRecords) { yearRecords.sumOf { it.cost } }
 
+    val today = remember { Jalali.todayString() }
+    val pace by remember(today) { repository.drivingPace(today) }.collectAsState(initial = null)
+    var recordingType by remember { mutableStateOf<MaintenanceType?>(null) }
     var showForm by remember { mutableStateOf(quickDate != null) }
     var editing by remember { mutableStateOf<MaintenanceEntity?>(null) }
     var pendingDelete by remember { mutableStateOf<MaintenanceEntity?>(null) }
     var editingTracked by remember { mutableStateOf<MaintenanceType?>(null) }
 
     if (showForm) {
-        MaintenanceForm(repository, settings, rates, records, initialDate = quickDate) {
+        MaintenanceForm(repository, settings, rates, records, initialDate = quickDate, initialType = recordingType) {
             showForm = false
             if (quickDate != null) onQuickDone()
         }
@@ -100,6 +113,10 @@ fun MaintenanceScreen(
     }
     if (editing != null) {
         MaintenanceForm(repository, settings, rates, records, existing = editing) { editing = null }
+        return
+    }
+    details?.let { item ->
+        MaintenanceDetails(repository, item, onBack = { details = null }, onEdit = { details = null; editing = item })
         return
     }
     if (editingTracked != null) {
@@ -160,62 +177,10 @@ fun MaintenanceScreen(
                 ) {
                     Column(verticalArrangement = Arrangement.spacedBy(AppDimens.tightGap)) {
                         trackedItems.forEach { (itemType, due) ->
-                            Surface(
-                                shape = FieldShape,
-                                color = MaterialTheme.colorScheme.surface,
-                                border = androidx.compose.foundation.BorderStroke(
-                                    1.dp,
-                                    if (due.isOverdue) MaterialTheme.colorScheme.error.copy(alpha = 0.45f)
-                                    else MaterialTheme.colorScheme.outlineVariant,
-                                ),
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clickable { editingTracked = itemType },
-                            ) {
-                                Row(
-                                    Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                ) {
-                                    Icon(
-                                        when (itemType) {
-                                            MaintenanceType.OIL_CHANGE -> Icons.Outlined.OilBarrel
-                                            MaintenanceType.TIMING_BELT -> Icons.Outlined.Settings
-                                            MaintenanceType.SPARK_PLUG -> Icons.Outlined.Bolt
-                                            MaintenanceType.BRAKE_PAD -> Icons.Outlined.Warning
-                                            else -> Icons.Outlined.FilterAlt
-                                        },
-                                        null,
-                                        tint = when {
-                                            due.isOverdue -> MaterialTheme.colorScheme.error
-                                            due.isDueSoon -> MaterialTheme.colorScheme.tertiary
-                                            else -> MaterialTheme.colorScheme.primary
-                                        },
-                                    )
-                                    Column(Modifier.weight(1f).padding(horizontal = 12.dp)) {
-                                        Text(itemType.label, style = MaterialTheme.typography.titleSmall, maxLines = 1)
-                                        val repl = if (due.baseCurrentKm > 0) money(due.baseCurrentKm) else "—"
-                                        val nxt = if (due.nextKm > 0) money(due.nextKm) else "—"
-                                        Text(
-                                            "تعویض: $repl · بعدی: $nxt",
-                                            style = MaterialTheme.typography.bodySmall,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                            maxLines = 1,
-                                        )
-                                        Text(
-                                            when {
-                                                due.remainingKm == null && due.nextKm <= 0 -> "کیلومتر تعویض بعدی را وارد کنید"
-                                                due.isOverdue -> "موعد گذشته؛ ${money(-(due.remainingKm ?: 0.0))} کیلومتر بیش از حد"
-                                                else -> "باقی‌مانده: ${money(due.remainingKm ?: 0.0)} کیلومتر"
-                                            },
-                                            color = if (due.isOverdue) MaterialTheme.colorScheme.error
-                                            else MaterialTheme.colorScheme.onSurfaceVariant,
-                                            style = MaterialTheme.typography.bodySmall,
-                                            maxLines = 2,
-                                        )
-                                    }
-                                    Icon(Icons.Outlined.ChevronLeft, "تنظیم", tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                                }
-                            }
+                            MaintenanceForecastCard(itemType, due, pace, today,
+                                configured = settings.nextKmFor(itemType.wire) > 0 || settings.currentKmFor(itemType.wire) > 0 || (due.lastKm ?: 0.0) > 0,
+                                onRecord = { recordingType = itemType; showForm = true },
+                                onSettings = { editingTracked = itemType })
                         }
                     }
                 }
@@ -229,6 +194,18 @@ fun MaintenanceScreen(
                     IconButton(onClick = { selectedYear -= 1 }) { Icon(Icons.Outlined.ChevronRight, "سال قبل") }
                     Text("سوابق سال $selectedYear", style = MaterialTheme.typography.titleMedium)
                     IconButton(onClick = { selectedYear += 1 }) { Icon(Icons.Outlined.ChevronLeft, "سال بعد") }
+                }
+            }
+            item {
+                OutlinedTextField(
+                    value = search, onValueChange = { search = it },
+                    modifier = Modifier.fillMaxWidth(), singleLine = true,
+                    label = { Text("جست‌وجوی نوع، توضیح، قطعه یا مقدار") },
+                )
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    listOf("date" to "تاریخ", "km" to "کیلومتر", "cost" to "هزینه").forEach { (key, label) ->
+                        FilterChip(modifier = Modifier.weight(1f), selected = sortMode == key, onClick = { sortMode = key }, label = { Text(label, maxLines = 1) })
+                    }
                 }
             }
             if (yearRecords.isEmpty()) {
@@ -250,6 +227,7 @@ fun MaintenanceScreen(
                             yearRecords.forEach { item ->
                                 MaintenanceRow(
                                     item,
+                                    onClick = { details = item },
                                     onEdit = { editing = item },
                                     onDelete = { pendingDelete = item },
                                 )
@@ -268,7 +246,7 @@ fun MaintenanceScreen(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = AppDimens.screenPadding, vertical = 10.dp)
-                    .height(AppDimens.buttonHeight),
+                    .heightIn(min = AppDimens.buttonHeight),
                 shape = FieldShape,
             ) {
                 Icon(Icons.Outlined.Add, null)
@@ -314,12 +292,12 @@ fun MaintenanceScreen(
 }
 
 @Composable
-private fun MaintenanceRow(item: MaintenanceEntity, onEdit: () -> Unit = {}, onDelete: () -> Unit) {
+private fun MaintenanceRow(item: MaintenanceEntity, onClick: () -> Unit, onEdit: () -> Unit = {}, onDelete: () -> Unit) {
     Surface(
         shape = FieldShape,
         color = MaterialTheme.colorScheme.surfaceContainerLowest,
         border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-        modifier = Modifier.fillMaxWidth().defaultMinSize(minHeight = AppDimens.rowMinHeight),
+        modifier = Modifier.fillMaxWidth().defaultMinSize(minHeight = AppDimens.rowMinHeight).clickable(onClick = onClick),
     ) {
         Row(Modifier.padding(horizontal = 12.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
             Icon(
@@ -360,6 +338,7 @@ private fun MaintenanceForm(
     records: List<MaintenanceEntity>,
     existing: MaintenanceEntity? = null,
     initialDate: String? = null,
+    initialType: MaintenanceType? = null,
     onClose: () -> Unit,
 ) {
     val scope = rememberCoroutineScope()
@@ -368,7 +347,7 @@ private fun MaintenanceForm(
     // New records start on oil change (the old default); fromWire(null) would fall
     // through to OTHER, which is only right for an existing record of unknown type.
     var type by remember {
-        mutableStateOf(existing?.let { MaintenanceType.fromWire(it.type) } ?: MaintenanceType.OIL_CHANGE)
+        mutableStateOf(existing?.let { MaintenanceType.fromWire(it.type) } ?: initialType ?: MaintenanceType.OIL_CHANGE)
     }
     var typeText by remember { mutableStateOf(existing?.typeText ?: "") }
     var costText by remember { mutableStateOf(if (existing != null && existing.cost > 0) existing.cost.trimNumber().digitsOnly() else "") }
@@ -402,6 +381,8 @@ private fun MaintenanceForm(
         else ""
     ) }
     var description by remember { mutableStateOf(existing?.description ?: "") }
+    var replacementParts by remember { mutableStateOf(existing?.replacementParts ?: "") }
+    var notes by remember { mutableStateOf(existing?.notes ?: "") }
     var attachmentPath by remember { mutableStateOf(existing?.attachmentPath ?: "") }
     val context = LocalContext.current
     val pickImage = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri: Uri? ->
@@ -437,6 +418,8 @@ private fun MaintenanceForm(
                 JalaliDateField("تاریخ", date, { date = it })
                 Spacer(Modifier.height(AppDimens.gap)); MoneyField("هزینه", costText, { costText = it })
                 Spacer(Modifier.height(AppDimens.gap)); TextFieldR("توضیحات", description, { description = it }, singleLine = false, imeAction = ImeAction.Done)
+                Spacer(Modifier.height(AppDimens.gap)); TextFieldR("قطعات تعویض‌شده", replacementParts, { replacementParts = it }, singleLine = false, imeAction = ImeAction.Done)
+                Spacer(Modifier.height(AppDimens.gap)); TextFieldR("یادداشت", notes, { notes = it }, singleLine = false, imeAction = ImeAction.Done)
             }
             FormSection("پیوست رسید / عکس", Icons.Outlined.AttachFile) {
                 if (attachmentPath.isNotBlank()) {
@@ -448,6 +431,7 @@ private fun MaintenanceForm(
                         Text("انتخاب از گالری")
                     }
                 }
+                existing?.let { RecordAttachmentsPanel(repository, "maintenance", it.id) }
             }
             FormSection("خودرو", Icons.Outlined.DirectionsCar) {
                 SegmentedSelector(options = CarType.entries.toList(), selected = carType, label = { it.label }, onSelect = { carType = it })
@@ -455,7 +439,7 @@ private fun MaintenanceForm(
         }
         Surface(color = MaterialTheme.colorScheme.surfaceContainerLowest, shadowElevation = 8.dp) {
             Row(Modifier.fillMaxWidth().padding(horizontal = AppDimens.screenPadding, vertical = 10.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton(onClick = onClose, modifier = Modifier.weight(1f).height(AppDimens.buttonHeight), shape = FieldShape) { Text(tr("انصراف", "Cancel")) }
+                OutlinedButton(onClick = onClose, modifier = Modifier.weight(1f).heightIn(min = AppDimens.buttonHeight), shape = FieldShape) { Text(tr("انصراف", "Cancel")) }
                 Button(onClick = {
                     scope.launch {
                         // Only a record that is the newest of its type touches tracking;
@@ -477,16 +461,18 @@ private fun MaintenanceForm(
                                     carType = carType.wire,
                                     description = description.trim(),
                                     attachmentPath = attachmentPath,
+                                    replacementParts = replacementParts.trim(),
+                                    notes = notes.trim(),
                                 )
                             )
                             toast.show("سابقه تعمیر ویرایش شد")
                         } else {
-                            repository.addMaintenance(date, type.wire, typeText.ifBlank { type.label }, costText.asDouble(), current, carType.wire, description.trim(), attachmentPath)
+                            repository.addMaintenance(date, type.wire, typeText.ifBlank { type.label }, costText.asDouble(), current, carType.wire, description.trim(), attachmentPath, replacementParts.trim(), notes.trim())
                             toast.show("سابقه تعمیر ثبت شد")
                         }
                         onClose()
                     }
-                }, modifier = Modifier.weight(1f).height(AppDimens.buttonHeight), shape = FieldShape) { Text(tr("ذخیره", "Save")) }
+                }, modifier = Modifier.weight(1f).heightIn(min = AppDimens.buttonHeight), shape = FieldShape) { Text(tr("ذخیره", "Save")) }
             }
         }
     }
@@ -559,7 +545,7 @@ private fun TrackedServiceKmEditor(
             ) {
                 OutlinedButton(
                     onClick = onClose,
-                    modifier = Modifier.weight(1f).height(AppDimens.buttonHeight),
+                    modifier = Modifier.weight(1f).heightIn(min = AppDimens.buttonHeight),
                     shape = FieldShape,
                 ) { Text(tr("انصراف", "Cancel")) }
                 Button(
@@ -569,7 +555,7 @@ private fun TrackedServiceKmEditor(
                         if (next <= 0 && cur > 0 && intervalKm > 0) next = cur + intervalKm
                         onSave(cur, next)
                     },
-                    modifier = Modifier.weight(1f).height(AppDimens.buttonHeight),
+                    modifier = Modifier.weight(1f).heightIn(min = AppDimens.buttonHeight),
                     shape = FieldShape,
                 ) { Text(tr("ذخیره", "Save")) }
             }

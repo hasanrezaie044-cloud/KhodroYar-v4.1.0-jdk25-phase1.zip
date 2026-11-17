@@ -1,7 +1,7 @@
 package com.khodroyar.app.ai.gemma
 
 import com.khodroyar.app.ai.AgentStep
-import com.khodroyar.app.ai.AgentToolExecutorApi
+import com.khodroyar.app.ai.AgentToolRunner
 import com.khodroyar.app.ai.ChatEntry
 import com.khodroyar.app.ai.ChatRole
 import com.khodroyar.app.ai.ToolOutcome
@@ -36,14 +36,14 @@ class LocalAgentOrchestratorTest {
         override fun isLoaded(): Boolean = true
     }
 
-    private class FakeExecutor : AgentToolExecutorApi {
+    private class FakeExecutor : AgentToolRunner {
         val executed = ArrayList<String>()
         override suspend fun execute(call: ValidatedCall): ToolOutcome {
             executed.add(call.spec.name)
             return ToolOutcome(true, "خروجی آزمایشی ابزار ${call.spec.name}")
         }
 
-        override suspend fun describe(call: ValidatedCall): String = "خلاصهٔ ${call.spec.name}"
+        override fun describe(call: ValidatedCall): String = "خلاصهٔ ${call.spec.name}"
         override suspend fun describeTarget(call: ValidatedCall): String? = "رکورد آزمایشی"
     }
 
@@ -59,19 +59,17 @@ class LocalAgentOrchestratorTest {
         assertEquals(1, engine.calls)
     }
 
-    @Test fun readToolLoopsResultBackIntoModel() = runBlocking {
+    @Test fun readToolReturnsVerifiedResultWithoutHiddenFollowUpInference() = runBlocking {
         val engine = FakeEngine(
             """{"action":"tool","tool":"get_totals","args":{"period":"month"},"say":"نگاه می‌کنم"}""",
-            """{"action":"reply","text":"جمع این ماه ۱۲۳ تومان است."}""",
+            """{"action":"reply","text":"این پاسخ نباید خودکار مصرف شود."}""",
         )
         val exec = FakeExecutor()
         val step = LocalAgentOrchestrator(engine, exec).run(userTurn("جمع هزینه‌های این ماه؟"))
-        assertTrue(step is AgentStep.Reply)
-        assertEquals("جمع این ماه ۱۲۳ تومان است.", (step as AgentStep.Reply).text)
+        assertTrue(step is AgentStep.Result)
+        assertEquals("خروجی آزمایشی ابزار get_totals", (step as AgentStep.Result).outcome.text)
         assertEquals(listOf("get_totals"), exec.executed)
-        assertEquals(2, engine.calls)
-        // The tool result must have been fed back as a user-side turn.
-        assertTrue(engine.requests[1].userText.contains("نتیجه واقعی ابزار get_totals"))
+        assertEquals(1, engine.calls) // no hidden second generation after a read tool
     }
 
     @Test fun writeToolNeverExecutesWithoutConfirm() = runBlocking {
@@ -98,28 +96,29 @@ class LocalAgentOrchestratorTest {
         assertTrue((step as AgentStep.Confirm).pending.destructive)
     }
 
-    @Test fun invalidToolCallIsGivenOneRetry() = runBlocking {
+    @Test fun invalidToolCallFailsClosedWithoutAutomaticRetry() = runBlocking {
         val engine = FakeEngine(
             """{"action":"tool","tool":"add_expense","args":{}}""", // missing required amount
-            """{"action":"reply","text":"مبلغ را بگویید لطفاً."}""",
+            """{"action":"reply","text":"این پاسخ نباید خودکار مصرف شود."}""",
         )
         val exec = FakeExecutor()
         val step = LocalAgentOrchestrator(engine, exec).run(userTurn("هزینه ثبت کن"))
         assertTrue(step is AgentStep.Reply)
+        assertTrue((step as AgentStep.Reply).text.contains("الزامی"))
         assertEquals(0, exec.executed.size) // invalid call never touched execution
-        assertEquals(2, engine.calls)
-        assertTrue(engine.requests[1].userText.contains("اعتبارسنجی ناموفق"))
+        assertEquals(1, engine.calls)
     }
 
-    @Test fun unknownToolIsRejectedByValidator() = runBlocking {
+    @Test fun unknownToolIsRejectedByValidatorWithoutRetry() = runBlocking {
         val engine = FakeEngine(
             """{"action":"tool","tool":"wipe_database","args":{}}""",
-            """{"action":"reply","text":"این کار مجاز نیست."}""",
+            """{"action":"reply","text":"این پاسخ نباید خودکار مصرف شود."}""",
         )
         val exec = FakeExecutor()
         val step = LocalAgentOrchestrator(engine, exec).run(userTurn("همه چیز را پاک کن"))
         assertTrue(exec.executed.isEmpty())
-        assertEquals("این کار مجاز نیست.", (step as AgentStep.Reply).text)
+        assertEquals(1, engine.calls)
+        assertTrue((step as AgentStep.Reply).text.contains("وجود ندارد"))
     }
 
     @Test fun engineFailureBecomesFailureStep() = runBlocking {

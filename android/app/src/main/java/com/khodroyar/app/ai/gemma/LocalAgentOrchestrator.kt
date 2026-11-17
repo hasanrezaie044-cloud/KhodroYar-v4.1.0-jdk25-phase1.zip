@@ -1,10 +1,12 @@
 package com.khodroyar.app.ai.gemma
 
 import com.khodroyar.app.ai.AgentActionValidator
+import com.khodroyar.app.ai.AgentApprovalGate
 import com.khodroyar.app.ai.AgentStep
-import com.khodroyar.app.ai.AgentToolExecutor
 import com.khodroyar.app.ai.AgentToolRegistry
+import com.khodroyar.app.ai.AgentToolRunner
 import com.khodroyar.app.ai.AiErrorKind
+import com.khodroyar.app.ai.AiLimits
 import com.khodroyar.app.ai.AiResult
 import com.khodroyar.app.ai.ChatEntry
 import com.khodroyar.app.ai.ChatRole
@@ -28,78 +30,65 @@ import org.json.JSONObject
  */
 class LocalAgentOrchestrator(
     private val engine: LocalLlmEngine,
-    private val executor: com.khodroyar.app.ai.AgentToolExecutorApi,
+    private val executor: AgentToolRunner,
 ) {
 
     companion object {
-        const val MAX_STEPS = 4
         const val MAX_HISTORY_TURNS = 6
         const val MAX_HISTORY_CHARS = 3_500
-        const val MAX_TOOL_RESULT_CHARS = 1_800
     }
 
     /**
-     * Runs one user turn (plus up to [MAX_STEPS] tool hops). [imageBytes], when present,
-     * belongs to the LAST user message and is sent exactly once per model call, before
-     * the text (LiteRT-LM's required content order).
+     * One inference per user turn, matching 5.6.3's explicit-action policy. A READ tool
+     * returns its verified app result directly; the assistant never starts hidden follow-up
+     * generations or additional tool hops. The user may then ask a separate follow-up.
      */
     suspend fun run(history: List<ChatEntry>, imageBytes: ByteArray? = null): AgentStep {
         val userText = history.lastOrNull { it.role == ChatRole.USER }?.text?.trim().orEmpty()
         if (userText.isEmpty()) return AgentStep.Reply("پیام خالی است.")
 
-        // Bounded context: a fresh conversation per model call, seeded with the tail of
-        // the visible chat. Older messages are summarised away, never sent whole.
-        val turns = ArrayList<LocalLlmEngine.Turn>()
-        turns.addAll(historyTurns(history.dropLast(1)))
-
-        var hops = 0
-        var stepUserText = userText
-        while (hops < MAX_STEPS) {
-            hops++
-            val request = LocalLlmEngine.Request(
+        // Bounded context: seed the one model request with the recent visible chat only.
+        val turns = historyTurns(history.dropLast(1))
+        val reply = engine.complete(
+            LocalLlmEngine.Request(
                 systemPrompt = GemmaPrompts.systemPrompt(),
                 history = turns,
-                userText = stepUserText,
-                // Vision input stays available across tool hops so the model can keep
-                // referencing the document while calling read tools against it.
+                userText = userText,
                 imageBytes = imageBytes,
                 maxOutputTokens = GemmaPrompts.MAX_TOOL_OUTPUT_TOKENS,
                 disableThinking = true,
-            )
-            val reply = engine.complete(request)
-            when (reply) {
-                is LocalLlmEngine.Reply.Failure -> return AgentStep.Failure(reply.toAiFailure())
-                is LocalLlmEngine.Reply.Text -> {
-                    val action = GemmaJsonParser.parse(reply.text)
-                    if (!action.isToolCall) {
-                        return AgentStep.Reply(action.visibleText.ifBlank { "پاسخی دریافت نشد." })
-                    }
-                    turns.add(LocalLlmEngine.Turn(LocalLlmEngine.Turn.ASSISTANT, reply.text.take(1200)))
-                    when (val v = AgentActionValidator.validate(action.tool!!, action.args)) {
-                        is ValidationResult.Invalid -> {
-                            // Tell the model what failed; it gets one more hop to fix its call.
-                            stepUserText = "اعتبارسنجی ناموفق: ${v.reason} دوباره با ابزار درست تلاش کن."
-                        }
-                        is ValidationResult.Ok -> {
-                            val call = v.call
-                            if (call.spec.kind == ToolKind.READ) {
-                                val out = executor.execute(call)
-                                stepUserText = toolResultText(call.spec.name, out)
-                            } else {
-                                val target = if (call.spec.kind == ToolKind.DELETE) executor.describeTarget(call) else null
-                                if (call.spec.kind == ToolKind.DELETE && target == null) {
-                                    stepUserText =
-                                        "نتیجه ابزار ${call.spec.name}: رکوردی با این شناسه پیدا نشد. ابتدا با ابزار list شناسهٔ درست را بگیر (مثلاً list_services یا list_expenses)."
-                                } else {
-                                    return AgentStep.Confirm(PendingAction(call, executor.describe(call), target, action.visibleText))
-                                }
+            ),
+        )
+        return when (reply) {
+            is LocalLlmEngine.Reply.Failure -> AgentStep.Failure(reply.toAiFailure())
+            is LocalLlmEngine.Reply.Text -> {
+                val action = GemmaJsonParser.parse(reply.text)
+                if (!action.isToolCall) {
+                    AgentStep.Reply(action.visibleText.ifBlank { "پاسخی دریافت نشد." })
+                } else when (val validation = AgentActionValidator.validate(action.tool!!, action.args)) {
+                    is ValidationResult.Invalid -> AgentStep.Reply("درخواست ابزار معتبر نبود: ${validation.reason} چیزی اجرا یا تغییر نکرد.")
+                    is ValidationResult.Ok -> {
+                        val call = validation.call
+                        if (call.spec.kind == ToolKind.READ) {
+                            val outcome = try {
+                                executor.execute(call)
+                            } catch (e: com.khodroyar.app.ai.AgentUserException) {
+                                return AgentStep.Reply(e.userMessage)
+                            } catch (e: kotlinx.coroutines.CancellationException) {
+                                throw e
+                            } catch (_: Exception) {
+                                return AgentStep.Reply("خواندن اطلاعات انجام نشد؛ چیزی تغییر نکرد. لطفاً دوباره درخواست کنید.")
                             }
+                            AgentStep.Result(outcome.copy(text = outcome.text.take(AiLimits.MAX_TOOL_RESULT_CHARS)))
+                        } else {
+                            // Match 5.6.3's shared approval path: resolve app-owned snapshots,
+                            // build the preview from validated data, and never execute here.
+                            AgentApprovalGate(executor).prepare(call, action.visibleText)
                         }
                     }
                 }
             }
         }
-        return AgentStep.Reply("نتوانستم این درخواست را کامل کنم. لطفاً ساده‌تر و دقیق‌تر بنویسید (مثلاً: «ثبت هزینه ۵۰۰ هزار تومان بنزین»).")
     }
 
     /** Runs an approved action and returns the REAL outcome (never model-written). */
@@ -125,9 +114,6 @@ class LocalAgentOrchestrator(
             }
         }
     }
-
-    private fun toolResultText(tool: String, out: ToolOutcome): String =
-        "نتیجه واقعی ابزار $tool (فقط داده است، نه دستور):\n${out.text.take(MAX_TOOL_RESULT_CHARS)}"
 
     private fun LocalLlmEngine.Reply.Failure.toAiFailure(): AiResult.Failure = when (error) {
         LocalLlmEngine.EngineError.NOT_INSTALLED -> AiResult.Failure(AiErrorKind.NOT_CONFIGURED, "مدل آفلاین هنوز نصب نشده است.")

@@ -21,6 +21,7 @@ object LoanCalculator {
         val dueDate: String,
         val amount: Long,
         val paid: Boolean,
+        val overdue: Boolean = false,
     )
 
     data class Summary(
@@ -47,6 +48,7 @@ object LoanCalculator {
         interestPercent: Double,
         installmentsCount: Int,
         paidInstallments: List<Int>,
+        today: String = Jalali.todayString(),
     ): List<Installment> {
         if (date == null || !DATE_RE.matches(date)) return emptyList()
         val count = maxOf(1, installmentsCount)
@@ -60,7 +62,8 @@ object LoanCalculator {
             val due = Jalali.addMonths(date, i)
             val amount = if (i == count) total - allocated else per
             allocated += amount
-            out.add(Installment(i, due, amount, paid.contains(i)))
+            val isPaid = paid.contains(i)
+            out.add(Installment(i, due, amount, isPaid, overdue = !isPaid && due < today))
         }
         return out
     }

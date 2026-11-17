@@ -144,7 +144,9 @@ fun GemmaAssistantScreen(vm: GemmaAssistantViewModel = viewModel()) {
                     if (st !is ModelUiState.Ready) {
                         item(key = "model-banner") { ModelBanner(st, onManage = { showModelManager = true }) }
                     }
-                    items(vm.messages, key = { it.id }) { entry -> GemmaBubble(entry) }
+                    items(vm.messages, key = { it.id }) { entry ->
+                        GemmaBubble(entry, entry.image?.let(vm::thumbnailPath))
+                    }
                     vm.pending?.let { p -> item(key = "pending") { GemmaConfirmCard(p, onConfirm = vm::confirmPending, onCancel = vm::cancelPending) } }
                     if (vm.busy) item(key = "busy") { GemmaTyping(onStop = vm::stop) }
                     vm.failure?.let { f ->
@@ -397,7 +399,7 @@ private fun rememberBitmap(path: String): androidx.compose.ui.graphics.ImageBitm
 }
 
 @Composable
-private fun GemmaBubble(entry: ChatEntry) {
+private fun GemmaBubble(entry: ChatEntry, imagePath: String?) {
     val isUser = entry.role == ChatRole.USER
     val (bg, fg) = when (entry.role) {
         ChatRole.USER -> MaterialTheme.colorScheme.primaryContainer to MaterialTheme.colorScheme.onPrimaryContainer
@@ -408,8 +410,8 @@ private fun GemmaBubble(entry: ChatEntry) {
     Row(Modifier.fillMaxWidth(), horizontalArrangement = if (isUser) Arrangement.Absolute.Right else Arrangement.Absolute.Left) {
         Surface(shape = RoundedCornerShape(18.dp), color = bg, contentColor = fg, modifier = Modifier.widthIn(max = 320.dp)) {
             Column(Modifier.padding(start = 14.dp, end = 14.dp, top = 10.dp, bottom = 8.dp)) {
-                if (entry.imagePath.isNotBlank()) {
-                    rememberBitmap(entry.imagePath)?.let { bmp ->
+                if (!imagePath.isNullOrBlank()) {
+                    rememberBitmap(imagePath)?.let { bmp ->
                         Image(
                             bmp, contentDescription = "تصویر پیوست‌شده",
                             modifier = Modifier

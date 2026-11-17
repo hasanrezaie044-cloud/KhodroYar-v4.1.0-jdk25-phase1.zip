@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Test-only package visibility. No permissions/activities enter the target APK. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Only the independent test process observes connectivity; no app permission changes. -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <queries>
+        <package android:name="com.khodroyar.app" />
+        <package android:name="com.farsitel.bazaar" />
+    </queries>
+</manifest>

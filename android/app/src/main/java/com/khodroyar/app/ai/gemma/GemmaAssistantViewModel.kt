@@ -12,9 +12,12 @@ import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.khodroyar.app.ai.AgentStep
-import com.khodroyar.app.ai.AgentToolExecutor
+import com.khodroyar.app.ai.AppAgentTools
 import com.khodroyar.app.ai.AiLimits
+import com.khodroyar.app.ai.AiMode
 import com.khodroyar.app.ai.ChatEntry
+import com.khodroyar.app.ai.ChatImageRef
+import com.khodroyar.app.ai.ChatImageStore
 import com.khodroyar.app.ai.ChatRole
 import com.khodroyar.app.ai.Conversation
 import com.khodroyar.app.ai.ConversationRepository
@@ -24,7 +27,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.io.File
 import java.util.UUID
 
 /** What the screen shows about the on-device model. */
@@ -50,9 +52,14 @@ class GemmaAssistantViewModel(app: Application) : AndroidViewModel(app) {
 
     private val runtime = GemmaRuntime.get(app)
     private val repo = AppRepository(app)
-    private val executor = AgentToolExecutor(repo)
+    /** Same production tool runner as the 5.6.3 online assistant; inference stays local. */
+    private val executor = AppAgentTools(app, repo)
     private val orchestrator = LocalAgentOrchestrator(runtime.engine(), executor)
     private val conversations = ConversationRepository(app, ConversationRepository.FILE_GEMMA)
+    private val imageStore = ChatImageStore(app, "gemma-chat-images")
+
+    /** UI-only thumbnail path; the persisted reference itself is a safe app-private filename. */
+    fun thumbnailPath(ref: ChatImageRef): String = imageStore.file(ref).absolutePath
 
     val spec: GemmaModelSpec = runtime.spec
 
@@ -207,13 +214,9 @@ class GemmaAssistantViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    /** Persists a staged image so the chat bubble keeps it after process death. */
-    private suspend fun storeAttached(prepared: ReportImagePrep.Prepared): String = withContext(Dispatchers.IO) {
-        val dir = File(getApplication<Application>().filesDir, "gemma_attachments").apply { mkdirs() }
-        val f = File(dir, "img_${System.currentTimeMillis()}.jpg")
-        f.writeBytes(prepared.thumbnailBytes)
-        f.absolutePath
-    }
+    /** Persists a staged thumbnail in this assistant's private, no-backup image namespace. */
+    private suspend fun storeAttached(prepared: ReportImagePrep.Prepared): ChatImageRef =
+        imageStore.storePreparedJpeg(prepared.thumbnailBytes)
 
     fun clearStagedImage() { stagedImage = null }
 
@@ -235,8 +238,8 @@ class GemmaAssistantViewModel(app: Application) : AndroidViewModel(app) {
         val image = stagedImage
         stagedImage = null
         viewModelScope.launch {
-            val imagePath = if (image != null) storeAttached(image) else ""
-            messages += ChatEntry(UUID.randomUUID().toString(), ChatRole.USER, text, System.currentTimeMillis(), imagePath = imagePath)
+            val imageRef = image?.let { storeAttached(it) }
+            messages += ChatEntry(UUID.randomUUID().toString(), ChatRole.USER, text, System.currentTimeMillis(), image = imageRef)
             persist()
             runAgent(image?.jpegBytes)
         }
@@ -260,7 +263,9 @@ class GemmaAssistantViewModel(app: Application) : AndroidViewModel(app) {
                         if (step.pending.lead.isNotBlank()) add(ChatRole.ASSISTANT, step.pending.lead)
                         pending = step.pending
                     }
+                    is AgentStep.Result -> add(ChatRole.RESULT, (if (step.outcome.ok) "✅ " else "⚠️ ") + step.outcome.text)
                     is AgentStep.Failure -> failure = step.error.message
+                    AgentStep.Continue -> add(ChatRole.ASSISTANT, "برای ادامه، پیام بعدی را جداگانه بفرستید.")
                 }
             } finally {
                 busy = false
@@ -309,11 +314,11 @@ class GemmaAssistantViewModel(app: Application) : AndroidViewModel(app) {
         }
         stagedImage = null
         viewModelScope.launch {
-            val imagePath = storeAttached(image)
+            val imageRef = storeAttached(image)
             messages += ChatEntry(
                 UUID.randomUUID().toString(), ChatRole.USER,
                 "تصویر گزارش شرکت — خواندن و مقایسه با سوابق من" + if (extraQuestion.isNotBlank()) "\n$extraQuestion" else "",
-                System.currentTimeMillis(), imagePath = imagePath,
+                System.currentTimeMillis(), image = imageRef,
             )
             persist()
             busy = true
@@ -393,8 +398,19 @@ class GemmaAssistantViewModel(app: Application) : AndroidViewModel(app) {
     private fun persist() {
         if (messages.isEmpty()) return
         val title = messages.firstOrNull { it.role == ChatRole.USER }?.text?.take(40) ?: "گفتگو"
-        val convo = Conversation(conversationId, title, createdAt, System.currentTimeMillis(), messages.toList())
-        viewModelScope.launch { conversations.save(convo) }
+        val convo = Conversation(
+            conversationId, title, createdAt, System.currentTimeMillis(), messages.toList(),
+            mode = AiMode.LOCAL, accountScope = "gemma-offline", contextStart = 0,
+        )
+        viewModelScope.launch {
+            conversations.save(convo)
+            pruneImages()
+        }
+    }
+
+    private suspend fun pruneImages() {
+        val retained = conversations.load().flatMap { it.messages }.mapNotNull { it.image }.toSet()
+        withContext(Dispatchers.IO) { imageStore.prune(retained) }
     }
 
     fun newChat() {
@@ -429,6 +445,7 @@ class GemmaAssistantViewModel(app: Application) : AndroidViewModel(app) {
             conversations.delete(c.id)
             if (c.id == conversationId) newChat()
             history = conversations.load().sortedByDescending { it.updatedAt }
+            pruneImages()
         }
     }
 
@@ -437,6 +454,7 @@ class GemmaAssistantViewModel(app: Application) : AndroidViewModel(app) {
             conversations.clearAll()
             history = emptyList()
             newChat()
+            pruneImages()
         }
     }
 

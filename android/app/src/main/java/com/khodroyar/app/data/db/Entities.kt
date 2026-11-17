@@ -39,6 +39,8 @@ data class FuelEntity(
     val total: Double,
     val carType: String,
     val timestamp: String,
+    val km: Double = 0.0,
+    val station: String = "",
 )
 
 @Entity(tableName = "maintenances", indices = [Index("date"), Index("type")])
@@ -53,6 +55,8 @@ data class MaintenanceEntity(
     val description: String,
     val timestamp: String,
     val attachmentPath: String = "",
+    val replacementParts: String = "",
+    val notes: String = "",
 )
 
 @Entity(tableName = "loans")
@@ -65,6 +69,8 @@ data class LoanEntity(
     val installmentsCount: Int,
     @ColumnInfo(name = "paidInstallments") val paidInstallments: String,
     val timestamp: String,
+    val monthlyInstallment: Double = 0.0,
+    val notes: String = "",
 )
 
 @Entity(tableName = "personal_expenses", indices = [Index("date"), Index("category")])
@@ -75,6 +81,8 @@ data class PersonalExpenseEntity(
     val title: String,
     val amount: Double,
     val timestamp: String,
+    val km: Double = 0.0,
+    val notes: String = "",
 )
 
 @Entity(tableName = "personal_incomes", indices = [Index("date"), Index("category")])
@@ -150,4 +158,27 @@ data class InsuranceEntity(
     val policyNumber: String,
     val reminder: Boolean,
     val timestamp: String,
+)
+
+/** User-owned image files linked to any record kind; paths always point into private storage. */
+@Entity(tableName = "record_attachments", indices = [Index(value = ["recordType", "recordId"])])
+data class RecordAttachmentEntity(
+    @PrimaryKey val id: String,
+    val recordType: String,
+    val recordId: String,
+    val filePath: String,
+    val mimeType: String,
+    val addedAt: Long,
+)
+
+/** Editable per-installment overrides; the schedule itself is generated from loan terms. */
+@Entity(tableName = "loan_installments", indices = [Index(value = ["loanId", "number"], unique = true), Index("dueDate")])
+data class LoanInstallmentEntity(
+    @PrimaryKey val id: String,
+    val loanId: String,
+    val number: Int,
+    val amount: Long,
+    val dueDate: String,
+    val paidDate: String = "",
+    val notes: String = "",
 )

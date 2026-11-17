@@ -41,9 +41,9 @@ data class GemmaModelSpec(
     val resolveUrl: String
         get() = "https://huggingface.co/$hfRepoId/resolve/$pinnedCommit/$modelFileName"
 
-    /** Hugging Face file-tree metadata; supplies the LFS SHA-256 we verify against. */
+    /** Hugging Face metadata for the SAME immutable revision as the model download URL. */
     val metadataUrl: String
-        get() = "https://huggingface.co/api/models/$hfRepoId/tree/main"
+        get() = "https://huggingface.co/api/models/$hfRepoId/tree/$pinnedCommit"
 
     val displaySizeMb: Int get() = (expectedSizeBytes / (1024 * 1024)).toInt()
 
@@ -65,8 +65,8 @@ data class GemmaModelSpec(
 
         /**
          * Reads the expected SHA-256 of [GemmaModelSpec.modelFileName] from the Hugging
-         * Face `tree/main` API JSON answer. Returns null when the file or its LFS digest
-         * is absent — callers treat that as "size-only verification", never silently.
+         * Face metadata JSON for the exact pinned commit. Returns null when the file or
+         * its LFS digest is absent — callers treat that as "size-only verification", never silently.
          */
         fun sha256FromMetadata(jsonText: String, fileName: String): String? {
             val arr = try {

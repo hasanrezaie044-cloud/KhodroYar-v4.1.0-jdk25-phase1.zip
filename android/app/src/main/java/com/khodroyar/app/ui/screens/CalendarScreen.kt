@@ -235,31 +235,19 @@ fun CalendarScreen(
                     )
                 }
                 Spacer(Modifier.height(12.dp))
-                MetricPair(
-                    first = { m ->
-                        MetricCard("تعداد سرویس", dayServices.size.toString(), Icons.Outlined.Route, m, compact = true)
-                    },
-                    second = { m ->
-                        MetricCard("درآمد سرویس", amount(dayIncome), Icons.Outlined.Payments, m, compact = true)
-                    },
-                )
-                Spacer(Modifier.height(AppDimens.gap))
-                MetricPair(
-                    first = { m ->
-                        MetricCard("کیلومتر", money(dayServices.sumOf { it.km }), Icons.Outlined.Speed, m, compact = true)
-                    },
-                    second = { m ->
-                        MetricCard(
-                            "کارکرد",
-                            "${Analytics.formatHours(dayServices.sumOf { it.hours })} ساعت",
-                            Icons.Outlined.Schedule, m, compact = true,
-                        )
-                    },
-                )
-                Spacer(Modifier.height(12.dp))
+                Text(amount(dayIncome), color = Color.White, style = MaterialTheme.typography.displaySmall,
+                    maxLines = 2, overflow = TextOverflow.Ellipsis)
+                Text("تومان درآمد سرویس", color = Color(0xFFB9CFD0), style = MaterialTheme.typography.labelSmall)
+                HorizontalDivider(Modifier.padding(vertical = 16.dp), color = Color.White.copy(alpha = 0.13f))
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    HeroStat("سرویس", money(dayServices.size), Modifier.weight(1f))
+                    HeroStat("کیلومتر", money(dayServices.sumOf { it.km }), Modifier.weight(1f))
+                    HeroStat("ساعت", Analytics.formatHours(dayServices.sumOf { it.hours }), Modifier.weight(1f))
+                }
+                Spacer(Modifier.height(16.dp))
                 Button(
                     onClick = { onQuickService(selectedDate) },
-                    modifier = Modifier.fillMaxWidth().height(AppDimens.buttonHeight),
+                    modifier = Modifier.fillMaxWidth().heightIn(min = AppDimens.buttonHeight),
                     shape = FieldShape,
                     colors = ButtonDefaults.buttonColors(
                         containerColor = Color.White,
@@ -509,7 +497,7 @@ private fun ServiceDetailSheet(
             Row(horizontalArrangement = Arrangement.spacedBy(AppDimens.gap)) {
                 Button(
                     onClick = onEdit,
-                    modifier = Modifier.weight(1f).height(AppDimens.buttonHeight),
+                    modifier = Modifier.weight(1f).heightIn(min = AppDimens.buttonHeight),
                     shape = FieldShape,
                 ) {
                     Icon(Icons.Outlined.Edit, null)
@@ -518,7 +506,7 @@ private fun ServiceDetailSheet(
                 }
                 OutlinedButton(
                     onClick = onDelete,
-                    modifier = Modifier.weight(1f).height(AppDimens.buttonHeight),
+                    modifier = Modifier.weight(1f).heightIn(min = AppDimens.buttonHeight),
                     shape = FieldShape,
                 ) {
                     Icon(Icons.Outlined.Delete, null, tint = MaterialTheme.colorScheme.error)
@@ -569,18 +557,19 @@ fun ServiceRow(
     service: ServiceEntity,
     detailed: Boolean = false,
     onClick: (() -> Unit)? = null,
+    modifier: Modifier = Modifier,
 ) {
-    val base = Modifier.fillMaxWidth().defaultMinSize(minHeight = AppDimens.rowMinHeight)
+    val base = modifier.fillMaxWidth().defaultMinSize(minHeight = AppDimens.rowMinHeight)
     Surface(
         shape = FieldShape,
         color = MaterialTheme.colorScheme.surfaceContainerLowest,
         border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
         modifier = if (onClick == null) base else base.clickable(onClick = onClick),
     ) {
-        Row(Modifier.padding(horizontal = 12.dp, vertical = 11.dp), verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f)) {
+        Column(Modifier.padding(horizontal = 14.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Column {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(service.date, style = MaterialTheme.typography.titleMedium, maxLines = 1)
+                    Text(service.date, Modifier.weight(1f), style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     if (service.attachmentPath.isNotBlank()) {
                         Spacer(Modifier.width(4.dp))
                         Icon(
@@ -625,9 +614,8 @@ fun ServiceRow(
                     )
                 }
             }
-            Spacer(Modifier.width(8.dp))
             Text(
-                amount(service.income),
+                amount(service.income) + " " + tr("تومان", "Toman"),
                 style = MaterialTheme.typography.titleMedium,
                 color = MaterialTheme.colorScheme.primary,
                 maxLines = 1,

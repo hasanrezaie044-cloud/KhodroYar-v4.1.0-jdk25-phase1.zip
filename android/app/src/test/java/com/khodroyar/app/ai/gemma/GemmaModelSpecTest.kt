@@ -15,6 +15,12 @@ class GemmaModelSpecTest {
         assertTrue(!url.contains("/resolve/main/"))
     }
 
+    @Test fun checksumMetadataIsPinnedToSameCommitAsModelBytes() {
+        val spec = GemmaModelSpec.GEMMA_4_E2B
+        assertEquals("https://huggingface.co/api/models/${spec.hfRepoId}/tree/${spec.pinnedCommit}", spec.metadataUrl)
+        assertTrue(!spec.metadataUrl.endsWith("/tree/main"))
+    }
+
     @Test fun expectedSizeMatchesOfficialAllowlist() {
         // google-ai-edge/gallery model_allowlists/1_0_11.json, entry Gemma-4-E2B-it.
         assertEquals(2_583_085_056L, GemmaModelSpec.GEMMA_4_E2B.expectedSizeBytes)

@@ -18,11 +18,12 @@ import java.io.File
 object BackupFiles {
 
     const val MIME_JSON = "application/json"
+    const val MIME_ZIP = "application/zip"
 
     fun suggestedFileName(): String {
         val date = Jalali.todayString().replace("/", "-")
         val stamp = System.currentTimeMillis() / 1000L
-        return "car-backup-$date-$stamp.json"
+        return "car-backup-$date-$stamp.zip"
     }
 
     /** Writes [content] into the user-picked document. Returns false on any failure. */
@@ -42,11 +43,23 @@ object BackupFiles {
         false
     }
 
+    fun writeBytesToUri(context: Context, uri: Uri, content: ByteArray): Boolean = try {
+        val out = context.contentResolver.openOutputStream(uri, "wt")
+        if (out == null) false else {
+            out.use { it.write(content); it.flush() }
+            true
+        }
+    } catch (_: Exception) { false }
+
     fun readFromUri(context: Context, uri: Uri): String? = try {
         context.contentResolver.openInputStream(uri)?.use { it.bufferedReader().readText() }
     } catch (e: Exception) {
         null
     }
+
+    fun readBytesFromUri(context: Context, uri: Uri): ByteArray? = try {
+        context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+    } catch (_: Exception) { null }
 
     /**
      * Also keeps a copy inside the app's own files dir (declared in file_paths.xml),
@@ -59,6 +72,11 @@ object BackupFiles {
         null
     }
 
+    fun writeInternalCopy(context: Context, content: ByteArray, fileName: String): File? = try {
+        val dir = File(context.filesDir, "VehicleManager").apply { mkdirs() }
+        File(dir, fileName).apply { writeBytes(content) }
+    } catch (_: Exception) { null }
+
     fun shareText(context: Context, content: String, fileName: String, chooserTitle: String): Boolean = try {
         val dir = File(context.cacheDir, "exports").apply { mkdirs() }
         val file = File(dir, fileName).apply { writeText(content) }
@@ -67,6 +85,13 @@ object BackupFiles {
     } catch (e: Exception) {
         false
     }
+
+    fun shareBytes(context: Context, bytes: ByteArray, fileName: String, chooserTitle: String): Boolean = try {
+        val dir = File(context.cacheDir, "exports").apply { mkdirs() }
+        val file = File(dir, fileName).apply { writeBytes(bytes) }
+        shareFile(context, file, MIME_ZIP, chooserTitle)
+        true
+    } catch (_: Exception) { false }
 
     fun shareFile(context: Context, file: File, mime: String, chooserTitle: String) {
         val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
@@ -82,6 +107,7 @@ object BackupFiles {
         "xlsx" -> "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         "pdf" -> "application/pdf"
         "json" -> MIME_JSON
+        "zip" -> MIME_ZIP
         else -> "application/octet-stream"
     }
 }
