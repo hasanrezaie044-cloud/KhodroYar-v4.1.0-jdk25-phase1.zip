@@ -36,6 +36,7 @@ internal fun MaintenanceDetailDialog(
         if (item.typeText.isNotBlank() && item.type == MaintenanceType.OTHER.wire) item.typeText else it
     }
     val toast = LocalToast.current
+    val attachmentOpenFailedMessage = tr("نمایش پیوست ممکن نشد", "Could not open attachment")
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(tr("جزئیات تعمیر و نگهداری", "Maintenance details")) },
@@ -51,7 +52,7 @@ internal fun MaintenanceDetailDialog(
                     Spacer(Modifier.height(8.dp))
                     Text(tr("پیوست", "Attachment"), style = MaterialTheme.typography.titleSmall)
                     if (Attachments.exists(item.attachmentPath)) {
-                        AttachmentPreviewOpenable(item.attachmentPath, onOpenFailed = { toast.show(tr("نمایش پیوست ممکن نشد", "Could not open attachment")) })
+                        AttachmentPreviewOpenable(item.attachmentPath, onOpenFailed = { toast.show(attachmentOpenFailedMessage) })
                     } else {
                         Text(tr("فایل پیوست در این دستگاه پیدا نشد.", "Attachment file is not available on this device."), color = MaterialTheme.colorScheme.error)
                     }
