@@ -60,10 +60,22 @@ class DeviceProfile(context: Context) {
         return Verdict(reasons.isEmpty(), reasons)
     }
 
-    /** Enough headroom to (re)create the engine: model stays memory-mapped, but prefill spikes. */
+    /**
+     * Enough headroom to (re)create the engine: the 2.58GB model is memory-mapped, but
+     * vision prefill + KV cache need real free RAM on top. On the target device
+     * (minimum-spec 8GB, e.g. S23 FE), we demand ≈2.5GB free before we even try;
+     * on 12GB+ devices 1.4GB suffices — honest OOM instead of a mid-prompt crash.
+     */
     fun hasHeadroomForInference(): Boolean {
         val info = ramInfo()
-        return !info.lowMemory && (info.availableBytes < 0 || info.availableBytes >= 700L * 1024 * 1024)
+        if (info.lowMemory) return false
+        if (info.availableBytes < 0) return true // unknown: let the runtime try honestly
+        val minFreeRamBytes = when {
+            info.totalBytes <= 0 -> 1400L * 1024 * 1024
+            info.totalBytes < (12L * 1024 * 1024 * 1024) -> 2500L * 1024 * 1024
+            else -> 1400L * 1024 * 1024
+        }
+        return info.availableBytes >= minFreeRamBytes
     }
 
     companion object {

@@ -2,7 +2,9 @@ name: KhodroYar Android APK Release
 
 on:
   push:
-    branches: [main]
+    # Build on every branch push (not only main): Arena session branches arena/** then
+    # also produce the signed-release APK as a workflow artifact.
+    branches: ['**']
   workflow_dispatch:
   workflow_call:
     inputs:

@@ -49,6 +49,12 @@ data class GemmaModelSpec(
 
     companion object {
         /** The single model this app ships support for. */
+        /**
+         * انتخاب مختص این نسخهٔ اپ: کوچک‌ترین و جدیدترین مدل رسمیِ LiteRT-LM با Vision که
+         * حداقل رسمی RAM آن (۸GB در allowlist گوگل) دقیقاً برابر RAM گوشی هدف S23 FE است و
+         * هیچ مدلِ واجد vision نمی‌تواند الزامی کمتر داشته باشد. E4B = ۱۲GB؛ 3n-E2B بزرگ‌تر و
+         * قدیمی‌تر؛ مدل‌های ۶GB-RAM بدون vision هستند.
+         */
         val GEMMA_4_E2B = GemmaModelSpec(
             displayName = "Gemma 4 E2B",
             hfRepoId = "litert-community/gemma-4-E2B-it-litert-lm",

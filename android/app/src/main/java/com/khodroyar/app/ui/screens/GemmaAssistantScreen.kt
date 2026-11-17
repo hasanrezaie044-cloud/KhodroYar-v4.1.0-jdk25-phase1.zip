@@ -606,7 +606,7 @@ private fun ModelManagerDialog(vm: GemmaAssistantViewModel, onClose: () -> Unit,
                     },
                 )
                 InfoRow("رم دستگاه", ram)
-                InfoRow("حداقل رسمی", "۸ گیگابایت رم (مشخص‌شده توسط گوگل)")
+                InfoRow("حداقل رسمی", "۸ گیگابایت رم — دقیقاً سازگار با Galaxy S23 FE شما")
                 InfoRow("منبع دانلود", "Hugging Face · litert-community (رسمی)", emphasis = false)
                 InfoRow("اجازه‌نامه", "Apache 2.0")
                 if (st is ModelUiState.Downloading) {

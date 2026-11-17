@@ -87,6 +87,29 @@
 | مدل | commit `7fa1d78473894f7e736a21d920c3aa80f950c0db` از `litert-community/gemma-4-E2B-it-litert-lm` (allowlist رسمی Gallery) | commit-pin = تغییرناپذیر؛ اندازه و RAM حداقل توسط Google تأیید شده؛ CI هر بار چک می‌کند فایل در همان commit هنوز با همان اندازه هست |
 | Kotlin (پروژه) | 2.3.10 ≥ حداقل 2.3 مورد نیاز 0.17+/0.18/0.19 | در CHANGES 5.1.9 هم مصداق داشت |
 
+### مدل واجد Vision در allowlist رسمی، برای دستگاه ۸GB (S23 FE)
+| مدل | حجم | RAM رسمی | روی ۸GB |
+|---|---|---|---|
+| **Gemma-4-E2B-it** ← انتخاب ما | ۲٫۵۸GB | ۸GB | 🟢 پوشش دقیق |
+| Gemma-4-E4B-it | ۳٫۶۵GB | ۱۲GB | 🔴 ناسازگار |
+| Gemma-3n-E2B-it | ۳٫۶۶GB | ۸GB | 🟡 سنگین‌تر و قدیمی‌تر |
+| هر مدل ۶GB-RAM | ۰٫۵۸–۱٫۸GB | ۶GB | ✅ ولی بدون vision |
+
+## ۳٫۷) رفتار اختصاصی برای دستگاه ۸GB تنگ
+- `hasHeadroomForInference()`: روی دستگاه ۸GB حداقل ≈۲.۵GB حافظهٔ واقعی آزاد قبل از لود مدل
+  لازم است (۲.۵۸GB فایل mمی‌شود + vision prefill + KV)؛ اگر نباشد به‌جای کرش/خاموشی پیام
+  «چند برنامهٔ باز را ببندید» می‌دهد. روی دستگاه ۱۲GB+ آستانه ۱.۴GB است.
+- `ramVerdict()` همچنان RAM کلی دستگاه را با حداقل مدل چک می‌کند (پیام، نه کرش)، و storage
+  قبل از دانلود صریح بررسی می‌شود.
+- اگر vision executor روی دستگاه خطا بدهد، متن همچنان کار می‌کند و برای عکس پیغام
+  «پردازش تصویر روی این دستگاه در دسترس نیست» چاپ می‌شود.
+
+## ۳٫۸) ساختن APK
+بیلد خودکار روی GitHub Actions انجام می‌شود و حالا روی **هر** برنچ (از جمله این جلسه) trigger
+می‌شود. مسیر: Actions → workflow «KhodroYar Android APK Release» → ران موفق → artifacts
+(`khodroyar-release-signed-5.2.0`). همان APK امضاشدهٔ release، آمادهٔ نصب «به‌روزرسانی» روی
+گوشی شماست.
+
 ## ۴) آنچه تست نشد / نیاز به CI یا دستگاه
 - کلاس‌های صرفاً-اندروید (`LiteRtLmEngine`، `ReportImagePrep`، `DeviceProfile`، `GemmaRuntime`،
   `GemmaAssistantViewModel`، `GemmaAssistantScreen`) با **بازبینی امضا به امضا در برابر سورس واقعی
