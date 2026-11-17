@@ -18,9 +18,9 @@ import java.util.UUID
 class ConversationRepository(context: Context, fileName: String = FILE_ONLINE) {
 
     private val file = File(context.applicationContext.filesDir, fileName)
-    private companion object { val lock = Any() }
 
     companion object {
+        private val lock = Any()
         /** History of the online assistant (server-based) — unchanged default. */
         const val FILE_ONLINE = "ai_conversations.json"
         /** Separate file so the two assistants' histories never mix. */

@@ -74,7 +74,11 @@ fun FuelScreen(
     var pendingDelete by remember { mutableStateOf<FuelEntity?>(null) }
 
     if (showForm) {
-        FuelForm(repository, quickDate, editing) { saved ->
+        FuelForm(repository, quickDate, editing, onClose = {
+            showForm = false
+            editing = null
+            if (quickDate != null) onQuickDone()
+        }) { saved ->
             showForm = false
             editing = null
             if (saved != null) details = saved
@@ -241,7 +245,13 @@ private fun FuelRow(fuel: FuelEntity, onClick: () -> Unit, onEdit: () -> Unit, o
 }
 
 @Composable
-private fun FuelForm(repository: AppRepository, initialDate: String?, editing: FuelEntity? = null, onSaved: (FuelEntity?) -> Unit) {
+private fun FuelForm(
+    repository: AppRepository,
+    initialDate: String?,
+    editing: FuelEntity? = null,
+    onClose: () -> Unit,
+    onSaved: (FuelEntity?) -> Unit,
+) {
     val scope = rememberCoroutineScope()
     val toast = LocalToast.current
     val ratesByYear by repository.ratesByYear.collectAsState(initial = RatesByYear.empty())

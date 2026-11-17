@@ -10,13 +10,13 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.unit.dp
 import com.khodroyar.app.data.db.LoanInstallmentEntity
 import com.khodroyar.app.ui.components.JalaliDateField
 import com.khodroyar.app.ui.components.MoneyField
 import com.khodroyar.app.ui.components.TextFieldR
 import com.khodroyar.app.ui.components.asDouble
 import com.khodroyar.app.ui.components.digitsOnly
-import com.khodroyar.app.ui.components.trimNumber
 
 @Composable
 fun LoanInstallmentEditDialog(row: LoanInstallmentEntity, onDismiss: () -> Unit, onSave: (LoanInstallmentEntity) -> Unit) {

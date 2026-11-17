@@ -7,6 +7,7 @@ import com.khodroyar.app.core.holidays.WorkCalendar
 import com.khodroyar.app.core.jalali.Jalali
 import com.khodroyar.app.core.rates.FuelType
 import com.khodroyar.app.core.rates.ServiceType
+import com.khodroyar.app.core.rates.ServiceTypeDetector
 import com.khodroyar.app.data.db.FuelEntity
 import com.khodroyar.app.data.db.InsuranceEntity
 import com.khodroyar.app.data.db.MaintenanceEntity
@@ -26,6 +27,17 @@ import java.util.UUID
 class AgentToolExecutor(private val repo: AppRepository) : AgentToolRunner {
 
     override suspend fun prepare(call: ValidatedCall): ValidatedCall {
+        if (call.spec.name == "add_service") {
+            val date = call.str("date") ?: Jalali.todayString()
+            val type = resolveServiceType(call, date)
+                ?: throw AgentUserException("نوع سرویس مشخص نیست؛ ساعت شروع یا نوع سرویس را مشخص کنید. چیزی ثبت نشد.")
+            val duplicates = findServiceDuplicates(date, call.dbl("km") ?: 0.0,
+                call.str("origin") ?: "", call.str("destination") ?: "")
+            return ValidatedCall(call.spec, call.args + mapOf(
+                "resolved_service_type" to type.wire,
+                "similar_service_count" to duplicates.size,
+            ))
+        }
         if (call.spec.name !in RecordCommandDialogue.names) return call
         val kind = call.spec.name.substringAfter('_')
         val row = repo.agentRecord(kind, requireNotNull(call.str("id")))
@@ -145,9 +157,9 @@ class AgentToolExecutor(private val repo: AppRepository) : AgentToolRunner {
     }
 
     /** Summary for a new work/service record, including a possible-duplicate warning. */
-    private suspend fun describeAddService(a: ValidatedCall): String {
+    private fun describeAddService(a: ValidatedCall): String {
         val date = a.str("date") ?: Jalali.todayString()
-        val type = resolveServiceType(a, date)
+        val type = a.str("resolved_service_type")?.let(ServiceType::fromWireOrNull)
         val km = a.dbl("km") ?: 0.0
         val sb = StringBuilder("ثبت سرویس جدید")
         sb.append(" · تاریخ $date")
@@ -162,9 +174,9 @@ class AgentToolExecutor(private val repo: AppRepository) : AgentToolRunner {
         (a.int("toll_count") ?: 0).takeIf { it > 0 }?.let { sb.append(" · $it عوارضی") }
         val missionBits = (a.dbl("mission_food") ?: 0.0) + (a.dbl("mission_toll") ?: 0.0) + (a.dbl("mission_fine") ?: 0.0)
         if (missionBits > 0) sb.append(" · مأموریت ${n(missionBits)} تومان")
-        val dups = findServiceDuplicates(date, km, a.str("origin") ?: "", a.str("destination") ?: "")
-        if (dups.isNotEmpty()) {
-            sb.append("\n⚠️ برای همین تاریخ سرویس مشابهی ثبت شده (${dups.size} مورد) — اگر تکراری است لغو کنید.")
+        val duplicateCount = a.int("similar_service_count") ?: 0
+        if (duplicateCount > 0) {
+            sb.append("\n⚠️ برای همین تاریخ سرویس مشابهی ثبت شده ($duplicateCount مورد) — اگر تکراری است لغو کنید.")
         }
         return sb.toString()
     }
