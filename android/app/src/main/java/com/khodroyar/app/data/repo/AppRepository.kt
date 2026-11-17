@@ -13,6 +13,8 @@ import com.khodroyar.app.core.rates.Rates
 import com.khodroyar.app.core.rates.RatesByYear
 import com.khodroyar.app.core.rates.ServiceType
 import com.khodroyar.app.data.db.*
+import com.khodroyar.app.data.attachments.Attachments
+import com.khodroyar.app.data.backup.BackupAttachmentCodec
 import com.khodroyar.app.data.legacy.LegacyBackup
 import com.khodroyar.app.data.legacy.toEntity
 import com.khodroyar.app.data.legacy.toRates
@@ -24,6 +26,7 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.doubleOrNull
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
@@ -33,6 +36,20 @@ import kotlinx.coroutines.flow.runningFold
 
 /** Frozen side effect of the SAME manual maintenance rule, approved along with its record. */
 data class AgentMaintenanceChange(val change: TrackedChange, val rateYear: Int, val rateSnapshot: String)
+
+private data class BackupDatabaseSnapshot(
+    val services: List<ServiceEntity>,
+    val fuels: List<FuelEntity>,
+    val maintenances: List<MaintenanceEntity>,
+    val loans: List<LoanEntity>,
+    val expenses: List<PersonalExpenseEntity>,
+    val incomes: List<PersonalIncomeEntity>,
+    val personnel: List<PersonnelEntity>,
+    val holidays: List<HolidayEntity>,
+    val insurance: List<InsuranceEntity>,
+    val rates: List<RatesEntity>,
+    val suggestions: Map<String, List<String>>,
+)
 
 /**
  * Single write/read surface over Room. All suspend functions hop to the IO
@@ -719,21 +736,39 @@ class AppRepository(context: Context) {
      */
     suspend fun exportBackupJson(): String = withContext(io) {
         quickEntries.recover()
-        val services = db.services().allOnce()
-        val fuels = db.fuels().allOnce()
-        val maint = db.maintenances().allOnce()
-        val loans = db.loans().allOnce()
-        val expenses = db.personalExpenses().allOnce()
-        val incomes = db.personalIncomes().allOnce()
-        val people = db.personnel().allOnce()
-        val holidays = db.holidays().allOnce()
-        val rateRows = db.rates().allOnce()
+        // Read every table under one SQLite snapshot so concurrent writes cannot produce a
+        // backup whose records and per-year rates came from different moments.
+        val snapshot = db.withTransaction {
+            val suggestionNames = (listOf("origin", "destination", "passengers") + db.suggestions().fields())
+                .distinct()
+            BackupDatabaseSnapshot(
+                services = db.services().allOnce(),
+                fuels = db.fuels().allOnce(),
+                maintenances = db.maintenances().allOnce(),
+                loans = db.loans().allOnce(),
+                expenses = db.personalExpenses().allOnce(),
+                incomes = db.personalIncomes().allOnce(),
+                personnel = db.personnel().allOnce(),
+                holidays = db.holidays().allOnce(),
+                insurance = db.insurance().allOnce(),
+                rates = db.rates().allOnce(),
+                suggestions = suggestionNames.associateWith { db.suggestions().fieldOnce(it) },
+            )
+        }
+        val services = snapshot.services
+        val fuels = snapshot.fuels
+        val maint = snapshot.maintenances
+        val loans = snapshot.loans
+        val expenses = snapshot.expenses
+        val incomes = snapshot.incomes
+        val people = snapshot.personnel
+        val holidays = snapshot.holidays
+        val insurance = snapshot.insurance
+        val rateRows = snapshot.rates
         val activeYear = Jalali.currentYear()
-        val suggestionFields = (listOf("origin", "destination", "passengers") + db.suggestions().fields())
-            .distinct()
-            .associateWith { db.suggestions().fieldOnce(it) }
+        val suggestionFields = snapshot.suggestions
 
-        buildString {
+        BackupAttachmentCodec.pack(appContext, buildString {
             append("{\n")
             append("\"services\": ["); append(services.joinToString(",") { it.toJson() }); append("],\n")
             append("\"fuels\": ["); append(fuels.joinToString(",") { it.toJson() }); append("],\n")
@@ -743,6 +778,7 @@ class AppRepository(context: Context) {
             append("\"personalIncomes\": ["); append(incomes.joinToString(",") { it.toJson() }); append("],\n")
             append("\"personnel\": ["); append(people.joinToString(",") { it.toJson() }); append("],\n")
             append("\"holidays\": ["); append(holidays.joinToString(",") { it.toJson() }); append("],\n")
+            append("\"insurance\": ["); append(insurance.joinToString(",") { it.toJson() }); append("],\n")
             append("\"rates\": ")
             append((rateRows.firstOrNull { it.year == activeYear } ?: rateRows.lastOrNull())?.toJson() ?: "{}")
             append(",\n")
@@ -766,10 +802,19 @@ class AppRepository(context: Context) {
             append("\"backupScope\": \"full-app-data\",\n")
             append("\"backupNote\": \"پشتیبان کامل داده‌های ثبت‌شده برنامه؛ PIN برای امنیت وارد نمی‌شود.\"\n")
             append("}")
-        }
+        })
     }
 
-    fun previewBackup(json: String) = LegacyBackup.preview(json)
+    fun previewBackup(json: String): LegacyBackup.Preview {
+        val preview = LegacyBackup.preview(json)
+        if (!preview.valid) return preview
+        return try {
+            BackupAttachmentCodec.validate(appContext, json)
+            preview
+        } catch (e: Exception) {
+            preview.copy(valid = false, error = e.message ?: "اعتبارسنجی فایل پشتیبان ناموفق بود")
+        }
+    }
 
     /**
      * Replaces all data with the backup contents, in one transaction: either the
@@ -777,38 +822,64 @@ class AppRepository(context: Context) {
      * half-restored database.
      */
     suspend fun restoreBackup(json: String): Result<LegacyBackup.Counts> = withContext(io) {
-        val payload = LegacyBackup.parse(json)
-            ?: return@withContext Result.failure(IllegalArgumentException("ساختار فایل نامعتبر است"))
+        val prepared = try {
+            BackupAttachmentCodec.prepareRestore(appContext, json)
+        } catch (e: Exception) {
+            return@withContext Result.failure(IllegalArgumentException(e.message ?: "اعتبارسنجی فایل پشتیبان ناموفق بود", e))
+        }
         try {
-            // Never let a restored/rolled-back dataset silently receive old unattended rules.
-            AutomationStore.get(appContext).pauseAll()
-            QuickEntries.invalidate()
-            RecordMutations.mutate(db, settingsStore, invalidateReceipt = true) {
-            db.runInTransaction {
-                // Room's runInTransaction needs blocking calls; DAO suspend functions
-                // are invoked through runBlocking on the already-IO thread.
-                kotlinx.coroutines.runBlocking {
-                    db.services().clear(); db.fuels().clear(); db.maintenances().clear()
-                    db.loans().clear(); db.personalExpenses().clear(); db.personalIncomes().clear()
-                    db.personnel().clear(); db.holidays().clear(); db.suggestions().clear()
-                    if (payload.rates.isNotEmpty()) db.rates().clear()
+            val payload = LegacyBackup.parse(prepared.json)
+                ?: throw IllegalArgumentException("ساختار فایل نامعتبر است")
+            val oldAttachments = (db.services().allOnce().map { it.attachmentPath } +
+                db.maintenances().allOnce().map { it.attachmentPath }).filter { it.isNotBlank() }.toSet()
 
-                    db.services().insertAll(payload.services)
-                    db.fuels().insertAll(payload.fuels)
-                    db.maintenances().insertAll(payload.maintenances)
-                    db.loans().insertAll(payload.loans)
-                    db.personalExpenses().insertAll(payload.personalExpenses)
-                    db.personalIncomes().insertAll(payload.personalIncomes)
-                    db.personnel().insertAll(payload.personnel)
-                    db.holidays().insertAll(payload.holidays)
-                    db.suggestions().upsertAll(payload.suggestions)
-                    if (payload.rates.isNotEmpty()) db.rates().upsertAll(payload.rates)
+            RecordMutations.mutate(db, settingsStore) {
+                db.runInTransaction {
+                    // Room's runInTransaction needs blocking calls; DAO suspend functions
+                    // are invoked through runBlocking on the already-IO thread.
+                    kotlinx.coroutines.runBlocking {
+                        db.services().clear(); db.fuels().clear(); db.maintenances().clear()
+                        db.loans().clear(); db.personalExpenses().clear(); db.personalIncomes().clear()
+                        db.personnel().clear(); db.holidays().clear(); db.suggestions().clear()
+                        if (payload.insuranceFieldPresent) db.insurance().clear()
+                        if (payload.rates.isNotEmpty()) db.rates().clear()
+
+                        db.services().insertAll(payload.services)
+                        db.fuels().insertAll(payload.fuels)
+                        db.maintenances().insertAll(payload.maintenances)
+                        db.loans().insertAll(payload.loans)
+                        db.personalExpenses().insertAll(payload.personalExpenses)
+                        db.personalIncomes().insertAll(payload.personalIncomes)
+                        db.personnel().insertAll(payload.personnel)
+                        db.holidays().insertAll(payload.holidays)
+                        if (payload.insuranceFieldPresent) db.insurance().insertAll(payload.insurance)
+                        db.suggestions().upsertAll(payload.suggestions)
+                        if (payload.rates.isNotEmpty()) db.rates().upsertAll(payload.rates)
+                    }
                 }
+                // The Room transaction has committed; restored attachment files are now referenced.
+                prepared.keep()
+                applySettingsFrom(prepared.json)
+                QuickEntries.invalidate()
             }
-            applySettingsFrom(json)
+
+            val retainedAttachments = (payload.services.map { it.attachmentPath } +
+                payload.maintenances.map { it.attachmentPath }).toSet()
+            (oldAttachments - retainedAttachments).forEach { path -> Attachments.delete(appContext, path) }
+            // Stop unattended writes only after the replacement database has committed.
+            try {
+                AutomationStore.get(appContext).pauseAll()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                // The restored rows and settings are already committed; this is best-effort safety cleanup.
             }
             Result.success(payload.counts)
+        } catch (e: CancellationException) {
+            prepared.close()
+            throw e
         } catch (e: Exception) {
+            prepared.close()
             Result.failure(e)
         }
     }
@@ -825,8 +896,15 @@ class AppRepository(context: Context) {
         } catch (e: Exception) {
             return
         }
-        val block = listOf("settings", "appearance", "goals", "reminderPrefs")
-            .firstNotNullOfOrNull { root[it] as? JsonObject } ?: return
+        // Older exports keep appearance, goals, and reminder preferences in separate
+        // objects. Merge them rather than silently restoring only the first section;
+        // the consolidated settings object takes precedence when keys overlap.
+        val mergedSettings = linkedMapOf<String, kotlinx.serialization.json.JsonElement>()
+        listOf("appearance", "goals", "reminderPrefs", "settings").forEach { key ->
+            (root[key] as? JsonObject)?.let { mergedSettings.putAll(it) }
+        }
+        if (mergedSettings.isEmpty()) return
+        val block = JsonObject(mergedSettings)
 
         fun prim(k: String) = block[k] as? JsonPrimitive
         fun str(k: String) = prim(k)?.contentOrNull?.takeIf { it.isNotBlank() }
@@ -840,6 +918,17 @@ class AppRepository(context: Context) {
             language = str("language"),
             userFirstName = str("userFirstName"),
             userLastName = str("userLastName"),
+            vehicleCurrentKm = dbl("vehicleCurrentKm"),
+            isRental = bool("isRental"),
+            beltCurrentKm = dbl("beltCurrentKm"),
+            beltNextKm = dbl("beltNextKm"),
+            sparkCurrentKm = dbl("sparkCurrentKm"),
+            sparkNextKm = dbl("sparkNextKm"),
+            brakeCurrentKm = dbl("brakeCurrentKm"),
+            brakeNextKm = dbl("brakeNextKm"),
+            filterCurrentKm = dbl("filterCurrentKm"),
+            filterNextKm = dbl("filterNextKm"),
+            trafficNotifyEnabled = bool("trafficNotifyEnabled"),
             oilCurrentKm = dbl("oilCurrentKm"),
             oilNextKm = dbl("oilNextKm"),
             privacyMode = bool("privacyMode"),
@@ -916,5 +1005,7 @@ internal fun PersonalIncomeEntity.toJson() = """{"id":"${esc(id)}","date":"${esc
 internal fun PersonnelEntity.toJson() = """{"id":"${esc(id)}","name":"${esc(name)}","personnelCode":"${esc(personnelCode)}","costCenter":"${esc(costCenter)}","phone":"${esc(phone)}","timestamp":"${esc(timestamp)}"}"""
 
 internal fun HolidayEntity.toJson() = """{"id":"${esc(id)}","date":"${esc(date)}","title":"${esc(title)}","timestamp":"${esc(timestamp)}"}"""
+
+internal fun InsuranceEntity.toJson() = """{"id":"${esc(id)}","type":"${esc(type)}","expiryDate":"${esc(expiryDate)}","cost":${num(cost)},"company":"${esc(company)}","policyNumber":"${esc(policyNumber)}","reminder":$reminder,"timestamp":"${esc(timestamp)}"}"""
 
 internal fun RatesEntity.toJson() = """{"nightKm":${num(nightKm)},"holidayKm":${num(holidayKm)},"fixedRequestKm":${num(fixedRequestKm)},"hour":${num(hour)},"holidayHour":${num(holidayHour)},"fuelPriceGov":${num(fuelPriceGov)},"fuelPriceSemi":${num(fuelPriceSemi)},"fuelPriceFree":${num(fuelPriceFree)},"toll":${num(toll)},"defaultCarType":"${esc(defaultCarType)}","oilChangeKmInterval":$oilChangeKmInterval,"timingBeltKmInterval":$timingBeltKmInterval,"sparkPlugKmInterval":$sparkPlugKmInterval,"brakePadKmInterval":$brakePadKmInterval,"fuelFilterKmInterval":$fuelFilterKmInterval,"dailySalary":${num(dailySalary)},"leaveAmount":${num(leaveAmount)},"nightPercent":${num(nightPercent)},"saharPercent":${num(saharPercent)},"nightStartTime":"${esc(nightStartTime)}","saharStartTime":"${esc(saharStartTime)}","saharEndTime":"${esc(saharEndTime)}","timeBonusServiceTypes":[${timeBonusServiceTypes.split(",").filter{it.isNotBlank()}.joinToString(","){"\"${esc(it.trim())}\""}}]}"""

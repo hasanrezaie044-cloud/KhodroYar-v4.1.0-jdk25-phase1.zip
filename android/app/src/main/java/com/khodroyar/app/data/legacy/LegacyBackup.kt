@@ -33,9 +33,10 @@ object LegacyBackup {
         val services: Int = 0, val fuels: Int = 0, val maintenances: Int = 0,
         val loans: Int = 0, val personalExpenses: Int = 0, val personalIncomes: Int = 0,
         val personnel: Int = 0, val holidays: Int = 0, val rateYears: Int = 0,
+        val insurance: Int = 0,
     ) {
         val total: Int get() = services + fuels + maintenances + loans +
-            personalExpenses + personalIncomes + personnel + holidays
+            personalExpenses + personalIncomes + personnel + holidays + insurance
     }
 
     data class Preview(
@@ -56,6 +57,9 @@ object LegacyBackup {
         val personalIncomes: List<PersonalIncomeEntity>,
         val personnel: List<PersonnelEntity>,
         val holidays: List<HolidayEntity>,
+        val insurance: List<InsuranceEntity>,
+        /** Older JSON formats never stored insurance; preserve current rows when absent. */
+        val insuranceFieldPresent: Boolean,
         val rates: List<RatesEntity>,
         val suggestions: List<SuggestionEntity>,
         val counts: Counts,
@@ -93,7 +97,7 @@ object LegacyBackup {
 
     /** Structural check mirroring the JS `validateImportData`. */
     private fun isStructurallyValid(root: JsonObject): Boolean {
-        for (k in listOf("services", "fuels", "maintenances")) {
+        for (k in listOf("services", "fuels", "maintenances", "insurance")) {
             val v = root[k]
             if (v != null && v !is JsonNull && v !is JsonArray) return false
         }
@@ -120,6 +124,7 @@ object LegacyBackup {
             personnel = root.arr("personnel")?.size ?: 0,
             holidays = root.arr("holidays")?.size ?: 0,
             rateYears = root.obj("ratesByYear")?.size ?: if (root.obj("rates") != null) 1 else 0,
+            insurance = root.arr("insurance")?.size ?: 0,
         )
         val version = root.prim("version")?.contentOrNull
         val warning = if (version != null) {
@@ -248,6 +253,19 @@ object LegacyBackup {
             )
         }
 
+        val insurance = root.arr("insurance").orEmptyObjects().map { o ->
+            InsuranceEntity(
+                id = o.str("id").ifEmpty { newId() },
+                type = o.str("type"),
+                expiryDate = o.str("expiryDate"),
+                cost = o.dbl("cost"),
+                company = o.str("company"),
+                policyNumber = o.str("policyNumber"),
+                reminder = o.boolOr("reminder", false),
+                timestamp = o.str("timestamp").ifEmpty { nowIso() },
+            )
+        }
+
         // Manual holidays are de-duplicated by date, as `addHoliday` did.
         val seenDates = HashSet<String>()
         val holidays = root.arr("holidays").orEmptyObjects().mapNotNull { o ->
@@ -293,10 +311,30 @@ object LegacyBackup {
         }
 
         return Payload(
-            services, fuels, maintenances, loans, expenses, incomes, personnel,
-            holidays, rateRows, suggestions,
-            Counts(services.size, fuels.size, maintenances.size, loans.size,
-                expenses.size, incomes.size, personnel.size, holidays.size, rateRows.size),
+            services = services,
+            fuels = fuels,
+            maintenances = maintenances,
+            loans = loans,
+            personalExpenses = expenses,
+            personalIncomes = incomes,
+            personnel = personnel,
+            holidays = holidays,
+            insurance = insurance,
+            insuranceFieldPresent = root.containsKey("insurance"),
+            rates = rateRows,
+            suggestions = suggestions,
+            counts = Counts(
+                services = services.size,
+                fuels = fuels.size,
+                maintenances = maintenances.size,
+                loans = loans.size,
+                personalExpenses = expenses.size,
+                personalIncomes = incomes.size,
+                personnel = personnel.size,
+                holidays = holidays.size,
+                rateYears = rateRows.size,
+                insurance = insurance.size,
+            ),
         )
     }
 

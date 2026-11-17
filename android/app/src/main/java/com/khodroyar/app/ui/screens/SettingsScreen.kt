@@ -40,6 +40,7 @@ import com.khodroyar.app.ui.components.*
 import com.khodroyar.app.ui.theme.AppDimens
 import com.khodroyar.app.ui.theme.AppPalette
 import com.khodroyar.app.ui.theme.heroBrush
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 
 /**
@@ -451,19 +452,31 @@ fun SettingsScreen(repository: AppRepository, settings: AppSettings, onToggleThe
                 Icons.Outlined.SaveAlt,
             ) {
                 scope.launch {
-                    val json = repository.exportBackupJson()
-                    backupJson = json
-                    BackupFiles.writeInternalCopy(context, json, BackupFiles.suggestedFileName())
-                    saveBackup.launch(BackupFiles.suggestedFileName())
+                    try {
+                        val json = repository.exportBackupJson()
+                        backupJson = json
+                        BackupFiles.writeInternalCopy(context, json, BackupFiles.suggestedFileName())
+                        saveBackup.launch(BackupFiles.suggestedFileName())
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        toast.show(e.message ?: "ساخت پشتیبان کامل انجام نشد")
+                    }
                 }
             }
         }
         item {
             ActionRow("اشتراک‌گذاری فایل پشتیبان", "ارسال با پیام‌رسان یا ایمیل", Icons.Outlined.Share) {
                 scope.launch {
-                    val json = repository.exportBackupJson()
-                    val ok = BackupFiles.shareText(context, json, BackupFiles.suggestedFileName(), "اشتراک فایل پشتیبان")
-                    toast.show(if (ok) "فایل پشتیبان آماده اشتراک شد" else "ساخت فایل پشتیبان انجام نشد")
+                    try {
+                        val json = repository.exportBackupJson()
+                        val ok = BackupFiles.shareText(context, json, BackupFiles.suggestedFileName(), "اشتراک فایل پشتیبان")
+                        toast.show(if (ok) "فایل پشتیبان آماده اشتراک شد" else "ساخت فایل پشتیبان انجام نشد")
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        toast.show(e.message ?: "ساخت پشتیبان کامل انجام نشد")
+                    }
                 }
             }
         }
@@ -555,6 +568,7 @@ fun SettingsScreen(repository: AppRepository, settings: AppSettings, onToggleThe
                         InfoRow("درآمد شخصی", preview.counts.personalIncomes.toString())
                         InfoRow("پرسنل", preview.counts.personnel.toString())
                         InfoRow("تعطیلات دستی", preview.counts.holidays.toString())
+                        InfoRow("بیمه‌نامه‌ها", preview.counts.insurance.toString())
                         InfoRow("سال‌های نرخ", preview.counts.rateYears.toString())
                         preview.versionWarning?.let {
                             Spacer(Modifier.height(8.dp))

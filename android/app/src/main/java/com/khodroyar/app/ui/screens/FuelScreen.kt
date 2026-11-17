@@ -1,5 +1,6 @@
 package com.khodroyar.app.ui.screens
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -60,11 +61,15 @@ fun FuelScreen(
         }
     }
     var showForm by remember { mutableStateOf(quickDate != null) }
+    var editingFuel by remember { mutableStateOf<FuelEntity?>(null) }
+    var details by remember { mutableStateOf<FuelEntity?>(null) }
     var pendingDelete by remember { mutableStateOf<FuelEntity?>(null) }
 
-    if (showForm) {
-        FuelForm(repository, quickDate) {
+    if (showForm || editingFuel != null) {
+        val existing = editingFuel
+        FuelForm(repository, quickDate, existing = existing) {
             showForm = false
+            editingFuel = null
             if (quickDate != null) onQuickDone()
         }
         return
@@ -142,7 +147,7 @@ fun FuelScreen(
                     ) {
                         Column(verticalArrangement = Arrangement.spacedBy(AppDimens.gap)) {
                             fuels.forEach { fuel ->
-                                FuelRow(fuel, onDelete = { pendingDelete = fuel })
+                                FuelRow(fuel, onDetails = { details = fuel }, onDelete = { pendingDelete = fuel })
                             }
                         }
                     }
@@ -157,6 +162,15 @@ fun FuelScreen(
                 .heightIn(min = AppDimens.buttonHeight),
             shape = FieldShape,
         ) { Icon(Icons.Outlined.Add, null); Spacer(Modifier.width(8.dp)); Text(tr("ثبت سوخت", "Add Fuel")) }
+    }
+
+    details?.let { fuel ->
+        FuelDetailDialog(
+            fuel = fuel,
+            onDismiss = { details = null },
+            onEdit = { details = null; editingFuel = fuel },
+            onDelete = { details = null; pendingDelete = fuel },
+        )
     }
 
     pendingDelete?.let { fuel ->
@@ -178,12 +192,13 @@ fun FuelScreen(
 }
 
 @Composable
-private fun FuelRow(fuel: FuelEntity, onDelete: () -> Unit) {
+private fun FuelRow(fuel: FuelEntity, onDetails: () -> Unit, onDelete: () -> Unit) {
     Surface(
         shape = FieldShape,
         color = MaterialTheme.colorScheme.surfaceContainerLowest,
         border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-        modifier = Modifier.fillMaxWidth().defaultMinSize(minHeight = AppDimens.rowMinHeight),
+        modifier = Modifier.fillMaxWidth().defaultMinSize(minHeight = AppDimens.rowMinHeight)
+            .clickable(onClick = onDetails),
     ) {
         Row(
             Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
@@ -217,21 +232,22 @@ private fun FuelRow(fuel: FuelEntity, onDelete: () -> Unit) {
 }
 
 @Composable
-private fun FuelForm(repository: AppRepository, initialDate: String?, onClose: () -> Unit) {
+private fun FuelForm(repository: AppRepository, initialDate: String?, existing: FuelEntity? = null, onClose: () -> Unit) {
     val scope = rememberCoroutineScope()
     val toast = LocalToast.current
     val ratesByYear by repository.ratesByYear.collectAsState(initial = RatesByYear.empty())
 
-    var date by remember { mutableStateOf(initialDate ?: Jalali.todayString()) }
-    var fuelType by remember { mutableStateOf(FuelType.GOV) }
-    var carType by remember { mutableStateOf(CarType.SOREN) }
-    var litersText by remember { mutableStateOf("") }
+    var date by remember { mutableStateOf(existing?.date ?: initialDate ?: Jalali.todayString()) }
+    var fuelType by remember { mutableStateOf(existing?.let { FuelType.fromWire(it.type) } ?: FuelType.GOV) }
+    var carType by remember { mutableStateOf(existing?.let { CarType.fromWire(it.carType) } ?: CarType.SOREN) }
+    var litersText by remember { mutableStateOf(existing?.liters?.let { it.trimNumber().digitsOnly() } ?: "") }
 
     val year = Jalali.parse(date)?.year ?: Jalali.currentYear()
     val rates = remember(ratesByYear, year) { ratesByYear.forYear(year) }
-    LaunchedEffect(rates.defaultCarType) { carType = rates.defaultCarType }
+    LaunchedEffect(rates.defaultCarType, existing?.id) { if (existing == null) carType = rates.defaultCarType }
 
-    val rate = rates.fuelPriceFor(fuelType)
+    val rate = if (existing != null && existing.date == date && existing.type == fuelType.wire && existing.liters > 0.0)
+        existing.total / existing.liters else rates.fuelPriceFor(fuelType)
     val litersValue = litersText.asDouble()
     val total = litersValue * rate
 
@@ -301,14 +317,19 @@ private fun FuelForm(repository: AppRepository, initialDate: String?, onClose: (
                     onClick = {
                         if (litersValue <= 0.0) { toast.show("مقدار لیتر را وارد کنید"); return@Button }
                         scope.launch {
-                            repository.addFuel(date, fuelType.wire, litersValue, total, carType.wire)
-                            toast.show("سوخت ثبت شد · ${money(total)} تومان")
+                            if (existing == null) {
+                                repository.addFuel(date, fuelType.wire, litersValue, total, carType.wire)
+                                toast.show("سوخت ثبت شد · ${money(total)} تومان")
+                            } else {
+                                repository.updateFuel(existing.copy(date = date, type = fuelType.wire, liters = litersValue, total = total, carType = carType.wire))
+                                toast.show("رکورد سوخت ویرایش شد · ${money(total)} تومان")
+                            }
                             onClose()
                         }
                     },
                     modifier = Modifier.weight(1f).heightIn(min = AppDimens.buttonHeight),
                     shape = FieldShape,
-                ) { Text(tr("ذخیره سوخت", "Save Fuel")) }
+                ) { Text(if (existing == null) tr("ذخیره سوخت", "Save Fuel") else tr("ذخیره ویرایش", "Save changes")) }
             }
         }
     }
