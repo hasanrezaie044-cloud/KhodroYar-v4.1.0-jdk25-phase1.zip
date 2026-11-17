@@ -79,20 +79,10 @@ fun MaintenanceScreen(
         }
     }
 
-    var selectedYear by remember { mutableStateOf(1404) }
-    var search by remember { mutableStateOf("") }
-    var sortMode by remember { mutableStateOf("date") }
-    var details by remember { mutableStateOf<MaintenanceEntity?>(null) }
+    var selectedYear by remember { mutableStateOf(year) }
     val yearPrefix = "$selectedYear/"
-    val yearRecords = remember(records, yearPrefix, search, sortMode) {
-        val matching = records.filter { it.date.startsWith(yearPrefix) &&
-            (search.isBlank() || listOf(it.typeText, it.description, it.replacementParts, it.notes, it.date, it.km.toString(), it.cost.toString())
-                .any { value -> value.contains(search.trim(), ignoreCase = true) }) }
-        when (sortMode) {
-            "km" -> matching.sortedByDescending { it.km }
-            "cost" -> matching.sortedByDescending { it.cost }
-            else -> matching.sortedByDescending { it.date }
-        }
+    val yearRecords = remember(records, yearPrefix) {
+        records.filter { it.date.startsWith(yearPrefix) }
     }
     val yearCost = remember(yearRecords) { yearRecords.sumOf { it.cost } }
 
@@ -113,10 +103,6 @@ fun MaintenanceScreen(
     }
     if (editing != null) {
         MaintenanceForm(repository, settings, rates, records, existing = editing) { editing = null }
-        return
-    }
-    details?.let { item ->
-        MaintenanceDetails(repository, item, onBack = { details = null }, onEdit = { details = null; editing = item })
         return
     }
     if (editingTracked != null) {
@@ -196,18 +182,6 @@ fun MaintenanceScreen(
                     IconButton(onClick = { selectedYear += 1 }) { Icon(Icons.Outlined.ChevronLeft, "سال بعد") }
                 }
             }
-            item {
-                OutlinedTextField(
-                    value = search, onValueChange = { search = it },
-                    modifier = Modifier.fillMaxWidth(), singleLine = true,
-                    label = { Text("جست‌وجوی نوع، توضیح، قطعه یا مقدار") },
-                )
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    listOf("date" to "تاریخ", "km" to "کیلومتر", "cost" to "هزینه").forEach { (key, label) ->
-                        FilterChip(modifier = Modifier.weight(1f), selected = sortMode == key, onClick = { sortMode = key }, label = { Text(label, maxLines = 1) })
-                    }
-                }
-            }
             if (yearRecords.isEmpty()) {
                 item {
                     EmptyState(
@@ -227,7 +201,6 @@ fun MaintenanceScreen(
                             yearRecords.forEach { item ->
                                 MaintenanceRow(
                                     item,
-                                    onClick = { details = item },
                                     onEdit = { editing = item },
                                     onDelete = { pendingDelete = item },
                                 )
@@ -292,12 +265,12 @@ fun MaintenanceScreen(
 }
 
 @Composable
-private fun MaintenanceRow(item: MaintenanceEntity, onClick: () -> Unit, onEdit: () -> Unit = {}, onDelete: () -> Unit) {
+private fun MaintenanceRow(item: MaintenanceEntity, onEdit: () -> Unit = {}, onDelete: () -> Unit) {
     Surface(
         shape = FieldShape,
         color = MaterialTheme.colorScheme.surfaceContainerLowest,
         border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-        modifier = Modifier.fillMaxWidth().defaultMinSize(minHeight = AppDimens.rowMinHeight).clickable(onClick = onClick),
+        modifier = Modifier.fillMaxWidth().defaultMinSize(minHeight = AppDimens.rowMinHeight),
     ) {
         Row(Modifier.padding(horizontal = 12.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
             Icon(
@@ -381,8 +354,6 @@ private fun MaintenanceForm(
         else ""
     ) }
     var description by remember { mutableStateOf(existing?.description ?: "") }
-    var replacementParts by remember { mutableStateOf(existing?.replacementParts ?: "") }
-    var notes by remember { mutableStateOf(existing?.notes ?: "") }
     var attachmentPath by remember { mutableStateOf(existing?.attachmentPath ?: "") }
     val context = LocalContext.current
     val pickImage = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri: Uri? ->
@@ -418,8 +389,6 @@ private fun MaintenanceForm(
                 JalaliDateField("تاریخ", date, { date = it })
                 Spacer(Modifier.height(AppDimens.gap)); MoneyField("هزینه", costText, { costText = it })
                 Spacer(Modifier.height(AppDimens.gap)); TextFieldR("توضیحات", description, { description = it }, singleLine = false, imeAction = ImeAction.Done)
-                Spacer(Modifier.height(AppDimens.gap)); TextFieldR("قطعات تعویض‌شده", replacementParts, { replacementParts = it }, singleLine = false, imeAction = ImeAction.Done)
-                Spacer(Modifier.height(AppDimens.gap)); TextFieldR("یادداشت", notes, { notes = it }, singleLine = false, imeAction = ImeAction.Done)
             }
             FormSection("پیوست رسید / عکس", Icons.Outlined.AttachFile) {
                 if (attachmentPath.isNotBlank()) {
@@ -431,7 +400,6 @@ private fun MaintenanceForm(
                         Text("انتخاب از گالری")
                     }
                 }
-                existing?.let { RecordAttachmentsPanel(repository, "maintenance", it.id) }
             }
             FormSection("خودرو", Icons.Outlined.DirectionsCar) {
                 SegmentedSelector(options = CarType.entries.toList(), selected = carType, label = { it.label }, onSelect = { carType = it })
@@ -461,13 +429,11 @@ private fun MaintenanceForm(
                                     carType = carType.wire,
                                     description = description.trim(),
                                     attachmentPath = attachmentPath,
-                                    replacementParts = replacementParts.trim(),
-                                    notes = notes.trim(),
                                 )
                             )
                             toast.show("سابقه تعمیر ویرایش شد")
                         } else {
-                            repository.addMaintenance(date, type.wire, typeText.ifBlank { type.label }, costText.asDouble(), current, carType.wire, description.trim(), attachmentPath, replacementParts.trim(), notes.trim())
+                            repository.addMaintenance(date, type.wire, typeText.ifBlank { type.label }, costText.asDouble(), current, carType.wire, description.trim(), attachmentPath)
                             toast.show("سابقه تعمیر ثبت شد")
                         }
                         onClose()

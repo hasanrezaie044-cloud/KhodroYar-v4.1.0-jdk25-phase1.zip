@@ -28,7 +28,6 @@ import com.khodroyar.app.core.holidays.IranHolidays
 import com.khodroyar.app.core.jalali.Jalali
 import com.khodroyar.app.data.backup.AutoBackup
 import com.khodroyar.app.data.backup.BackupFiles
-import com.khodroyar.app.data.backup.BackupArchive
 import com.khodroyar.app.data.legacy.LegacyBackup
 import com.khodroyar.app.data.prefs.AppSettings
 import com.khodroyar.app.data.repo.AppRepository
@@ -41,9 +40,7 @@ import com.khodroyar.app.ui.components.*
 import com.khodroyar.app.ui.theme.AppDimens
 import com.khodroyar.app.ui.theme.AppPalette
 import com.khodroyar.app.ui.theme.heroBrush
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 
 /**
  * Settings — and settings only.
@@ -68,7 +65,7 @@ fun SettingsScreen(repository: AppRepository, settings: AppSettings, onToggleThe
     var profileLast by remember(settings.userLastName) { mutableStateOf(settings.userLastName) }
     val pinStore = remember { PinStore(context) }
 
-    var backupArchive by remember { mutableStateOf<ByteArray?>(null) }
+    var backupJson by remember { mutableStateOf<String?>(null) }
     var restoreJson by remember { mutableStateOf<String?>(null) }
     var restorePreview by remember { mutableStateOf<LegacyBackup.Preview?>(null) }
     var goalText by remember { mutableStateOf(settings.monthlyIncomeGoal.trimNumber().digitsOnly()) }
@@ -83,32 +80,26 @@ fun SettingsScreen(repository: AppRepository, settings: AppSettings, onToggleThe
 
     /* --- real device file storage: pick a folder/name, then actually write the file --- */
     val saveBackup = rememberLauncherForActivityResult(
-        ActivityResultContracts.CreateDocument(BackupFiles.MIME_ZIP)
+        ActivityResultContracts.CreateDocument(BackupFiles.MIME_JSON)
     ) { uri ->
-        val archive = backupArchive
-        if (uri == null || archive == null) { toast.show("ذخیره پشتیبان لغو شد"); return@rememberLauncherForActivityResult }
-        val ok = BackupFiles.writeBytesToUri(context, uri, archive)
+        val json = backupJson
+        if (uri == null || json == null) { toast.show("ذخیره پشتیبان لغو شد"); return@rememberLauncherForActivityResult }
+        val ok = BackupFiles.writeToUri(context, uri, json)
         if (ok) {
             repository.markBackupDone()
-            toast.show("فایل ZIP پشتیبان همراه تصاویر ذخیره شد")
+            toast.show("فایل پشتیبان روی دستگاه ذخیره شد")
         } else {
             toast.show("ذخیره فایل پشتیبان انجام نشد")
         }
-        backupArchive = null
+        backupJson = null
     }
 
     val pickBackup = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri == null) return@rememberLauncherForActivityResult
-        scope.launch {
-            val bytes = BackupFiles.readBytesFromUri(context, uri)
-            if (bytes == null) { toast.show("خواندن فایل انجام نشد"); return@launch }
-            runCatching { withContext(Dispatchers.IO) { BackupArchive.open(context, bytes) } }
-                .onSuccess { content ->
-                    restoreJson = content
-                    restorePreview = repository.previewBackup(content)
-                }
-                .onFailure { toast.show("فایل پشتیبان نامعتبر است: ${it.message.orEmpty()}") }
-        }
+        val content = BackupFiles.readFromUri(context, uri)
+        if (content == null) { toast.show("خواندن فایل انجام نشد"); return@rememberLauncherForActivityResult }
+        restoreJson = content
+        restorePreview = repository.previewBackup(content)
     }
 
     val requestNotifications = rememberLauncherForActivityResult(
@@ -461,9 +452,8 @@ fun SettingsScreen(repository: AppRepository, settings: AppSettings, onToggleThe
             ) {
                 scope.launch {
                     val json = repository.exportBackupJson()
-                    val archive = withContext(Dispatchers.IO) { BackupArchive.create(context, json) }
-                    backupArchive = archive
-                    BackupFiles.writeInternalCopy(context, archive, BackupFiles.suggestedFileName())
+                    backupJson = json
+                    BackupFiles.writeInternalCopy(context, json, BackupFiles.suggestedFileName())
                     saveBackup.launch(BackupFiles.suggestedFileName())
                 }
             }
@@ -472,15 +462,14 @@ fun SettingsScreen(repository: AppRepository, settings: AppSettings, onToggleThe
             ActionRow("اشتراک‌گذاری فایل پشتیبان", "ارسال با پیام‌رسان یا ایمیل", Icons.Outlined.Share) {
                 scope.launch {
                     val json = repository.exportBackupJson()
-                    val archive = withContext(Dispatchers.IO) { BackupArchive.create(context, json) }
-                    val ok = BackupFiles.shareBytes(context, archive, BackupFiles.suggestedFileName(), "اشتراک فایل پشتیبان")
-                    toast.show(if (ok) "فایل ZIP پشتیبان همراه تصاویر آماده اشتراک شد" else "ساخت فایل پشتیبان انجام نشد")
+                    val ok = BackupFiles.shareText(context, json, BackupFiles.suggestedFileName(), "اشتراک فایل پشتیبان")
+                    toast.show(if (ok) "فایل پشتیبان آماده اشتراک شد" else "ساخت فایل پشتیبان انجام نشد")
                 }
             }
         }
         item {
             ActionRow("بازگردانی از فایل", "پیش‌نمایش و تأیید قبل از جایگزینی", Icons.Outlined.Restore) {
-                pickBackup.launch(arrayOf(BackupFiles.MIME_ZIP, BackupFiles.MIME_JSON, "text/plain", "*/*"))
+                pickBackup.launch(arrayOf(BackupFiles.MIME_JSON, "text/plain", "*/*"))
             }
         }
         item {

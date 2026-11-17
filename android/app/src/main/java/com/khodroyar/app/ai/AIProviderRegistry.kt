@@ -34,7 +34,7 @@ object AIProviderRegistry {
         AIProviderDescriptor(AiMode.GPT, "gpt", "GPT", AICostEvidence.ACCOUNT_QUOTA,
             "فقط در منطقه و حساب مجاز سرویس.", "سهمیه و هزینه طبق حساب OpenAI؛ خرید یا ارتقا توسط برنامه انجام نمی‌شود.",
             listOf("https://platform.openai.com/docs/api-reference/chat")),
-        AIProviderDescriptor(AiMode.LOCAL, "local", "دستیار داخلی (بدون مدل)", AICostEvidence.ZERO_PRICE,
+        AIProviderDescriptor(AiMode.LOCAL, "local", "دستیار آفلاین", AICostEvidence.ZERO_PRICE,
             "بدون شبکه", "روی همین دستگاه", emptyList()),
     )
     // Read-only compatibility for old preferences/tests; never offered in the supported picker.

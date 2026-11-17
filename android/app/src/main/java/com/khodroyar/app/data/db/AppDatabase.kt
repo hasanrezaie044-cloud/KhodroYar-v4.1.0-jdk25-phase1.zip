@@ -11,9 +11,8 @@ import androidx.room.RoomDatabase
         LoanEntity::class, PersonalExpenseEntity::class, PersonalIncomeEntity::class,
         PersonnelEntity::class, HolidayEntity::class, RatesEntity::class,
         SuggestionEntity::class, InsuranceEntity::class,
-        RecordAttachmentEntity::class, LoanInstallmentEntity::class,
     ],
-    version = 7,
+    version = 6,
     exportSchema = false,
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -29,8 +28,6 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun rates(): RatesDao
     abstract fun suggestions(): SuggestionDao
     abstract fun insurance(): InsuranceDao
-    abstract fun attachments(): RecordAttachmentDao
-    abstract fun loanInstallments(): LoanInstallmentDao
 
     companion object {
         private const val NAME = "car_management.db"
@@ -40,7 +37,7 @@ abstract class AppDatabase : RoomDatabase() {
         fun get(context: Context): AppDatabase = instance ?: synchronized(this) {
             instance ?: Room.databaseBuilder(context.applicationContext, AppDatabase::class.java, NAME)
                 .setJournalMode(JournalMode.WRITE_AHEAD_LOGGING)
-                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6)
                 .build()
                 .also { instance = it }
         }

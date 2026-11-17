@@ -1,6 +1,5 @@
 package com.khodroyar.app.ui.screens
 
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -217,19 +216,24 @@ private fun LoansSection(repository: AppRepository) {
     val scope = rememberCoroutineScope()
     val toast = LocalToast.current
     val loans by repository.loans().collectAsState(initial = emptyList())
-    val installmentRows by repository.allLoanInstallments().collectAsState(initial = emptyList())
-    LaunchedEffect(loans) { loans.forEach { repository.ensureLoanSchedulePublic(it) } }
     var showForm by remember { mutableStateOf(false) }
     var editing by remember { mutableStateOf<LoanEntity?>(null) }
     var pendingDelete by remember { mutableStateOf<LoanEntity?>(null) }
-    var installmentEditing by remember { mutableStateOf<com.khodroyar.app.data.db.LoanInstallmentEntity?>(null) }
+
+    // Keep the loan ledger self-maintaining: overdue installments are marked automatically
+    // when this section is opened, and a loan is removed as soon as its final installment
+    // becomes paid.
+    LaunchedEffect(Unit) {
+        repository.markOverdueInstallments()
+        repository.cleanupCompletedLoans()
+    }
 
     val today = remember { Jalali.todayString() }
     val monthPrefix = remember(today) {
         Jalali.parse(today)?.let { "${it.year}/${it.month.toString().padStart(2, '0')}" } ?: ""
     }
 
-    val portfolio = remember(loans, installmentRows, monthPrefix, today) {
+    val portfolio = remember(loans, monthPrefix, today) {
         var principal = 0.0
         var total = 0L
         var paid = 0L
@@ -243,24 +247,19 @@ private fun LoansSection(repository: AppRepository) {
         var nextAmount = 0L
         var nextDate = ""
         for (loan in loans) {
-            val generated = repository.loanSummary(loan).schedule
-            val rows = installmentRows.filter { it.loanId == loan.id }.ifEmpty {
-                generated.map { inst -> com.khodroyar.app.data.db.LoanInstallmentEntity(
-                    id = "legacy-${loan.id}-${inst.index}", loanId = loan.id, number = inst.index,
-                    amount = inst.amount, dueDate = inst.dueDate, paidDate = if (inst.paid) inst.dueDate else "",
-                ) }
-            }
-            val open = rows.filter { it.paidDate.isBlank() }
-            val paidRows = rows.filter { it.paidDate.isNotBlank() }
+            val s = repository.loanSummary(loan)
             principal += loan.totalAmount
-            total += rows.sumOf { it.amount }
-            paid += paidRows.sumOf { it.amount }
-            remaining += open.sumOf { it.amount }
-            installments += rows.size
-            paidCount += paidRows.size
-            open.filter { it.dueDate.startsWith(monthPrefix) }.forEach { dueAmount += it.amount; dueCount += 1 }
-            overdue += open.count { it.dueDate < today }
-            val next = open.minByOrNull { it.dueDate }
+            total += s.totalWithInterest
+            paid += s.paidAmount
+            remaining += s.remainingAmount
+            installments += s.schedule.size
+            paidCount += s.paidCount
+            s.schedule.filter { it.dueDate.startsWith(monthPrefix) && !it.paid }.forEach {
+                dueAmount += it.amount
+                dueCount += 1
+            }
+            overdue += s.schedule.count { !it.paid && it.dueDate < today }
+            val next = s.nextInstallment
             if (next != null && (nextDate.isEmpty() || next.dueDate < nextDate)) {
                 nextDate = next.dueDate
                 nextAmount = next.amount
@@ -427,17 +426,28 @@ private fun LoansSection(repository: AppRepository) {
                 /* --------------------------------- level 3: per-loan details */
                 item { SectionTitle("جزئیات وام‌ها", "${loans.size} وام · نواری", Icons.Outlined.ListAlt) }
                 items(loans, key = { it.id }) { loan ->
-                    val savedInstallments by repository.loanInstallments(loan.id).collectAsState(initial = emptyList())
                     LoanCard(
                         loan = loan,
-                        repository = repository,
                         summary = repository.loanSummary(loan),
-                        installments = savedInstallments,
                         onToggle = { index -> scope.launch { repository.toggleInstallment(loan.id, index) } },
-                        onEditInstallment = { installmentEditing = it },
                         onEdit = { editing = loan; showForm = true },
                         onDelete = { pendingDelete = loan },
                     )
+                }
+                item {
+                    OutlinedButton(
+                        onClick = {
+                            scope.launch {
+                                val changed = repository.markOverdueInstallments()
+                                toast.show(
+                                    if (changed > 0) "$changed قسط سررسیدشده به‌عنوان پرداخت‌شده علامت خورد"
+                                    else "قسط سررسیدشده‌ای برای علامت‌گذاری نبود"
+                                )
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth().heightIn(min = AppDimens.buttonHeight),
+                        shape = FieldShape,
+                    ) { Text(tr("علامت‌گذاری اقساط سررسیدشده", "Mark Due Installments")) }
                 }
             }
         }
@@ -467,15 +477,6 @@ private fun LoansSection(repository: AppRepository) {
             onDismiss = { pendingDelete = null },
         )
     }
-    installmentEditing?.let { row ->
-        LoanInstallmentEditDialog(row, onDismiss = { installmentEditing = null }, onSave = { updated ->
-            scope.launch {
-                repository.updateLoanInstallment(updated)
-                installmentEditing = null
-                toast.show("قسط ویرایش شد")
-            }
-        })
-    }
 }
 
 /**
@@ -489,33 +490,19 @@ private fun LoansSection(repository: AppRepository) {
 @Composable
 private fun LoanCard(
     loan: LoanEntity,
-    repository: AppRepository,
     summary: LoanCalculator.Summary,
-    installments: List<com.khodroyar.app.data.db.LoanInstallmentEntity>,
     onToggle: (Int) -> Unit,
-    onEditInstallment: (com.khodroyar.app.data.db.LoanInstallmentEntity) -> Unit,
     onEdit: () -> Unit,
     onDelete: () -> Unit,
 ) {
     var scheduleOpen by remember(loan.id) { mutableStateOf(false) }
-    val scheduleRows = remember(installments, summary) {
-        installments.ifEmpty { summary.schedule.map { row -> com.khodroyar.app.data.db.LoanInstallmentEntity(
-            id = "legacy-${loan.id}-${row.index}", loanId = loan.id, number = row.index, amount = row.amount,
-            dueDate = row.dueDate, paidDate = if (row.paid) row.dueDate else "",
-        ) } }
-    }
-    val paidRows = scheduleRows.filter { it.paidDate.isNotBlank() }
-    val openRows = scheduleRows.filter { it.paidDate.isBlank() }
-    val totalAmount = scheduleRows.sumOf { it.amount }
-    val paidAmount = paidRows.sumOf { it.amount }
-    val remainingAmount = openRows.sumOf { it.amount }
-    val progress = if (scheduleRows.isEmpty()) 0f else paidRows.size.toFloat() / scheduleRows.size.toFloat()
-    val next = openRows.minByOrNull { it.dueDate }
+    val progress = if (summary.schedule.isEmpty()) 0f
+    else summary.paidCount.toFloat() / summary.schedule.size.toFloat()
 
     Collapsible(
         title = loan.title.ifBlank { "وام" },
-        summary = "مانده ${amount(remainingAmount)} تومان · " +
-            "${paidRows.size} از ${scheduleRows.size} قسط",
+        summary = "مانده ${amount(summary.remainingAmount)} تومان · " +
+            "${summary.paidCount} از ${summary.schedule.size} قسط",
     ) {
         Text(
             "${loan.date} · اصل ${amount(loan.totalAmount)} · سود ${loan.interestPercent.trimNumber()}٪",
@@ -525,10 +512,12 @@ private fun LoanCard(
             overflow = TextOverflow.Ellipsis,
         )
         Spacer(Modifier.height(8.dp))
-        MoneyLine("مبلغ کل با سود", totalAmount.toDouble())
-        MoneyLine("پرداخت‌شده", paidAmount.toDouble())
-        MoneyLine("باقی‌مانده", remainingAmount.toDouble())
-        next?.let { InfoRow("قسط بعدی", "${it.dueDate} · ${amount(it.amount)}") }
+        MoneyLine("مبلغ کل با سود", summary.totalWithInterest.toDouble())
+        MoneyLine("پرداخت‌شده", summary.paidAmount.toDouble())
+        MoneyLine("باقی‌مانده", summary.remainingAmount.toDouble())
+        summary.nextInstallment?.let {
+            InfoRow("قسط بعدی", "${it.dueDate} · ${amount(it.amount)}")
+        }
         Spacer(Modifier.height(8.dp))
         LinearProgressIndicator(
             progress = { progress },
@@ -536,7 +525,7 @@ private fun LoanCard(
             strokeCap = androidx.compose.ui.graphics.StrokeCap.Round,
         )
         Text(
-            "${paidRows.size} از ${scheduleRows.size} قسط · ${(progress * 100).toInt()}٪",
+            "${summary.paidCount} از ${summary.schedule.size} قسط · ${(progress * 100).toInt()}٪",
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             style = MaterialTheme.typography.bodySmall,
         )
@@ -546,24 +535,29 @@ private fun LoanCard(
         if (scheduleOpen) {
             val today = Jalali.todayString()
             Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                scheduleRows.forEach { installment ->
-                    val paid = installment.paidDate.isNotBlank()
-                    val overdue = !paid && installment.dueDate < today
+                summary.schedule.forEach { installment ->
+                    val overdue = !installment.paid && installment.dueDate < today
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                        Checkbox(checked = paid, onCheckedChange = { onToggle(installment.number) })
+                        Checkbox(checked = installment.paid, onCheckedChange = { onToggle(installment.index) })
                         Column(Modifier.weight(1f)) {
-                            Text("قسط ${installment.number} · ${installment.dueDate}", style = MaterialTheme.typography.bodyMedium, maxLines = 1)
-                            Text(when { paid -> "پرداخت‌شده · ${installment.paidDate}"; overdue -> "سررسید گذشته"; else -> "پرداخت‌نشده" },
-                                color = if (overdue) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
-                                style = MaterialTheme.typography.labelSmall)
+                            Text(
+                                "قسط ${installment.index} · ${installment.dueDate}",
+                                style = MaterialTheme.typography.bodyMedium,
+                                maxLines = 1,
+                            )
+                            if (overdue) {
+                                Text(
+                                    "سررسید گذشته",
+                                    color = MaterialTheme.colorScheme.error,
+                                    style = MaterialTheme.typography.labelSmall,
+                                )
+                            }
                         }
-                        Text(amount(installment.amount.toDouble()), style = MaterialTheme.typography.bodyMedium, maxLines = 1)
-                        IconButton(onClick = { onEditInstallment(installment) }) { Icon(Icons.Outlined.Edit, "ویرایش قسط") }
+                        Text(amount(installment.amount), style = MaterialTheme.typography.bodyMedium, maxLines = 1)
                     }
                 }
             }
         }
-        RecordAttachmentsPanel(repository, "loan", loan.id)
         Spacer(Modifier.height(AppDimens.gap))
         Row(horizontalArrangement = Arrangement.spacedBy(AppDimens.gap)) {
             Button(
@@ -685,8 +679,6 @@ private fun LoanForm(repository: AppRepository, editing: LoanEntity?, onClose: (
     var principal by remember { mutableStateOf(editing?.totalAmount?.trimNumber()?.digitsOnly() ?: "") }
     var interest by remember { mutableStateOf(editing?.interestPercent?.trimNumber() ?: "0") }
     var count by remember { mutableStateOf(editing?.installmentsCount?.toString() ?: "12") }
-    var monthlyPayment by remember { mutableStateOf(editing?.monthlyInstallment?.takeIf { it > 0 }?.trimNumber()?.digitsOnly() ?: "") }
-    var notes by remember { mutableStateOf(editing?.notes.orEmpty()) }
 
     val principalValue = principal.asDouble()
     val interestValue = interest.asDouble()
@@ -717,15 +709,11 @@ private fun LoanForm(repository: AppRepository, editing: LoanEntity?, onClose: (
                 NumberField("درصد سود", interest, { interest = it }, suffix = "درصد")
                 Spacer(Modifier.height(AppDimens.gap))
                 NumberField("تعداد اقساط", count, { count = it }, imeAction = ImeAction.Done)
-                Spacer(Modifier.height(AppDimens.gap))
-                MoneyField("مبلغ ماهانه دلخواه (اختیاری)", monthlyPayment, { monthlyPayment = it })
-                Spacer(Modifier.height(AppDimens.gap))
-                TextFieldR("یادداشت وام", notes, { notes = it }, singleLine = false)
             }
             FormSection("پیش‌نمایش محاسبه", Icons.Outlined.Calculate) {
                 MoneyLine("سود", (total - principalValue))
                 MoneyLine("مبلغ کل با سود", total.toDouble())
-                MoneyLine("مبلغ هر قسط", (monthlyPayment.asDouble().takeIf { it > 0 } ?: perInstallment.toDouble()))
+                MoneyLine("مبلغ هر قسط", perInstallment.toDouble())
                 preview.firstOrNull()?.let { InfoRow("اولین سررسید", it.dueDate) }
                 preview.lastOrNull()?.let { InfoRow("آخرین سررسید", it.dueDate) }
             }
@@ -748,13 +736,13 @@ private fun LoanForm(repository: AppRepository, editing: LoanEntity?, onClose: (
                         scope.launch {
                             if (editing == null) {
                                 repository.addLoan(
-                                    title.trim().ifBlank { "وام" }, principalValue, interestValue, date, countValue, monthlyPayment.asDouble(), notes.trim(),
+                                    title.trim().ifBlank { "وام" }, principalValue, interestValue, date, countValue,
                                 )
                                 toast.show("وام ثبت شد")
                             } else {
                                 repository.updateLoan(
                                     editing.id, title.trim().ifBlank { "وام" }, principalValue,
-                                    interestValue, date, countValue, monthlyPayment.asDouble(), notes.trim(),
+                                    interestValue, date, countValue,
                                 )
                                 toast.show("وام ویرایش شد")
                             }
@@ -780,30 +768,13 @@ private fun PurchasesSection(
 ) {
     val scope = rememberCoroutineScope()
     val toast = LocalToast.current
-    var selectedYear by remember { mutableStateOf(1404) }
-    var search by remember { mutableStateOf("") }
-    var sortMode by remember { mutableStateOf("date") }
-    var details by remember { mutableStateOf<com.khodroyar.app.data.db.PersonalExpenseEntity?>(null) }
+    var selectedYear by remember { mutableStateOf(year) }
     val yearPrefix = "$selectedYear/"
     val expenses by repository.personalExpenses(yearPrefix).collectAsState(initial = emptyList())
     val total by repository.personalExpenseTotal(yearPrefix).collectAsState(initial = 0.0)
-    val visibleExpenses = remember(expenses, search, sortMode) {
-        val matching = expenses.filter { row -> search.isBlank() ||
-            listOf(row.title, row.category, row.date, row.notes, row.km.toString(), row.amount.toString())
-                .any { it.contains(search.trim(), ignoreCase = true) } }
-        when (sortMode) {
-            "km" -> matching.sortedByDescending { it.km }
-            "amount" -> matching.sortedByDescending { it.amount }
-            else -> matching.sortedByDescending { it.date }
-        }
-    }
     var showForm by remember { mutableStateOf(quickDate != null) }
     var editing by remember { mutableStateOf<com.khodroyar.app.data.db.PersonalExpenseEntity?>(null) }
 
-    details?.let { item ->
-        PersonalExpenseDetails(repository, item, onBack = { details = null }, onEdit = { details = null; editing = item })
-        return
-    }
     if (showForm || editing != null) {
         val existing = editing
         LedgerForm(
@@ -814,26 +785,18 @@ private fun PurchasesSection(
             initialCategory = existing?.category,
             initialTitle = existing?.title,
             initialAmount = existing?.amount,
-            initialKm = existing?.km ?: 0.0,
-            initialNotes = existing?.notes.orEmpty(),
-            showExtraFields = true,
             onClose = {
                 showForm = false; editing = null
                 if (quickDate != null) onQuickDone()
             },
-            onSave = { date, category, label, value, km, notes ->
+            onSave = { date, category, label, value ->
                 scope.launch {
                     if (existing != null) {
-                        val updated = existing.copy(date = date, category = category, title = label, amount = value, km = km, notes = notes)
-                        repository.updatePersonalExpense(updated)
-                        details = updated
-                        toast.show("هزینه ویرایش شد")
+                        repository.updatePersonalExpense(existing.copy(date = date, category = category, title = label, amount = value))
+                        toast.show("خرید ویرایش شد")
                     } else {
-                        val id = repository.addPersonalExpense(date, category, label, value, km, notes)
-                        details = com.khodroyar.app.data.db.PersonalExpenseEntity(
-                            id, date, category, label, value, java.time.Instant.now().toString(), km, notes,
-                        )
-                        toast.show("هزینه ثبت شد")
+                        repository.addPersonalExpense(date, category, label, value)
+                        toast.show("خرید شخصی ثبت شد")
                     }
                     showForm = false
                     editing = null
@@ -857,14 +820,8 @@ private fun PurchasesSection(
                 Text("سال $selectedYear", style = MaterialTheme.typography.titleMedium)
                 IconButton(onClick = { selectedYear += 1 }) { Icon(Icons.Outlined.ChevronLeft, "سال بعد") }
             }
-            OutlinedTextField(search, { search = it }, modifier = Modifier.fillMaxWidth(), singleLine = true, label = { Text("جست‌وجوی هزینه") })
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                listOf("date" to "تاریخ", "km" to "کیلومتر", "amount" to "مبلغ").forEach { (key, label) ->
-                    FilterChip(modifier = Modifier.weight(1f), selected = sortMode == key, onClick = { sortMode = key }, label = { Text(label, maxLines = 1) })
-                }
-            }
         }
-        if (visibleExpenses.isEmpty()) {
+        if (expenses.isEmpty()) {
             EmptyState("خریدی ثبت نشده", "", Icons.Outlined.ShoppingBag, Modifier.weight(1f))
         } else {
             LazyColumn(
@@ -875,15 +832,14 @@ private fun PurchasesSection(
                 item {
                     Collapsible(
                         title = tr("هزینه‌های ثبت‌شده", "Recorded expenses"),
-                        summary = "${visibleExpenses.size} رکورد · ${amount(total)} تومان",
+                        summary = "${expenses.size} رکورد · ${amount(total)} تومان",
                     ) {
                         Column(verticalArrangement = Arrangement.spacedBy(AppDimens.gap)) {
-                            visibleExpenses.forEach { expense ->
+                            expenses.forEach { expense ->
                                 LedgerRow(
                                     title = expense.title.ifBlank { PurchaseCategory.fromWire(expense.category).label },
-                                    subtitle = "${expense.date} · ${PurchaseCategory.fromWire(expense.category).label}" + if (expense.km > 0) " · ${expense.km.toLong()} کیلومتر" else "",
+                                    subtitle = "${expense.date} · ${PurchaseCategory.fromWire(expense.category).label}",
                                     amountText = amount(expense.amount),
-                                    onClick = { details = expense },
                                     onEdit = { editing = expense },
                                     onDelete = {
                                         scope.launch {
@@ -931,7 +887,7 @@ private fun IncomesSection(repository: AppRepository, year: Int) {
             initialTitle = existing?.title,
             initialAmount = existing?.amount,
             onClose = { showForm = false; editing = null },
-            onSave = { date, category, label, value, _, _ ->
+            onSave = { date, category, label, value ->
                 scope.launch {
                     if (existing != null) {
                         repository.updatePersonalIncome(existing.copy(date = date, category = category, title = label, amount = value))
@@ -1007,13 +963,12 @@ private fun IncomesSection(repository: AppRepository, year: Int) {
 }
 
 @Composable
-private fun LedgerRow(title: String, subtitle: String, amountText: String, onEdit: (() -> Unit)? = null, onDelete: () -> Unit, onClick: (() -> Unit)? = null) {
+private fun LedgerRow(title: String, subtitle: String, amountText: String, onEdit: (() -> Unit)? = null, onDelete: () -> Unit) {
     Surface(
         shape = FieldShape,
         color = MaterialTheme.colorScheme.surfaceContainerLowest,
         border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-        modifier = Modifier.fillMaxWidth().defaultMinSize(minHeight = AppDimens.rowMinHeight)
-            .then(if (onClick != null) Modifier.clickable { onClick() } else Modifier),
+        modifier = Modifier.fillMaxWidth().defaultMinSize(minHeight = AppDimens.rowMinHeight),
     ) {
         Row(
             Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
@@ -1055,11 +1010,8 @@ private fun LedgerForm(
     initialCategory: String? = null,
     initialTitle: String? = null,
     initialAmount: Double? = null,
-    initialKm: Double = 0.0,
-    initialNotes: String = "",
-    showExtraFields: Boolean = false,
     onClose: () -> Unit,
-    onSave: (date: String, category: String, title: String, amount: Double, km: Double, notes: String) -> Unit,
+    onSave: (date: String, category: String, title: String, amount: Double) -> Unit,
 ) {
     var date by remember { mutableStateOf(initialDate ?: Jalali.todayString()) }
     var category by remember {
@@ -1069,8 +1021,6 @@ private fun LedgerForm(
     var value by remember {
         mutableStateOf(if (initialAmount != null && initialAmount > 0) initialAmount.trimNumber().digitsOnly() else "")
     }
-    var km by remember { mutableStateOf(initialKm.takeIf { it > 0 }?.trimNumber()?.digitsOnly() ?: "") }
-    var notes by remember { mutableStateOf(initialNotes) }
 
     Column(Modifier.fillMaxSize()) {
         Column(
@@ -1105,12 +1055,6 @@ private fun LedgerForm(
                 TextFieldR("عنوان", label, { label = it })
                 Spacer(Modifier.height(AppDimens.gap))
                 MoneyField("مبلغ", value, { value = it }, imeAction = ImeAction.Done)
-                if (showExtraFields) {
-                    Spacer(Modifier.height(AppDimens.gap))
-                    NumberField("کیلومتر مرتبط (اختیاری)", km, { km = it }, suffix = "کیلومتر")
-                    Spacer(Modifier.height(AppDimens.gap))
-                    TextFieldR("یادداشت / توضیحات", notes, { notes = it }, singleLine = false, imeAction = ImeAction.Done)
-                }
             }
         }
         Surface(color = MaterialTheme.colorScheme.surfaceContainerLowest, shadowElevation = 8.dp) {
@@ -1126,7 +1070,7 @@ private fun LedgerForm(
                     shape = FieldShape,
                 ) { Text(tr("انصراف", "Cancel")) }
                 Button(
-                    onClick = { onSave(date, category, label.trim(), value.asDouble(), km.asDouble(), notes.trim()) },
+                    onClick = { onSave(date, category, label.trim(), value.asDouble()) },
                     modifier = Modifier.weight(1f).heightIn(min = AppDimens.buttonHeight),
                     shape = FieldShape,
                 ) { Text(tr("ذخیره", "Save")) }

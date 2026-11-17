@@ -15,17 +15,10 @@ import java.util.UUID
  * NOT in the Room database: the existing database schema, migrations and backups stay untouched.
  * Deleting the history never touches any financial or vehicle record.
  */
-class ConversationRepository(context: Context, fileName: String = FILE_ONLINE) {
+class ConversationRepository(context: Context) {
 
-    private val file = File(context.applicationContext.filesDir, fileName)
-
-    companion object {
-        private val lock = Any()
-        /** History of the online assistant (server-based) — unchanged default. */
-        const val FILE_ONLINE = "ai_conversations.json"
-        /** Separate file so the two assistants' histories never mix. */
-        const val FILE_GEMMA = "gemma_conversations.json"
-    }
+    private val file = File(context.applicationContext.filesDir, "ai_conversations.json")
+    private companion object { val lock = Any() }
 
     suspend fun load(): List<Conversation> = withContext(Dispatchers.IO) {
         synchronized(lock) { readAll() }

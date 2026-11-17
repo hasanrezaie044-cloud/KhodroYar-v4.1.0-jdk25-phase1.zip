@@ -18,12 +18,10 @@ import java.util.UUID
 class ChatImageUnavailable : IOException("Local chat image unavailable")
 
 /** System URI grants only; no broad storage/camera permission. Original metadata is never kept. */
-class ChatImageStore(context: Context, private val namespace: String = "ai-chat-images") {
+class ChatImageStore(context: Context) {
     private val app = context.applicationContext
-    init { require(Regex("[a-z0-9_-]{1,48}").matches(namespace)) }
     // Saved chat references must survive Android cache eviction, but never enter backup/export.
-    // Separate namespaces prevent pruning one assistant's history from deleting the other's images.
-    private val root get() = File(app.noBackupFilesDir, namespace).apply { mkdirs() }
+    private val root get() = File(app.noBackupFilesDir, "ai-chat-images").apply { mkdirs() }
     fun file(ref: ChatImageRef): File = File(root, ref.fileName)
     fun cameraUri(): Uri {
         val exports = File(app.cacheDir, "exports").apply { mkdirs() }
@@ -83,22 +81,6 @@ class ChatImageStore(context: Context, private val namespace: String = "ai-chat-
         finally { flattened?.recycle(); transformed?.takeIf { it !== decoded }?.recycle(); decoded.recycle() }
         // A fresh JPEG contains no original EXIF/GPS/name or original URI.
     }
-    /** Persist an already-re-encoded, EXIF-free JPEG (used by the local model's thumbnail). */
-    suspend fun storePreparedJpeg(bytes: ByteArray): ChatImageRef = withContext(Dispatchers.IO) {
-        require(bytes.size in 1..MAX_WIRE_BYTES.toInt())
-        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-        BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
-        require(bounds.outWidth > 0 && bounds.outHeight > 0 && bounds.outMimeType == "image/jpeg")
-        val ref = ChatImageRef("${UUID.randomUUID()}.jpg")
-        try {
-            file(ref).writeBytes(bytes)
-            ref
-        } catch (e: Exception) {
-            file(ref).delete()
-            throw e
-        }
-    }
-
     suspend fun wire(ref: ChatImageRef): AIImage = withContext(Dispatchers.IO) {
         val f = file(ref)
         if (!f.isFile || f.length() !in 1L..MAX_WIRE_BYTES) throw ChatImageUnavailable()

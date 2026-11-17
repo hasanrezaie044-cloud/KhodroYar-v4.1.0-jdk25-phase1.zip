@@ -25,7 +25,7 @@ import kotlinx.coroutines.withContext
  *  2. The app's own folder (`VehicleManager`) when MediaStore is unavailable (Android 9
  *     and older, or the insert failed). That copy is removed with the app.
  *
- * One file per day, `khodroyar-auto-<jalali date>.zip`; the newest [KEEP] are kept.
+ * One file per day, `khodroyar-auto-<jalali date>.json`; the newest [KEEP] are kept.
  * [AppSettings.autoBackupLastDate] is the dedup guard so a retry or a catch-up run can
  * never produce a second backup for the same day (unless [run] is forced).
  */
@@ -42,9 +42,8 @@ object AutoBackup {
         if (!force && store.current.autoBackupLastDate == today) return@withContext true
 
         val json = AppRepository(context.applicationContext).exportBackupJson()
-        val archive = BackupArchive.create(context.applicationContext, json)
-        val name = PREFIX + today.replace("/", "-") + ".zip"
-        val place = saveToDownloads(context, archive, name) ?: saveInternal(context, archive, name)
+        val name = PREFIX + today.replace("/", "-") + ".json"
+        val place = saveToDownloads(context, json, name) ?: saveInternal(context, json, name)
             ?: return@withContext false
 
         store.update { it.copy(autoBackupLastDate = today, autoBackupLastPlace = place) }
@@ -53,7 +52,7 @@ object AutoBackup {
         true
     }
 
-    private fun saveToDownloads(context: Context, content: ByteArray, name: String): String? {
+    private fun saveToDownloads(context: Context, content: String, name: String): String? {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return null
         return try {
             saveToDownloadsQ(context, content, name)
@@ -63,7 +62,7 @@ object AutoBackup {
     }
 
     @RequiresApi(Build.VERSION_CODES.Q)
-    private fun saveToDownloadsQ(context: Context, content: ByteArray, name: String): String? {
+    private fun saveToDownloadsQ(context: Context, content: String, name: String): String? {
         val resolver = context.contentResolver
         val relative = "${Environment.DIRECTORY_DOWNLOADS}/$FOLDER"
         // Same-day rerun (forced, or a retry after a crash) replaces the file instead of
@@ -75,12 +74,12 @@ object AutoBackup {
         )
         val values = ContentValues().apply {
             put(MediaStore.MediaColumns.DISPLAY_NAME, name)
-            put(MediaStore.MediaColumns.MIME_TYPE, BackupFiles.MIME_ZIP)
+            put(MediaStore.MediaColumns.MIME_TYPE, BackupFiles.MIME_JSON)
             put(MediaStore.MediaColumns.RELATIVE_PATH, relative)
             put(MediaStore.MediaColumns.IS_PENDING, 1)
         }
         val uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values) ?: return null
-        if (!BackupFiles.writeBytesToUri(context, uri, content)) {
+        if (!BackupFiles.writeToUri(context, uri, content)) {
             resolver.delete(uri, null, null)
             return null
         }
@@ -116,7 +115,7 @@ object AutoBackup {
         }
     }
 
-    private fun saveInternal(context: Context, content: ByteArray, name: String): String? {
+    private fun saveInternal(context: Context, content: String, name: String): String? {
         val file = BackupFiles.writeInternalCopy(context, content, name) ?: return null
         try {
             file.parentFile?.listFiles { f -> f.name.startsWith(PREFIX) }

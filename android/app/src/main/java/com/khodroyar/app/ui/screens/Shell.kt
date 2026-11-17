@@ -89,8 +89,7 @@ fun CarManagerRoot(
     var agentReturn by remember { mutableStateOf(false) }
     var destination by remember { mutableStateOf(AppDestination.HOME) }
     var companyReportOpen by remember { mutableStateOf(false) }
-    var tool by remember { mutableStateOf<ToolDestination?>(ToolDestination.FUEL) }
-    val primaryTabs = remember { listOf(ToolDestination.FUEL, ToolDestination.FINANCE, ToolDestination.MAINTENANCE) }
+    var tool by remember { mutableStateOf<ToolDestination?>(null) }
     var overlay by remember { mutableStateOf<Overlay?>(null) }
     val recentEntry by repository.quickEntries.receipt.collectAsState()
     var pendingUndo by remember { mutableStateOf<EntryReceipt?>(null) }
@@ -164,7 +163,7 @@ fun CarManagerRoot(
         }
     }
 
-    val assistantOpen = overlay == null && tool in setOf(ToolDestination.AI_ASSISTANT, ToolDestination.GEMMA_ASSISTANT)
+    val assistantOpen = overlay == null && tool == ToolDestination.AI_ASSISTANT
 
     val title = when {
         overlay != null -> overlay!!.title
@@ -190,20 +189,10 @@ fun CarManagerRoot(
             drawerContent = {
                 ToolsDrawer(
                     active = tool,
-                    activeDestination = destination.takeIf { tool == null },
                     onPick = { picked ->
                         agentReturn = false
                         quick = null
                         tool = picked
-                        overlay = null
-                        scope.launch { drawerState.close() }
-                    },
-                    onNavigate = { picked ->
-                        agentReturn = false
-                        quick = null
-                        tool = null
-                        destination = picked
-                        companyReportOpen = false
                         overlay = null
                         scope.launch { drawerState.close() }
                     },
@@ -232,15 +221,14 @@ fun CarManagerRoot(
                 },
                 bottomBar = {
                     if (!keyboardVisible && overlay == null && !assistantOpen) AppBottomBar(
-                        selected = tool?.takeIf { it in primaryTabs },
-                        items = primaryTabs,
+                        selected = destination,
+                        toolActive = tool != null,
                         onSelect = { picked ->
                             agentReturn = false
-                            quick = null
+                            destination = picked
                             companyReportOpen = false
+                            tool = null
                             overlay = null
-                            tool = picked
-                            destination = AppDestination.HOME
                         },
                     )
                 },
@@ -259,7 +247,7 @@ fun CarManagerRoot(
                         title = title,
                         subtitle = subtitle,
                         privacyMode = settings.privacyMode,
-                        showBack = overlay != null || (tool != null && tool !in primaryTabs) || companyReportOpen || agentReturn,
+                        showBack = overlay != null || tool != null || companyReportOpen || agentReturn,
                         onBack = {
                             when {
                                 keyboardVisible -> { focus.clearFocus(force = true); keyboard?.hide() }
@@ -351,7 +339,6 @@ fun CarManagerRoot(
                                     AgentSection.WORK_REPORT -> { tool = null; destination = AppDestination.REPORTS; companyReportOpen = true }
                                 }
                             })
-                            ToolDestination.GEMMA_ASSISTANT -> GemmaAssistantScreen()
 
                             /* ----------------------------------------------- tabs */
                             AppDestination.HOME -> DashboardScreen(
@@ -534,17 +521,21 @@ private fun AppTopBar(
 
 /** Material's native navigation handles touch targets, selection, and gesture/three-button insets. */
 @Composable
-private fun AppBottomBar(selected: ToolDestination?, items: List<ToolDestination>, onSelect: (ToolDestination) -> Unit) {
+private fun AppBottomBar(selected: AppDestination, toolActive: Boolean, onSelect: (AppDestination) -> Unit) {
     Box(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.background).navigationBarsPadding().padding(horizontal = 10.dp, vertical = 6.dp)) {
         Surface(color = MaterialTheme.colorScheme.surfaceContainerLowest, shape = RoundedCornerShape(28.dp),
             border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)), shadowElevation = 2.dp) {
             NavigationBar(containerColor = Color.Transparent, tonalElevation = 0.dp, windowInsets = WindowInsets(0, 0, 0, 0)) {
-                items.forEach { item ->
-                    val active = selected == item
-                    val label = if (LocalLanguage.current == "en") item.englishTitle else item.title
+                AppDestination.entries.forEach { item ->
+                    val active = !toolActive && selected == item
+                    val label = when {
+                        item == AppDestination.SERVICES -> tr("ثبت", "Add")
+                        LocalLanguage.current == "en" -> item.englishTitle
+                        else -> item.title
+                    }
                     NavigationBarItem(selected = active, onClick = { onSelect(item) },
                         modifier = Modifier.testTag("nav-${item.name}"),
-                        icon = { Icon(item.icon, null) },
+                        icon = { Icon(if (item == AppDestination.SERVICES) Icons.Outlined.Add else if (active) item.selectedIcon else item.icon, null) },
                         label = { Text(label, style = MaterialTheme.typography.labelSmall,
                             fontWeight = if (active) FontWeight.Bold else FontWeight.Medium, maxLines = 2,
                             textAlign = androidx.compose.ui.text.style.TextAlign.Center, overflow = TextOverflow.Ellipsis) },
@@ -560,13 +551,7 @@ private fun AppBottomBar(selected: ToolDestination?, items: List<ToolDestination
 
 /** Full-height toolkit; large row targets and no text clipped by fixed drawer-item heights. */
 @Composable
-private fun ToolsDrawer(
-    active: ToolDestination?,
-    activeDestination: AppDestination?,
-    onPick: (ToolDestination) -> Unit,
-    onNavigate: (AppDestination) -> Unit,
-    onClose: () -> Unit,
-) {
+private fun ToolsDrawer(active: ToolDestination?, onPick: (ToolDestination) -> Unit, onClose: () -> Unit) {
     ModalDrawerSheet(drawerContainerColor = MaterialTheme.colorScheme.background,
         drawerShape = RoundedCornerShape(topEnd = 28.dp, bottomEnd = 28.dp), modifier = Modifier.widthIn(max = 350.dp).testTag("tools-drawer")) {
         Column(Modifier.fillMaxHeight().verticalScroll(rememberScrollState()).navigationBarsPadding()
@@ -577,17 +562,6 @@ private fun ToolsDrawer(
                     Text(tr("خودرویار", "KhodroYar"), style = MaterialTheme.typography.titleLarge)
                 }
                 IconButton(onClick = onClose) { Icon(Icons.Outlined.Close, tr("بستن پنل", "Close tools")) }
-            }
-            Spacer(Modifier.height(8.dp))
-            Text(tr("بخش‌های اصلی", "Main sections"), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            AppDestination.entries.forEach { item ->
-                ActionRow(
-                    title = if (LocalLanguage.current == "en") item.englishTitle else item.title,
-                    subtitle = if (item == AppDestination.HOME) tr("داشبورد خودرو", "Vehicle dashboard") else "",
-                    icon = item.icon,
-                    trailing = if (item == activeDestination) tr("فعال", "Active") else "",
-                    onClick = { onNavigate(item) },
-                )
             }
             Spacer(Modifier.height(8.dp))
             Text(tr("ابزارهای شما", "Your toolkit"), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)

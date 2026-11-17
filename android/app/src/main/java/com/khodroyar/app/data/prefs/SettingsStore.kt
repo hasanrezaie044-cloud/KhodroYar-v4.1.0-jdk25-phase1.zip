@@ -347,10 +347,6 @@ class SettingsStore private constructor(context: Context) {
             "\"themeMode\":\"" + s.themeMode + "\"," +
             "\"themeColor\":\"" + s.themeColor + "\"," +
             "\"language\":\"" + s.language + "\"," +
-            "\"vehicleCurrentKm\":" + s.vehicleCurrentKm + "," +
-            "\"isRental\":" + b(s.isRental) + "," +
-            "\"trafficNotifyEnabled\":" + b(s.trafficNotifyEnabled) + "," +
-            "\"trafficLastLevels\":" + q(s.trafficLastLevels) + "," +
             "\"userFirstName\":" + q(s.userFirstName) + "," +
             "\"userLastName\":" + q(s.userLastName) + "," +
             "\"oilCurrentKm\":" + s.oilCurrentKm + "," +
@@ -401,12 +397,6 @@ class SettingsStore private constructor(context: Context) {
         userFirstName: String? = null, userLastName: String? = null,
         oilCurrentKm: Double?, oilNextKm: Double?, privacyMode: Boolean?,
         monthlyIncomeGoal: Double?,
-        vehicleCurrentKm: Double? = null, isRental: Boolean? = null,
-        beltCurrentKm: Double? = null, beltNextKm: Double? = null,
-        sparkCurrentKm: Double? = null, sparkNextKm: Double? = null,
-        brakeCurrentKm: Double? = null, brakeNextKm: Double? = null,
-        filterCurrentKm: Double? = null, filterNextKm: Double? = null,
-        trafficNotifyEnabled: Boolean? = null, trafficLastLevels: String? = null,
         remindDailySummary: Boolean?, remindWeeklySummary: Boolean?, remindMonthlySummary: Boolean?,
         remindInstallments: Boolean?, remindOilChange: Boolean?, remindBodyInsurance: Boolean?,
         remindVehicleInsurance: Boolean?, remindInspection: Boolean?, remindBackup: Boolean?,
@@ -428,20 +418,8 @@ class SettingsStore private constructor(context: Context) {
             language = language ?: c.language,
             userFirstName = userFirstName ?: c.userFirstName,
             userLastName = userLastName ?: c.userLastName,
-            vehicleCurrentKm = vehicleCurrentKm ?: c.vehicleCurrentKm,
-            isRental = isRental ?: c.isRental,
             oilCurrentKm = oilCurrentKm ?: c.oilCurrentKm,
             oilNextKm = oilNextKm ?: c.oilNextKm,
-            beltCurrentKm = beltCurrentKm ?: c.beltCurrentKm,
-            beltNextKm = beltNextKm ?: c.beltNextKm,
-            sparkCurrentKm = sparkCurrentKm ?: c.sparkCurrentKm,
-            sparkNextKm = sparkNextKm ?: c.sparkNextKm,
-            brakeCurrentKm = brakeCurrentKm ?: c.brakeCurrentKm,
-            brakeNextKm = brakeNextKm ?: c.brakeNextKm,
-            filterCurrentKm = filterCurrentKm ?: c.filterCurrentKm,
-            filterNextKm = filterNextKm ?: c.filterNextKm,
-            trafficNotifyEnabled = trafficNotifyEnabled ?: c.trafficNotifyEnabled,
-            trafficLastLevels = trafficLastLevels ?: c.trafficLastLevels,
             privacyMode = privacyMode ?: c.privacyMode,
             monthlyIncomeGoal = monthlyIncomeGoal ?: c.monthlyIncomeGoal,
             remindDailySummary = remindDailySummary ?: c.remindDailySummary,

@@ -18,10 +18,3 @@
 # Annotation-only artifacts pulled in for R8 (jsr305 / error_prone).
 -dontwarn javax.annotation.**
 -dontwarn com.google.errorprone.annotations.**
-
-# LiteRT-LM client + its Gson model classes (5.2.0 offline assistant). The runtime calls
-# into native code; keep the Kotlin facade names stable.
--keep class com.google.ai.edge.litertlm.** { *; }
--keep class com.google.gson.** { *; }
--dontwarn com.google.gson.**
--dontwarn com.google.ai.edge.litertlm.**

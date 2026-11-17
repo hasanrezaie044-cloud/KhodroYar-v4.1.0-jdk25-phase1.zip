@@ -21,8 +21,8 @@ android {
         applicationId 'com.khodroyar.app'
         minSdk 24
         targetSdk 35
-        versionCode 80
-        versionName '5.6.4'
+        versionCode 79
+        versionName '5.6.3'
         testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
         vectorDrawables.useSupportLibrary = true
         // Public URL of the AI backend (NOT a secret). Set with -PaiBackendUrl=https://... or leave
@@ -138,13 +138,6 @@ dependencies {
     coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs:2.1.5'
 
     implementation 'org.jetbrains.kotlinx:kotlinx-serialization-json:1.9.0'
-
-    // Offline multimodal assistant (5.6.4): Google's LiteRT-LM Android runtime, executes
-    // the pinned Gemma 4 E2B .litertlm package fully on-device. The MODEL FILE itself is
-    // NOT in the APK — the user downloads it in-app (see ai/gemma/). Version verified
-    // against Google Maven metadata (0.19.1 is the latest stable; Kotlin sources at tag
-    // v0.19.1 were checked symbol-by-symbol against our usage).
-    implementation 'com.google.ai.edge.litertlm:litertlm-android:0.19.1'
 
     implementation 'com.google.code.findbugs:jsr305:3.0.2'
     implementation 'com.google.errorprone:error_prone_annotations:2.36.0'

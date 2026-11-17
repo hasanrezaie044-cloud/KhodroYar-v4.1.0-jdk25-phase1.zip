@@ -67,8 +67,4 @@ data class Conversation(
 )
 
 /** Record-summary minimisation only, never a chat/input/output/token usage allowance. */
-object AiLimits {
-    const val MAX_TOOL_RESULT_CHARS = 3000
-    /** Bound raw user input before it can enter a provider/model request. */
-    const val MAX_USER_CHARS = 1000
-}
+object AiLimits { const val MAX_TOOL_RESULT_CHARS = 3000 }
