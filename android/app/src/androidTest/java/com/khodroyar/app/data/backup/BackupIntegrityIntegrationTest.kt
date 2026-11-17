@@ -76,7 +76,7 @@ class BackupIntegrityIntegrationTest {
             cost = 1200000.0, company = "آزمایشی", policyNumber = "TEST-1404", reminder = true,
             timestamp = "2025-07-05T10:00:00Z",
         ))
-        db.rates().insertAll(listOf(Rates.DEFAULT.toEntity(1404), Rates.DEFAULT.copy(hour = 9876.0).toEntity(1405)))
+        db.rates().upsertAll(listOf(Rates.DEFAULT.toEntity(1404), Rates.DEFAULT.copy(hour = 9876.0).toEntity(1405)))
 
         val backup = repository.exportBackupJson()
         assertFalse("Device-local paths must not leak into exported JSON", backup.contains(attachment.absolutePath))
