@@ -60,7 +60,10 @@ class OfflineModelManager private constructor(context: Context) {
     @Volatile private var downloader: OfflineModelDownloader? = null
     @Volatile private var job: Job? = null
     @Volatile private var lastError: String? = null
-    private val deviceSupported: Boolean = Build.SUPPORTED_ABIS.orEmpty().contains("arm64-v8a")
+    /** True when the LiteRT-LM runtime was actually installed for this device (packaged for arm64-v8a only, extracted). */
+    private val deviceSupported: Boolean = runCatching {
+        app.applicationInfo.nativeLibraryDir?.let { java.io.File(it, "liblitertlm_jni.so").isFile } ?: false
+    }.getOrDefault(false) || (Build.SUPPORTED_ABIS.firstOrNull() == "arm64-v8a" && app.applicationInfo.nativeLibraryDir == null)
 
     init { scope.launch { refresh() } }
 
