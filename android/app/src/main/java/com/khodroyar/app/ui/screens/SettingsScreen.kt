@@ -28,6 +28,7 @@ import com.khodroyar.app.R
 import com.khodroyar.app.core.holidays.IranHolidays
 import com.khodroyar.app.core.jalali.Jalali
 import com.khodroyar.app.data.backup.AutoBackup
+import com.khodroyar.app.data.backup.BackupAttachmentCodec
 import com.khodroyar.app.data.backup.BackupFiles
 import com.khodroyar.app.data.legacy.LegacyBackup
 import com.khodroyar.app.data.prefs.AppSettings
@@ -62,7 +63,7 @@ fun SettingsScreen(repository: AppRepository, settings: AppSettings, onToggleThe
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val toast = LocalToast.current
-    val sectionOpen = remember { mutableStateOf(setOf("appearance")) }
+    val sectionOpen = remember { mutableStateOf(emptySet<String>()) }
     fun toggleSection(key: String) {
         sectionOpen.value = if (key in sectionOpen.value) sectionOpen.value - key else sectionOpen.value + key
     }
@@ -71,6 +72,7 @@ fun SettingsScreen(repository: AppRepository, settings: AppSettings, onToggleThe
     val pinStore = remember { PinStore(context) }
 
     var pendingBackupPath by rememberSaveable { mutableStateOf<String?>(null) }
+    var pendingBackupOmittedCount by rememberSaveable { mutableStateOf(0) }
     var restoreJson by remember { mutableStateOf<String?>(null) }
     var restorePreview by remember { mutableStateOf<LegacyBackup.Preview?>(null) }
     var goalText by remember { mutableStateOf(settings.monthlyIncomeGoal.trimNumber().digitsOnly()) }
@@ -91,6 +93,7 @@ fun SettingsScreen(repository: AppRepository, settings: AppSettings, onToggleThe
         if (uri == null || source == null) {
             source?.delete()
             pendingBackupPath = null
+            pendingBackupOmittedCount = 0
             toast.show(if (uri == null) "ذخیره پشتیبان لغو شد" else "فایل موقت پشتیبان پیدا نشد؛ دوباره تلاش کنید")
             return@rememberLauncherForActivityResult
         }
@@ -99,13 +102,20 @@ fun SettingsScreen(repository: AppRepository, settings: AppSettings, onToggleThe
                 val ok = withContext(Dispatchers.IO) { BackupFiles.writeToUri(context, uri, source) }
                 if (ok) {
                     repository.markBackupDone()
-                    toast.show("فایل پشتیبان با موفقیت ذخیره شد")
+                    val omitted = pendingBackupOmittedCount
+                    toast.show(
+                        if (omitted == 0) "فایل پشتیبان با موفقیت ذخیره شد"
+                        else "فایل پشتیبان ذخیره شد؛ $omitted پیوستِ پیدا نشده از آن کنار گذاشته شد. آن پیوست‌ها را دوباره اضافه کنید."
+                    )
                 } else {
                     toast.show("ذخیره در این مکان انجام نشد؛ فضای خالی یا دسترسی پوشه را بررسی و مکان دیگری انتخاب کنید")
                 }
             } finally {
                 source.delete()
-                if (pendingBackupPath == source.absolutePath) pendingBackupPath = null
+                if (pendingBackupPath == source.absolutePath) {
+                    pendingBackupPath = null
+                    pendingBackupOmittedCount = 0
+                }
             }
         }
     }
@@ -471,19 +481,23 @@ fun SettingsScreen(repository: AppRepository, settings: AppSettings, onToggleThe
                     try {
                         val json = repository.exportBackupJson()
                         val fileName = BackupFiles.suggestedFileName()
-                        val file = withContext(Dispatchers.IO) {
-                            BackupFiles.writeExportFile(context, json, fileName)
+                        val (file, omittedCount) = withContext(Dispatchers.IO) {
+                            val skipped = BackupAttachmentCodec.omittedAttachmentCount(json)
+                            BackupFiles.writeExportFile(context, json, fileName) to skipped
                         }
                         exportFile = file
                         pendingBackupPath = file.absolutePath
+                        pendingBackupOmittedCount = omittedCount
                         saveBackup.launch(fileName)
                     } catch (e: CancellationException) {
                         exportFile?.delete()
                         pendingBackupPath = null
+                        pendingBackupOmittedCount = 0
                         throw e
                     } catch (e: Exception) {
                         exportFile?.delete()
                         pendingBackupPath = null
+                        pendingBackupOmittedCount = 0
                         toast.show(e.message ?: "ساخت فایل پشتیبان انجام نشد؛ فضای خالی دستگاه را بررسی کنید")
                     }
                 }
