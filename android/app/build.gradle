@@ -91,6 +91,13 @@ android {
         resources {
             excludes += ['/META-INF/{AL2.0,LGPL2.1}']
         }
+        jniLibs {
+            // Offline AI runtime (LiteRT-LM) ships for 64-bit ARM phones only; x86_64 devices
+            // show "not supported" instead. Native libraries are stored compressed so the APK
+            // stays well under the 30 MB budget (~+10 MB instead of ~+50 MB).
+            excludes += ['lib/x86_64/liblitertlm_jni.so', 'lib/x86/liblitertlm_jni.so', 'lib/armeabi-v7a/liblitertlm_jni.so']
+            useLegacyPackaging = true
+        }
     }
 
     // Internal Compose/repository tests target debug only. Black-box release

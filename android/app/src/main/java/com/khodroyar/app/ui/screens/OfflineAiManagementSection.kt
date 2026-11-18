@@ -91,9 +91,11 @@ internal fun OfflineAiManagementSection(
                 if (state.freeBytes >= 0 && state.phase != Phase.READY) Text("فضای آزاد: ${gigabytes(state.freeBytes)} گیگابایت",
                     style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
 
+                if (!state.deviceSupported) WarningNote("این گوشی پردازندهٔ ۶۴ بیتی ARM (arm64-v8a) ندارد؛ موتور هوش مصنوعی آفلاین روی آن پشتیبانی نمی‌شود. دستیار آفلاین با فرمان‌های داخلی کار می‌کند.")
+
                 // Actions
                 when (state.phase) {
-                    Phase.NOT_INSTALLED -> Button(onClick = { confirmDownload = true }, modifier = Modifier.fillMaxWidth().testTag("offline-ai-download")) {
+                    Phase.NOT_INSTALLED -> Button(onClick = { confirmDownload = true }, enabled = state.deviceSupported, modifier = Modifier.fillMaxWidth().testTag("offline-ai-download")) {
                         ActionLabel(Icons.Outlined.CloudDownload, "دانلود و آماده‌سازی هوش مصنوعی آفلاین")
                     }
                     Phase.DOWNLOADING, Phase.VERIFYING -> Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {

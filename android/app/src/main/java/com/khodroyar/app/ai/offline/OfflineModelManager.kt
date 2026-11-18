@@ -4,6 +4,7 @@ import android.app.ActivityManager
 import android.content.Context
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
+import android.os.Build
 import android.os.StatFs
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -31,6 +32,8 @@ data class OfflineModelUiState(
     val modelTitle: String = OfflineModelSpec.GEMMA_4_E2B.title,
     val checksumPinned: Boolean = OfflineModelSpec.GEMMA_4_E2B.expectedSha256 != null,
     val recommendedRamBytes: Long = OfflineModelSpec.GEMMA_4_E2B.recommendedRamBytes,
+    /** LiteRT-LM is packaged for 64-bit ARM only. */
+    val deviceSupported: Boolean = true,
 ) {
     enum class Phase { NOT_INSTALLED, DOWNLOADING, VERIFYING, PAUSED, READY, ERROR }
 
@@ -57,6 +60,7 @@ class OfflineModelManager private constructor(context: Context) {
     @Volatile private var downloader: OfflineModelDownloader? = null
     @Volatile private var job: Job? = null
     @Volatile private var lastError: String? = null
+    private val deviceSupported: Boolean = Build.SUPPORTED_ABIS.orEmpty().contains("arm64-v8a")
 
     init { scope.launch { refresh() } }
 
@@ -90,7 +94,7 @@ class OfflineModelManager private constructor(context: Context) {
     /** Rebuild the idle state from disk (cheap: no hashing). */
     fun refresh() {
         if (job?.isActive == true) return
-        val base = OfflineModelUiState(freeBytes = freeBytes(), deviceRamBytes = deviceRam(),
+        val base = OfflineModelUiState(freeBytes = freeBytes(), deviceRamBytes = deviceRam(), deviceSupported = deviceSupported,
             modelTitle = store.spec.title, checksumPinned = store.spec.expectedSha256 != null,
             recommendedRamBytes = store.spec.recommendedRamBytes, totalBytes = store.spec.approxBytes)
         _state.value = when (val s = store.state()) {
@@ -112,6 +116,10 @@ class OfflineModelManager private constructor(context: Context) {
     fun download(): Boolean {
         if (job?.isActive == true) return false
         lastError = null
+        if (!deviceSupported) {
+            lastError = "این گوشی پردازندهٔ ۶۴ بیتی ARM ندارد و موتور هوش مصنوعی آفلاین روی آن اجرا نمی‌شود؛ دانلود انجام نشد."
+            refresh(); return false
+        }
         if (!hasInternet()) {
             lastError = "اینترنت در دسترس نیست. برای دانلود مدل به اینترنت وصل شوید؛ بعد از نصب، دستیار بدون اینترنت کار می‌کند."
             refresh(); return false
