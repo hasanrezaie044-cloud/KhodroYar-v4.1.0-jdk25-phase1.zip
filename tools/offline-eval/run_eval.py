@@ -141,8 +141,9 @@ class GemmaLiteRt:
         base = self.rss.current_mb()
         t0 = time.time()
         # Same engine settings as OfflineLiteRtProvider: CPU text + CPU vision, 4096 tokens, 1 image.
+        cache = Path(a.out, "litert-cache").resolve(); cache.mkdir(parents=True, exist_ok=True)  # LiteRT-LM requires it to exist
         self.engine = lm.Engine(a.model, backend=lm.Backend.CPU(), vision_backend=lm.Backend.CPU(),
-                                max_num_tokens=4096, max_num_images=1, cache_dir=a.out + "/litert-cache", enable_benchmark=True)
+                                max_num_tokens=4096, max_num_images=1, cache_dir=str(cache), enable_benchmark=True)
         self.load_s = time.time() - t0
         self.idle_rss_mb = self.rss.current_mb()
         self.idle_anon_mb = self.rss.current_anon_mb()
