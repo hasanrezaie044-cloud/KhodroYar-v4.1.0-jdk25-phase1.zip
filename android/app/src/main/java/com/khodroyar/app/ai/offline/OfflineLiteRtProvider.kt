@@ -112,7 +112,7 @@ object OfflineToolSchemas {
 class OfflineLiteRtProvider(
     context: Context,
     private val usage: () -> AIUsageLimits = { AIUsageLimits() },
-) : FunctionCallingProvider, ComponentCallbacks2, Closeable {
+) : OfflineChatEngine, ComponentCallbacks2, Closeable {
     private val app = context.applicationContext
     private val manager = OfflineModelManager.get(app)
     val store: OfflineModelStore get() = manager.store
@@ -136,7 +136,7 @@ class OfflineLiteRtProvider(
     }
 
     /** Installed marker + exact size (full SHA-256 was computed when the download finished). */
-    val modelPresent: Boolean get() = store.state() is OfflineModelStore.State.Present
+    override val modelPresent: Boolean get() = store.state() is OfflineModelStore.State.Present
     val isLoaded: Boolean get() = engine?.isInitialized() == true
 
     override suspend fun complete(messages: List<FunctionMessage>, onText: (String) -> Unit): FunctionResult =
@@ -350,6 +350,8 @@ class OfflineLiteRtProvider(
     fun cancel() {
         activeConversation?.let { conversation -> runCatching { conversation.cancelProcess() } }
     }
+
+    override fun cancelActive() = cancel()
 
     private fun scheduleIdleRelease() {
         if (closed.get()) return

@@ -18,23 +18,35 @@ class OfflineModelKitTest {
 
     private val bytes = ByteArray(2 * 1024 * 1024 + 37) { (it % 239).toByte() }
     private val sha = bytes.sha256()
-    /** Unpinned, exactly like the shipped Gemma spec. */
+    /** Unpinned fixture (exercises the published-checksum and unverified paths of the downloader). */
     private val spec = OfflineModelSpec.GEMMA_4_E2B.copy(
         id = "test-offline-model",
         repository = "org/test-model",
         fileName = "test-model.litertlm",
+        revision = "main",
         approxBytes = bytes.size.toLong(),
         minBytes = 1024L,
         maxBytes = 64L * 1024 * 1024,
+        expectedSha256 = null,
     )
 
-    @Test fun shippedSpecDownloadsTheOfficialFileOnDemandAndIsNotPinned() {
+    @Test fun shippedGemmaSpecIsPinnedToAnImmutableRevisionAndChecksum() {
         val gemma = OfflineModelSpec.GEMMA_4_E2B
-        assertEquals("https://huggingface.co/litert-community/gemma-4-E2B-it-litert-lm/resolve/main/gemma-4-E2B-it.litertlm", gemma.downloadUrl)
-        assertEquals("https://huggingface.co/api/models/litert-community/gemma-4-E2B-it-litert-lm/tree/main", gemma.metadataUrl)
-        assertEquals(null, gemma.expectedSha256)
-        assertTrue(gemma.approxBytes in gemma.minBytes..gemma.maxBytes)
+        assertEquals("https://huggingface.co/litert-community/gemma-4-E2B-it-litert-lm/resolve/2d74ac41a33d7da82f39f7d5720a04c68514a103/gemma-4-E2B-it.litertlm", gemma.downloadUrl)
+        assertEquals("181938105e0eefd105961417e8da75903eacda102c4fce9ce90f50b97139a63c", gemma.expectedSha256)
+        assertEquals(2_588_147_712L, gemma.approxBytes)
         assertTrue(gemma.advertisedImageInput && gemma.advertisedToolUse)
+    }
+
+    @Test fun qwenPackageHasTheLanguageModelAndTheMatchingVisionProjectorBothPinned() {
+        val pkg = OfflineModelPackage.QWEN35_4B_VISION
+        assertEquals(OfflineRuntime.LLAMA_CPP, pkg.runtime)
+        assertEquals(listOf("Qwen3.5-4B-Q4_K_M.gguf", "mmproj-Qwen3.5-4B-Q8_0.gguf"), pkg.files.map { it.fileName })
+        assertEquals(OfflineModelSpec.QWEN35_4B_MMPROJ, pkg.vision)
+        assertTrue(pkg.files.all { it.revision == "8d43d974efc48399cb58957ad49c8b26bf5a109c" && it.repository == "ggml-org/Qwen3.5-4B-GGUF" })
+        assertEquals("217002fa8008ef4fc6d548353a3aebef055a96e6ff8e0e2c0953ef8254a89c14", pkg.model.expectedSha256)
+        assertEquals("5a5ba634d46f9888599963bfc52194eadf099e1efdbee46d71957d911cf62654", pkg.vision?.expectedSha256)
+        assertEquals(3_032_091_584L + 366_894_560L, pkg.totalBytes)
     }
 
     @Test fun metadataYieldsPublishedOrPinnedChecksumAndRejectsMalformedEntries() {

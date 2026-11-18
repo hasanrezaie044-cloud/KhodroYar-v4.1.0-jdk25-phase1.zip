@@ -2,7 +2,7 @@
 """Run the KhodroYar offline-assistant evaluation against one on-device model runtime.
 
 Backends (each run in its own process so peak RSS is attributable):
-  qwen   - Qwen3.5-4B GGUF via llama.cpp `llama-server` (pinned tag), mmproj vision, --jinja tools
+  qwen   - Qwen3.5-4B GGUF + mmproj through the app's own native engine (khodroyar-engine-cli, llama.cpp v1.0.0)
   gemma  - Gemma 4 E2B .litertlm via the LiteRT-LM runtime (same model file + settings as the app)
 
 The agent loop mirrors PersianToolAgent/AIToolExposure: identical system prompt and tool schemas
@@ -10,7 +10,7 @@ The agent loop mirrors PersianToolAgent/AIToolExposure: identical system prompt 
 latest requested page is exposed), read tools answered from a deterministic fixture, and the turn
 stopping at the first write/delete (in the app that becomes an approval card).
 """
-import argparse, base64, json, os, re, signal, subprocess, sys, threading, time, urllib.request
+import argparse, json, os, re, subprocess, threading, time
 from pathlib import Path
 
 import jdatetime
@@ -21,7 +21,7 @@ FA_DIGITS = str.maketrans("۰۱۲۳۴۵۶۷۸۹٠١٢٣٤٥٦٧٨٩", "012345678
 
 # ----------------------------------------------------------------------------- memory sampling
 class RssSampler:
-    """Samples VmRSS/VmHWM of a pid (llama-server) or of this process (LiteRT-LM in-process)."""
+    """Samples VmRSS/VmHWM of a pid (the engine process) or of this process (LiteRT-LM in-process)."""
     def __init__(self, pid):
         self.pid, self.peak_kb, self._stop = pid, 0, threading.Event()
         threading.Thread(target=self._run, daemon=True).start()
@@ -44,39 +44,43 @@ class RssSampler:
 
 
 # ----------------------------------------------------------------------------- backends
-class QwenLlamaServer:
-    name = "qwen3.5-4b-q4_k_m@llama.cpp"
+class QwenAppEngine:
+    """Qwen3.5-4B through the app's own native engine (android/app/src/main/cpp/khodroyar_engine.cpp,
+    built for the host by the same CMakeLists.txt as the APK): same chat-template/tool parsing, prompt
+    checkpoints, image path (RGB pixels, longest side 1536, SHA-256 id) and sampling as OfflineLlamaProvider."""
+    name = "qwen3.5-4b-q4_k_m@khodroyar-engine(llama.cpp)"
 
     def __init__(self, a):
-        self.port = 8089
-        self.log = open(a.out + "/llama-server.log", "w")
-        cmd = [a.server, "-m", a.model, "--mmproj", a.mmproj, "-c", str(a.ctx), "-t", str(a.threads), "-tb", str(a.threads),
-               "--jinja", "--reasoning", "off", "-np", "1", "--port", str(self.port), "--host", "127.0.0.1",
-               "--image-max-tokens", str(a.image_max_tokens), "-b", "512", "-ub", "512", "--no-webui"]
-        if a.kv_type: cmd += ["-ctk", a.kv_type, "-ctv", a.kv_type]
+        self.log = open(a.out + "/engine.log", "w")
+        cmd = [a.engine, "--model", a.model, "--ctx", str(a.ctx), "--threads", str(a.threads), "--batch", "512",
+               "--image-max-tokens", str(a.image_max_tokens)]
+        if a.mmproj: cmd += ["--mmproj", a.mmproj]
+        if a.kv_type == "q8_0": cmd += ["--kv-q8"]
         self.cmd = cmd
         t0 = time.time()
-        self.proc = subprocess.Popen(cmd, stdout=self.log, stderr=subprocess.STDOUT)
+        self.proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=self.log, text=True, bufsize=1)
         self.rss = RssSampler(self.proc.pid)
-        while True:
-            if self.proc.poll() is not None:
-                raise SystemExit("llama-server exited during load; see llama-server.log")
-            try:
-                if urllib.request.urlopen(f"http://127.0.0.1:{self.port}/health", timeout=2).status == 200: break
-            except Exception:
-                pass
-            time.sleep(0.25)
+        first = self.proc.stdout.readline()
+        if not first:
+            raise SystemExit("engine exited during load; see engine.log")
+        self.loaded = json.loads(first)
+        if self.loaded.get("event") != "loaded":
+            raise SystemExit(f"engine failed to load: {first.strip()}")
+        if a.mmproj and not self.loaded.get("vision"):
+            raise SystemExit("vision projector failed to load; see engine.log")
         self.load_s = time.time() - t0
-        self.idle_rss_mb = self.rss.current_mb()
+        self.idle_rss_mb = self.loaded["rss_kb"] / 1024
+        self.seq = 0
 
     def chat(self, system, messages, tools, image_paths):
-        wire = [{"role": "system", "content": system}]
+        wire, images = [{"role": "system", "content": system}], []
         for m in messages:
             if m["role"] == "user":
                 content = m["content"]
                 if m.get("image"):
-                    b64 = base64.b64encode(Path(m["image"]).read_bytes()).decode()
-                    content = [{"type": "image_url", "image_url": {"url": "data:image/jpeg;base64," + b64}}, {"type": "text", "text": m["content"]}]
+                    images.append(m["image"])
+                    # Same order as OfflineLlamaProvider.buildRequest: image part, then text.
+                    content = [{"type": "media_marker", "text": self.loaded["backends"]["media_marker"]}, {"type": "text", "text": m["content"]}]
                 wire.append({"role": "user", "content": content})
             elif m["role"] == "assistant":
                 w = {"role": "assistant", "content": m.get("content") or ""}
@@ -85,48 +89,41 @@ class QwenLlamaServer:
                 wire.append(w)
             else:
                 wire.append({"role": "tool", "tool_call_id": m["call_id"], "content": m["content"]})
-        body = {"messages": wire, "stream": True, "temperature": 0.2, "top_p": 0.9, "top_k": 40, "max_tokens": 512,
-                "cache_prompt": True, "timings_per_token": False}
-        if tools: body["tools"] = [{"type": "function", "function": t} for t in tools]
-        log_pos = self.log.tell()
-        req = urllib.request.Request(f"http://127.0.0.1:{self.port}/v1/chat/completions", json.dumps(body).encode(),
-                                     {"Content-Type": "application/json"})
-        t0, ttft, text, calls, timings = time.time(), None, "", {}, {}
-        with urllib.request.urlopen(req, timeout=1800) as r:
-            for raw in r:
-                line = raw.decode().strip()
-                if not line.startswith("data:") or line == "data: [DONE]": continue
-                ev = json.loads(line[5:])
-                if ev.get("timings"): timings = ev["timings"]
-                for ch in ev.get("choices", []):
-                    d = ch.get("delta", {})
-                    if (d.get("content") or d.get("tool_calls")) and ttft is None: ttft = time.time() - t0
-                    text += d.get("content") or ""
-                    for tc in d.get("tool_calls") or []:
-                        slot = calls.setdefault(tc.get("index", 0), {"name": "", "args": ""})
-                        f = tc.get("function", {})
-                        slot["name"] += f.get("name") or ""; slot["args"] += f.get("arguments") or ""
-        total = time.time() - t0
-        self.log.flush()
-        new_log = Path(self.log.name).read_text(errors="replace")[log_pos:]
-        enc = [float(x) for x in re.findall(r"image slice encoded in (\d+(?:\.\d+)?) ms", new_log)]
-        dec = [float(x) for x in re.findall(r"image decoded \(batch \d+/\d+\) in (\d+(?:\.\d+)?) ms", new_log)]
+        request = {"messages": wire, "max_tokens": 512, "temperature": 0.2, "top_k": 40, "top_p": 0.9, "enable_thinking": False}
+        if tools: request["tools"] = [{"type": "function", "function": t} for t in tools]
+        self.seq += 1
+        self.proc.stdin.write(json.dumps({"id": self.seq, "request": request, "images": images}, ensure_ascii=False) + "\n")
+        self.proc.stdin.flush()
+        line = self.proc.stdout.readline()
+        if not line:
+            raise RuntimeError("engine exited; see engine.log")
+        out = json.loads(line)
+        r = out.get("result") or {}
+        if not r.get("ok"):
+            raise RuntimeError(f"engine error {r.get('error')}: {r.get('message')}")
+        t = r.get("timings", {})
         parsed = []
-        for i in sorted(calls):
-            c = calls[i]
-            try: args = json.loads(c["args"] or "{}")
-            except Exception: args = {"__unparsed__": c["args"]}
-            parsed.append({"name": c["name"], "args": args})
-        return {"text": text.strip(), "calls": parsed, "ttft_s": ttft or total, "total_s": total,
-                "prompt_tokens": timings.get("prompt_n"), "prompt_tok_s": timings.get("prompt_per_second"),
-                "gen_tokens": timings.get("predicted_n"), "gen_tok_s": timings.get("predicted_per_second"),
-                "image_encode_ms": sum(enc) + sum(dec) if (enc or dec) else None,
-                "rss_mb": self.rss.current_mb()}
+        for c in r.get("tool_calls", []):
+            try: args = json.loads(c.get("arguments") or "{}")
+            except Exception: args = {"__unparsed__": c.get("arguments")}
+            parsed.append({"name": c.get("name", ""), "args": args})
+        prefill_s = (t.get("prefill_ms") or 0) / 1000
+        return {"text": (r.get("content") or "").strip(), "calls": parsed, "ttft_s": (t.get("ttft_ms") or 0) / 1000,
+                "total_s": (out.get("wall_ms") or 0) / 1000, "prompt_tokens": t.get("prompt_tokens"),
+                "cached_tokens": t.get("cached_tokens"), "prefilled_tokens": t.get("prefilled_tokens"),
+                "prompt_tok_s": (t.get("prefilled_tokens") or 0) / prefill_s if prefill_s > 0 else None,
+                "gen_tokens": t.get("generated_tokens"), "gen_tok_s": t.get("decode_tps"),
+                "image_encode_ms": t.get("image_ms") if t.get("images") else None,
+                "checkpoints": t.get("checkpoints"), "checkpoint_mb": (t.get("checkpoint_bytes") or 0) / 2**20,
+                "context_mb": (t.get("context_bytes") or 0) / 2**20, "stop": r.get("stop"),
+                "rss_mb": out.get("rss_kb", 0) / 1024}
 
     def close(self):
-        self.rss.stop(); self.proc.send_signal(signal.SIGINT)
-        try: self.proc.wait(30)
-        except Exception: self.proc.kill()
+        self.rss.stop()
+        try:
+            self.proc.stdin.close(); self.proc.wait(60)
+        except Exception:
+            self.proc.kill()
 
 
 class GemmaLiteRt:
@@ -144,11 +141,6 @@ class GemmaLiteRt:
         self.load_s = time.time() - t0
         self.idle_rss_mb = self.rss.current_mb()
         self.python_baseline_mb = base
-
-    class _Tool:
-        def __init__(self, desc): self.desc = desc
-        def get_tool_description(self): return self.desc
-        def execute(self, param): raise SecurityException("app-owned")
 
     def chat(self, system, messages, tools, image_paths):
         lm = self.lm
@@ -340,7 +332,7 @@ def run_case(backend, agent, case, today, img_dir):
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("--backend", choices=["qwen", "gemma"], required=True)
-    p.add_argument("--model", required=True); p.add_argument("--mmproj"); p.add_argument("--server")
+    p.add_argument("--model", required=True); p.add_argument("--mmproj"); p.add_argument("--engine")
     p.add_argument("--agent", required=True); p.add_argument("--cases", required=True); p.add_argument("--out", required=True)
     p.add_argument("--threads", type=int, default=4); p.add_argument("--ctx", type=int, default=8192)
     p.add_argument("--image-max-tokens", type=int, default=1024); p.add_argument("--kv-type")
@@ -349,12 +341,13 @@ def main():
     Path(a.out).mkdir(parents=True, exist_ok=True)
     agent = json.loads(Path(a.agent).read_text()); spec = json.loads(Path(a.cases).read_text())
     img_dir = str(Path(a.cases).parent / "images")
-    backend = QwenLlamaServer(a) if a.backend == "qwen" else GemmaLiteRt(a)
+    backend = QwenAppEngine(a) if a.backend == "qwen" else GemmaLiteRt(a)
     results = {"backend": a.label or backend.name, "load_s": backend.load_s, "idle_rss_mb": backend.idle_rss_mb,
                "settings": {"threads": a.threads, "ctx": a.ctx if a.backend == "qwen" else 4096,
                             "image_max_tokens": a.image_max_tokens if a.backend == "qwen" else None, "kv_type": a.kv_type},
                "machine": {"cpu": Path("/proc/cpuinfo").read_text().count("processor"), "uname": os.uname().machine}, "cases": []}
     if a.backend == "gemma": results["python_baseline_mb"] = backend.python_baseline_mb
+    else: results["engine"] = {k: backend.loaded.get(k) for k in ("load_ms", "vision_load_ms", "info", "backends", "settings")}
     try:
         for case in spec["cases"]:
             t0 = time.time()

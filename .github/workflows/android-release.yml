@@ -134,7 +134,7 @@ jobs:
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
         with:
-          packages: 'platforms;android-${{ env.ANDROID_COMPILE_SDK }} build-tools;${{ env.ANDROID_BUILD_TOOLS }} platform-tools'
+          packages: 'platforms;android-${{ env.ANDROID_COMPILE_SDK }} build-tools;${{ env.ANDROID_BUILD_TOOLS }} platform-tools ndk;29.0.13113456 cmake;3.31.6'
 
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4

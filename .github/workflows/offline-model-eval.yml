@@ -26,7 +26,7 @@ concurrency:
 
 env:
   LLAMA_CPP_TAG: v1.0.0
-  LLAMA_CPP_SHA: 2d8a32502909ca065c41c4cf5f2fb1c427c047fc
+  LLAMA_CPP_SHA: b1b770d90d94cad9e9ea5b993bdbc383a522fb28
   QWEN_REPO: ggml-org/Qwen3.5-4B-GGUF
   QWEN_REV: 8d43d974efc48399cb58957ad49c8b26bf5a109c
   QWEN_FILE: Qwen3.5-4B-Q4_K_M.gguf
@@ -77,24 +77,24 @@ jobs:
           grep -o -w 'asimddp\|i8mm\|sve\|sve2\|bf16\|fphp' /proc/cpuinfo | sort | uniq -c
       - name: Tooling
         run: |
-          sudo apt-get update -qq && sudo apt-get install -y -qq libraqm0 libfribidi0 cmake ninja-build time
+          sudo apt-get update -qq && sudo apt-get install -y -qq libraqm0 libfribidi0 cmake ninja-build time jq
           python3 -m venv /tmp/ev && /tmp/ev/bin/pip install -q pillow jdatetime numpy 'litert-lm-api==0.19.2'
-      - name: Cache llama.cpp build
+      - name: Cache app engine build
         id: llcache
         uses: actions/cache@v4
         with:
-          path: /tmp/llama-bin
-          key: llama-${{ env.LLAMA_CPP_SHA }}-arm64-armv82dpi8mm-v1
-      - name: Build llama.cpp ${{ env.LLAMA_CPP_TAG }} (portable phone baseline ISA)
+          path: /tmp/engine-bin
+          key: khodroyar-engine-${{ env.LLAMA_CPP_SHA }}-${{ hashFiles('android/app/src/main/cpp/**') }}-arm64-v2
+      - name: Build the app's native engine (llama.cpp ${{ env.LLAMA_CPP_TAG }}, same CMakeLists.txt as the APK)
         if: steps.llcache.outputs.cache-hit != 'true'
         run: |
-          curl -fsSL https://codeload.github.com/ggml-org/llama.cpp/tar.gz/${LLAMA_CPP_SHA} -o /tmp/llama.tgz
-          mkdir -p /tmp/llama && tar xzf /tmp/llama.tgz -C /tmp/llama --strip-components=1
-          cmake -S /tmp/llama -B /tmp/llama/build -G Ninja -DCMAKE_BUILD_TYPE=Release -DGGML_NATIVE=OFF \
-            -DGGML_CPU_ARM_ARCH=armv8.2-a+dotprod+fp16+i8mm -DLLAMA_OPENSSL=OFF -DLLAMA_BUILD_TESTS=OFF \
-            -DBUILD_SHARED_LIBS=OFF -DGGML_OPENMP=OFF
-          cmake --build /tmp/llama/build --target llama-server llama-mtmd-cli llama-bench -j"$(nproc)"
-          mkdir -p /tmp/llama-bin && cp /tmp/llama/build/bin/llama-server /tmp/llama/build/bin/llama-mtmd-cli /tmp/llama/build/bin/llama-bench /tmp/llama-bin/
+          set -o pipefail
+          # Same source, same switches as the APK: CPU backend variants picked at run time from the CPU's features.
+          ( cmake -S android/app/src/main/cpp -B /tmp/engine-build -G Ninja -DCMAKE_BUILD_TYPE=Release \
+              && cmake --build /tmp/engine-build --target khodroyar-engine-cli -j"$(nproc)" ) 2>&1 | tee /tmp/engine-build.log \
+            || { tail -n 40 /tmp/engine-build.log | grep -v '^\[' | tr '\n' ' ' | cut -c1-3500 | sed 's/^/::error title=engine build::/'; echo; exit 1; }
+          mkdir -p /tmp/engine-bin && cp -a /tmp/engine-build/bin/. /tmp/engine-bin/
+          ls -la /tmp/engine-bin
       - name: Cache models
         uses: actions/cache@v4
         with:
@@ -117,9 +117,17 @@ jobs:
         run: /tmp/ev/bin/python tools/offline-eval/make_cases.py build/offline-eval
       - name: Qwen3.5-4B sanity (real image through mtmd)
         run: |
-          /usr/bin/time -v /tmp/llama-bin/llama-mtmd-cli -m /tmp/models/$QWEN_FILE --mmproj /tmp/models/$MMPROJ_Q8_FILE \
-            --image build/offline-eval/images/fuel_receipt.jpg -t 4 -c 8192 --image-max-tokens 1024 --temp 0 -n 160 \
-            --reasoning off -p 'متن این رسید را بخوان: تاریخ، مقدار لیتر و مبلغ کل را بنویس.' 2>&1 | tee build/offline-eval/qwen-sanity.log | tail -40
+          set -o pipefail
+          M=$(printf '%s' '<__media__>')
+          REQ=$(jq -cn --arg m "$M" '{id:"sanity",images:["build/offline-eval/images/fuel_receipt.jpg"],request:{messages:[{role:"user",content:[{type:"media_marker",text:$m},{type:"text",text:"متن این رسید را بخوان: تاریخ، مقدار لیتر و مبلغ کل را بنویس."}]}],max_tokens:160,temperature:0,top_k:1,top_p:1,enable_thinking:false}}')
+          echo "$REQ" | /usr/bin/time -v /tmp/engine-bin/khodroyar-engine-cli --model /tmp/models/$QWEN_FILE \
+            --mmproj /tmp/models/$MMPROJ_Q8_FILE --threads 4 --ctx 8192 --image-max-tokens 1024 \
+            > build/offline-eval/qwen-sanity.jsonl 2> build/offline-eval/qwen-sanity.log
+          tail -n 25 build/offline-eval/qwen-sanity.log
+          jq -c '.' build/offline-eval/qwen-sanity.jsonl
+          ANSWER=$(jq -r 'select(.id=="sanity") | .result.content' build/offline-eval/qwen-sanity.jsonl)
+          echo "::notice title=Qwen sanity (real receipt pixels)::$(echo "$ANSWER" | tr '\n' ' ' | cut -c1-400)"
+          test -n "$ANSWER"
       - name: Gemma 4 E2B (LiteRT-LM, app settings)
         if: contains(inputs.backends || 'qwen gemma', 'gemma')
         continue-on-error: true
@@ -131,7 +139,7 @@ jobs:
         continue-on-error: true
         run: |
           MM=$MMPROJ_Q8_FILE; [ "${{ inputs.mmproj }}" = "BF16" ] && MM=$MMPROJ_BF16_FILE
-          /tmp/ev/bin/python tools/offline-eval/run_eval.py --backend qwen --server /tmp/llama-bin/llama-server \
+          /tmp/ev/bin/python tools/offline-eval/run_eval.py --backend qwen --engine /tmp/engine-bin/khodroyar-engine-cli \
             --model /tmp/models/$QWEN_FILE --mmproj /tmp/models/$MM --image-max-tokens ${{ inputs.image_max_tokens || '1024' }} \
             --agent build/offline-eval/app-agent.json --cases build/offline-eval/cases.json --out build/offline-eval/qwen \
             --label "qwen3.5-4b-q4_k_m+mmproj-${MM##*-}"

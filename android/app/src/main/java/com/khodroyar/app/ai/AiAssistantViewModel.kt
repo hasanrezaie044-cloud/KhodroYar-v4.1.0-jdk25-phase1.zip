@@ -8,7 +8,10 @@ import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.khodroyar.app.data.repo.AppRepository
+import com.khodroyar.app.ai.offline.OfflineChatEngine
 import com.khodroyar.app.ai.offline.OfflineLiteRtProvider
+import com.khodroyar.app.ai.offline.OfflineLlamaProvider
+import com.khodroyar.app.ai.offline.OfflineRuntime
 import com.khodroyar.app.ai.offline.OfflineModelManager
 import com.khodroyar.app.ai.offline.OfflineModelUiState
 import kotlinx.coroutines.flow.StateFlow
@@ -55,7 +58,11 @@ class AiAssistantViewModel @JvmOverloads constructor(
     }, AndroidModelEvaluationStore(app))
     private val agent = PersianToolAgent(managedModels, tools) { settingsStore.load().effectiveUsage() }
     private val offlineManager = OfflineModelManager.get(app)
-    private val offlineModel = OfflineLiteRtProvider(app) { settingsStore.load().effectiveUsage() }
+    /** The on-device engine for the installed package; neither runtime has any network path. */
+    private val offlineModel: OfflineChatEngine = when (offlineManager.pkg.runtime) {
+        OfflineRuntime.LITERT_LM -> OfflineLiteRtProvider(app) { settingsStore.load().effectiveUsage() }
+        OfflineRuntime.LLAMA_CPP -> OfflineLlamaProvider(app) { settingsStore.load().effectiveUsage() }
+    }
     private val offlineAgent = PersianToolAgent(offlineModel, tools) { settingsStore.load().effectiveUsage() }
     private val local = LocalAssistant(tools, dialogue = LocalDialogueEngine(rules = { automationStore.rules.value }))
 
@@ -137,7 +144,7 @@ class AiAssistantViewModel @JvmOverloads constructor(
     private var pendingFromAgent = false
 
     val activeModel: String get() = if (settings.mode == AiMode.LOCAL) {
-        if (offlineModel.modelPresent) "محلی · Gemma 4 E2B · روی دستگاه" else "داخلی · بدون مدل زبانی/شبکه"
+        if (offlineModel.modelPresent) "محلی · ${offlineManager.pkg.title} · روی دستگاه" else "داخلی · بدون مدل زبانی/شبکه"
     } else modelState.active?.let { "${AIProviderRegistry.get(settings.mode).title} · ${it.id}" } ?: "مدل را در تنظیمات انتخاب کنید"
     /** Download/install state of the on-device model for «مدیریت هوش مصنوعی آفلاین». */
     val offlineModelState: StateFlow<OfflineModelUiState> = offlineManager.state
@@ -372,7 +379,7 @@ class AiAssistantViewModel @JvmOverloads constructor(
         val text = raw.trim()
         if ((text.isEmpty() && draftImage == null) || networkBusy || !settings.enabled) return false
         if (draftImage != null && settings.mode == AiMode.LOCAL && !offlineModel.modelPresent) {
-            failure = AiResult.Failure(AiErrorKind.MODEL_INVALID, "برای تصویر در حالت آفلاین، ابتدا مدل Gemma را از «مدیریت هوش مصنوعی آفلاین» دانلود کنید؛ تصویر به هیچ سرویس آنلاینی ارسال نشد.")
+            failure = AiResult.Failure(AiErrorKind.MODEL_INVALID, "برای تصویر در حالت آفلاین، ابتدا مدل ${offlineManager.pkg.title} را از «مدیریت هوش مصنوعی آفلاین» دانلود کنید؛ تصویر به هیچ سرویس آنلاینی ارسال نشد.")
             return false
         }
         if (OpenRouterFreePolicy.containsCredential(text) || selectedSecret?.let { it in text } == true) {
@@ -530,7 +537,7 @@ class AiAssistantViewModel @JvmOverloads constructor(
         job?.cancel()
         agent.reset()
         offlineAgent.reset()
-        offlineModel.cancel()
+        offlineModel.cancelActive()
         streamingText = ""; canContinue = false
         busy = false
     }

@@ -28,6 +28,24 @@ android {
         // Public URL of the AI backend (NOT a secret). Set with -PaiBackendUrl=https://... or leave
         // empty and enter it in the assistant settings. No API key is ever placed here.
         buildConfigField 'String', 'AI_BACKEND_URL', '"' + aiBackendUrl + '"'
+
+        // On-device Qwen3.5 runtime: official llama.cpp v1.0.0 (+ libmtmd vision) and the app's JNI
+        // bridge, CPU only, 64-bit ARM only. Model and vision files are downloaded in the app, never packaged.
+        externalNativeBuild {
+            cmake {
+                abiFilters 'arm64-v8a'
+                // llama.cpp's documented Android level; the app gates the offline model on API 28+ (minSdk stays 24).
+                arguments '-DANDROID_STL=c++_shared', '-DCMAKE_BUILD_TYPE=Release', '-DANDROID_PLATFORM=android-28'
+            }
+        }
+    }
+
+    ndkVersion '29.0.13113456'
+    externalNativeBuild {
+        cmake {
+            path 'src/main/cpp/CMakeLists.txt'
+            version '3.31.6'
+        }
     }
 
     androidResources {

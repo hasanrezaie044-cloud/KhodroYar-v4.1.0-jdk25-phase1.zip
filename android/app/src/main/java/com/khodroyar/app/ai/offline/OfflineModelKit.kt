@@ -56,20 +56,94 @@ data class OfflineModelSpec(
     companion object {
         internal val SHA256 = Regex("[0-9a-f]{64}")
 
-        /** litert-community/gemma-4-E2B-it-litert-lm — text + image input, native tool calling. */
+        /** litert-community/gemma-4-E2B-it-litert-lm @2d74ac41 — text + image input, native tool calling (LiteRT-LM). */
         val GEMMA_4_E2B = OfflineModelSpec(
             id = "gemma-4-e2b-it",
             title = "Gemma 4 E2B",
             repository = "litert-community/gemma-4-E2B-it-litert-lm",
             fileName = "gemma-4-E2B-it.litertlm",
-            revision = "main",
+            revision = "2d74ac41a33d7da82f39f7d5720a04c68514a103",
             approxBytes = 2_588_147_712L,
-            minBytes = 1_000_000_000L,
-            maxBytes = 4_500_000_000L,
+            minBytes = 2_588_147_712L,
+            maxBytes = 2_588_147_712L,
             recommendedRamBytes = 8L * 1024 * 1024 * 1024,
             advertisedImageInput = true,
             advertisedToolUse = true,
+            expectedSha256 = "181938105e0eefd105961417e8da75903eacda102c4fce9ce90f50b97139a63c",
         )
+
+        /**
+         * ggml-org/Qwen3.5-4B-GGUF @8d43d974 (Apache-2.0): Q4_K_M language model, converted by ggml-org from
+         * Qwen/Qwen3.5-4B with llama.cpp's own convert/quantize tools. Text only — images need [QWEN35_4B_MMPROJ].
+         */
+        val QWEN35_4B_Q4_K_M = OfflineModelSpec(
+            id = "qwen3.5-4b-q4_k_m",
+            title = "Qwen3.5-4B",
+            repository = "ggml-org/Qwen3.5-4B-GGUF",
+            fileName = "Qwen3.5-4B-Q4_K_M.gguf",
+            revision = "8d43d974efc48399cb58957ad49c8b26bf5a109c",
+            approxBytes = 3_032_091_584L,
+            minBytes = 3_032_091_584L,
+            maxBytes = 3_032_091_584L,
+            recommendedRamBytes = 8L * 1024 * 1024 * 1024,
+            advertisedImageInput = false,
+            advertisedToolUse = true,
+            expectedSha256 = "217002fa8008ef4fc6d548353a3aebef055a96e6ff8e0e2c0953ef8254a89c14",
+        )
+
+        /** The matching Qwen3.5-4B vision encoder/projector (Q8_0) from the same repository revision, for libmtmd. */
+        val QWEN35_4B_MMPROJ = OfflineModelSpec(
+            id = "qwen3.5-4b-mmproj-q8_0",
+            title = "Qwen3.5-4B vision",
+            repository = "ggml-org/Qwen3.5-4B-GGUF",
+            fileName = "mmproj-Qwen3.5-4B-Q8_0.gguf",
+            revision = "8d43d974efc48399cb58957ad49c8b26bf5a109c",
+            approxBytes = 366_894_560L,
+            minBytes = 366_894_560L,
+            maxBytes = 366_894_560L,
+            recommendedRamBytes = 8L * 1024 * 1024 * 1024,
+            advertisedImageInput = true,
+            advertisedToolUse = false,
+            expectedSha256 = "5a5ba634d46f9888599963bfc52194eadf099e1efdbee46d71957d911cf62654",
+        )
+    }
+}
+
+/** Which on-device runtime executes a package. Both are CPU-only and vendor-neutral. */
+enum class OfflineRuntime { LITERT_LM, LLAMA_CPP }
+
+/**
+ * A downloadable model package: every file is fetched separately (resumable, pinned SHA-256), stored
+ * app-private, and never part of the APK. [files] order = download order; the first file is the model.
+ */
+data class OfflineModelPackage(
+    val id: String,
+    val title: String,
+    val runtime: OfflineRuntime,
+    val files: List<OfflineModelSpec>,
+    val license: String,
+) {
+    init {
+        require(files.isNotEmpty() && files.map { it.fileName }.distinct().size == files.size)
+        require(files.all { it.expectedSha256 != null }) { "every packaged file needs a pinned SHA-256" }
+    }
+
+    val model: OfflineModelSpec get() = files.first()
+    /** The vision projector file, when the runtime keeps vision separate from the language model. */
+    val vision: OfflineModelSpec? get() = files.drop(1).firstOrNull { it.advertisedImageInput }
+    val totalBytes: Long get() = files.sumOf { it.approxBytes }
+    val recommendedRamBytes: Long get() = files.maxOf { it.recommendedRamBytes }
+
+    companion object {
+        val GEMMA_4_E2B_LITERT = OfflineModelPackage(
+            "gemma-4-e2b-litert", "Gemma 4 E2B", OfflineRuntime.LITERT_LM,
+            listOf(OfflineModelSpec.GEMMA_4_E2B), "Apache-2.0",
+        )
+        val QWEN35_4B_VISION = OfflineModelPackage(
+            "qwen3.5-4b-vision", "Qwen3.5-4B", OfflineRuntime.LLAMA_CPP,
+            listOf(OfflineModelSpec.QWEN35_4B_Q4_K_M, OfflineModelSpec.QWEN35_4B_MMPROJ), "Apache-2.0",
+        )
+        val ALL = listOf(QWEN35_4B_VISION, GEMMA_4_E2B_LITERT)
     }
 }
 

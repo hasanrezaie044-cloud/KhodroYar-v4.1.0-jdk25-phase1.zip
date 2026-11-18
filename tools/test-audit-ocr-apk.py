@@ -48,6 +48,14 @@ class OnlineOnlyAuditFixtures(unittest.TestCase):
             with self.subTest(name=name), self.assertRaises(AssertionError):
                 auditor.audit(self.archive({name: b'forbidden fixture'}))
 
+    def test_llama_bridge_requires_its_whole_runtime_and_no_model_is_packaged(self):
+        with self.assertRaisesRegex(AssertionError, 'llama.cpp runtime incomplete'):
+            auditor.audit(self.archive({'assets/a.txt': b'x', auditor.LLAMA_BRIDGE: b'stub'}))
+        for name in ('assets/Qwen3.5-4B-Q4_K_M.gguf', 'assets/models/gemma-4-E2B-it.litertlm'):
+            with self.subTest(name=name), self.assertRaisesRegex(AssertionError, 'never packaged'):
+                auditor.audit(self.archive({name: b'weights'}))
+        self.assertEqual('absent', auditor.audit(self.archive({'assets/a.txt': b'x'}))['llama_runtime'])
+
     def test_invalid_native_file_is_not_treated_as_aligned(self):
         with self.assertRaises(AssertionError):
             auditor.audit(self.archive({'lib/arm64-v8a/libother.so': b'not ELF'}))

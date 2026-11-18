@@ -29,7 +29,7 @@ import com.khodroyar.app.ui.components.ConfirmDialog
 
 /**
  * «مدیریت هوش مصنوعی آفلاین»: status, progress and Download / Pause / Cancel / Delete / Re-download
- * for the on-device Gemma package. Persian, always RTL.
+ * for the on-device model package (model + vision files). Persian, always RTL.
  */
 @Composable
 internal fun OfflineAiManagementSection(
@@ -63,6 +63,10 @@ internal fun OfflineAiManagementSection(
                         LinearProgressIndicator(progress = { state.fraction }, modifier = Modifier.fillMaxWidth().height(8.dp).testTag("offline-ai-progress"))
                         Text("${gigabytes(state.downloadedBytes)} از ${gigabytes(state.totalBytes)} گیگابایت (${persian((state.fraction * 100).toInt().toString())}٪)",
                             style = MaterialTheme.typography.bodyMedium, modifier = Modifier.testTag("offline-ai-downloaded"))
+                        if (state.fileCount > 1 && state.fileIndex > 0) {
+                            Text("فایل ${persian(state.fileIndex.toString())} از ${persian(state.fileCount.toString())}${if (state.fileIndex == 1) " (مدل زبانی)" else " (بخش بینایی تصویر)"}",
+                                style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
                         if (state.phase == Phase.DOWNLOADING && state.bytesPerSecond > 0) {
                             Text("سرعت ${megabytes(state.bytesPerSecond)} مگابایت/ثانیه${state.remainingSeconds?.let { " · حدود ${duration(it)} مانده" } ?: ""}",
                                 style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)

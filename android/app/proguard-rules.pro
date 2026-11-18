@@ -24,3 +24,9 @@
 -keep class com.google.ai.edge.litertlm.** { *; }
 -keep class com.google.gson.** { *; }
 -dontwarn com.google.gson.**
+
+# llama.cpp JNI bridge (libkhodroyar_llama.so): native method names and the streaming callback that
+# native code looks up by name must survive R8.
+-keep class com.khodroyar.app.ai.offline.llama.LlamaNative { native <methods>; }
+-keep interface com.khodroyar.app.ai.offline.llama.LlamaNative$Listener { boolean onContent(java.lang.String); }
+-keep class * implements com.khodroyar.app.ai.offline.llama.LlamaNative$Listener { boolean onContent(java.lang.String); }
