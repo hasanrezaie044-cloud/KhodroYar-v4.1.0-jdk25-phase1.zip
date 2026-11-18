@@ -57,15 +57,14 @@ class AssistantAgentUpgradeTest {
         assertTrue(system.contains("3 نکتهٔ تأییدشده")); assertTrue(system.contains("فهرست وام — در انتظار"))
     }
 
-    @Test fun approvedWriteResultIsMarkedCommittedForTheModelPool() = runBlocking {
-        val script = Script(reply(f.call("add_income", """{"amount":500000,"category":"bonus"}""", "w1")), reply(text = "ثبت شد"))
+    @Test fun anApprovedWriteIsExecutedOnceAndAReplayedProposalNeedsNoSecondExecution() = runBlocking {
+        val args = """{"amount":500000,"category":"bonus"}"""
+        val script = Script(reply(f.call("add_income", args, "w1")), reply(f.call("add_income", args, "w2")))
         val tools = Tools(); val agent = PersianToolAgent(script, tools)
         val confirm = agent.start(user) as AgentStep.Confirm
         assertTrue(tools.executed.isEmpty())
-        agent.confirm(confirm.pending)
-        assertEquals(listOf("add_income"), tools.executed)
-        assertTrue(AgentCommit.anyCommitted(script.transcripts.last()))
-        assertFalse(AgentCommit.anyCommitted(listOf(FunctionMessage("tool", """{"ok":true,"result":"\"committed\":true"}"""))))
+        val after = agent.confirm(confirm.pending)
+        assertTrue(after is AgentStep.Reply); assertEquals(listOf("add_income"), tools.executed)
     }
 
     @Test fun memoryStoresVerifiedFactsRefusesSecretsAndRecallsByTopic() {
@@ -116,15 +115,10 @@ class AssistantAgentUpgradeTest {
         assertTrue(result is FunctionResult.Reply); assertEquals(listOf(vision), adapter.requests)
     }
 
-    @Test fun afterACommittedChangeAFailedModelIsNotReplacedAutomatically() = runBlocking {
-        val adapter = Adapter { fail }
-        val transcript = listOf(FunctionMessage("user", "ثبت کن", turnId = "t2"),
-            FunctionMessage("assistant", calls = listOf(FunctionCall("w1", "add_income", "{}"))),
-            FunctionMessage("tool", JSONObject().put("ok", true).put(AgentCommit.KEY, true).put("result", "ثبت شد").toString(), toolCallId = "w1"))
-        val result = managed(adapter).complete(transcript) as FunctionResult.Failed
-        assertEquals(1, adapter.requests.size); assertTrue(result.error.message.contains("سوابق را بررسی"))
-        val fresh = Adapter { fail }
-        managed(fresh).complete(listOf(FunctionMessage("user", "سلام", turnId = "t3")))
-        assertEquals("without a committed change the permitted single fallback still works", 2, fresh.requests.size)
+    @Test fun imageFallbackSkipsTextOnlyModelsAndNeverSendsTheImageToThem() = runBlocking {
+        val adapter = Adapter { key -> if (key == vision) fail else error("text-only model must not receive an image") }
+        val image = AIImage("image/jpeg", "AAAA")
+        assertTrue(managed(adapter).complete(listOf(FunctionMessage("user", "رسید", images = listOf(image), turnId = "t2"))) is FunctionResult.Failed)
+        assertEquals(listOf(vision), adapter.requests)
     }
 }

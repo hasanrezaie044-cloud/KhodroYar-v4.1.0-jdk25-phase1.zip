@@ -71,12 +71,3 @@ class AgentScratchpad {
         val PLAN_TOOLS = setOf(PLAN, MARK)
     }
 }
-
-/** Marks tool results of approved, executed changes so the model pool never auto-replays after them. */
-object AgentCommit {
-    const val KEY = "committed"
-    fun anyCommitted(messages: List<FunctionMessage>): Boolean = messages.any { m ->
-        m.role == "tool" && m.content.contains("\"$KEY\"") &&
-            runCatching { org.json.JSONObject(m.content).optBoolean(KEY, false) }.getOrDefault(false)
-    }
-}

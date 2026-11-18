@@ -71,7 +71,7 @@ class PersianToolAgent(
             catch (_: Exception) { ToolOutcome(false, "نتیجهٔ ذخیره/بازخوانی تأیید نشد؛ سوابق را بررسی کنید. تلاش خودکار دوباره انجام نمی‌شود.") }
         }
         onResult(wire.name, result)
-        resultMessage(t, wire, result, committed = result.ok)
+        resultMessage(t, wire, result)
         if (result.ok) scratchpad.recordSuccess(wire.name)
         if (!result.ok) { t.stopped = true; t.queue.clear(); return AgentStep.Reply("عملیات تأیید نشد و مراحل بعد متوقف شدند. برای ادامه ابتدا نتیجهٔ واقعی بالا و سوابق را بررسی کنید؛ موفقیت فرضی اعلام نمی‌کنم.") }
         t.verifiedWrites++; t.reads.clear()
@@ -84,8 +84,8 @@ class PersianToolAgent(
         val facts = memoryCount()
         return (if (facts > 0) "\nحافظهٔ روی دستگاه: $facts نکتهٔ تأییدشده؛ فقط در صورت نیاز با recall_memory بخوان." else "") + scratchpad.promptContext()
     }
-    private fun resultMessage(t: Turn, call: FunctionCall, result: ToolOutcome, committed: Boolean = false) {
-        t.messages += FunctionMessage("tool", JSONObject().put("ok", result.ok).apply { if (committed) put(AgentCommit.KEY, true) }
+    private fun resultMessage(t: Turn, call: FunctionCall, result: ToolOutcome) {
+        t.messages += FunctionMessage("tool", JSONObject().put("ok", result.ok)
             .put("result", AiTextSafety.redact(result.text).take(PersianAgentLimits.TOOL_RESULT_CHARS))
             .put("truncated", result.text.length > PersianAgentLimits.TOOL_RESULT_CHARS).toString(), toolCallId = call.id)
     }
