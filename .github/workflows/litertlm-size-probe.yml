@@ -1,0 +1,20 @@
+name: LiteRT-LM AAR size probe (temporary)
+on:
+  push:
+    branches: [arena/c66aaad2-khodroyar-v4-1-0-jdk25-phase1]
+    paths: ['.github/workflows/litertlm-size-probe.yml']
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          set -e
+          for v in 0.19.1; do
+            B=https://dl.google.com/android/maven2/com/google/ai/edge/litertlm/litertlm-android/$v
+            curl -fsSL $B/litertlm-android-$v.pom
+            curl -fsSL $B/litertlm-android-$v.aar -o l.aar
+            ls -l l.aar
+            unzip -lv l.aar
+            mkdir x && cd x && unzip -q ../l.aar && for so in $(find jni -name '*.so'); do echo "$so $(stat -c %s $so) gz=$(gzip -9c $so | wc -c)"; done
+          done
+          curl -fsSL https://dl.google.com/android/maven2/com/google/ai/edge/litertlm/litertlm-android/maven-metadata.xml
