@@ -1,6 +1,9 @@
 package com.khodroyar.app.data.backup
 
+import android.content.ContentValues
 import android.os.Build
+import android.os.Environment
+import android.provider.MediaStore
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.khodroyar.app.core.rates.Rates
@@ -113,6 +116,34 @@ class BackupIntegrityIntegrationTest {
         assertEquals("1405/01/01", db.insurance().allOnce().single().expiryDate)
         assertEquals(9876.0, requireNotNull(db.rates().allOnce().firstOrNull { it.year == 1405 }).hour, 0.0)
         assertEquals(TEST_KEY, settings.current.neshanApiKey)
+    }
+
+    @Test fun exportedBackupStreamsToDownloadsAndReadsBackExactly() = runBlocking {
+        val name = "backup-writer-${UUID.randomUUID()}.json"
+        val expected = "{\"services\":[],\"message\":\"${"پشتیبان".repeat(32768)}\"}"
+        val export = BackupFiles.writeExportFile(context, expected, name)
+        val values = ContentValues().apply {
+            put(MediaStore.MediaColumns.DISPLAY_NAME, name)
+            put(MediaStore.MediaColumns.MIME_TYPE, BackupFiles.MIME_JSON)
+            put(MediaStore.MediaColumns.RELATIVE_PATH, "${Environment.DIRECTORY_DOWNLOADS}/KhodroYarTest")
+            put(MediaStore.MediaColumns.IS_PENDING, 1)
+        }
+        val uri = context.contentResolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
+        assertNotNull("Android must create the selected Downloads document", uri)
+        try {
+            assertTrue("SAF/MediaStore must accept the streamed export", BackupFiles.writeToUri(context, uri!!, export))
+            val published = context.contentResolver.update(
+                uri,
+                ContentValues().apply { put(MediaStore.MediaColumns.IS_PENDING, 0) },
+                null,
+                null,
+            )
+            assertEquals("A complete backup must become visible in Downloads", 1, published)
+            assertEquals(expected, BackupFiles.readFromUri(context, uri))
+        } finally {
+            context.contentResolver.delete(uri!!, null, null)
+            export.delete()
+        }
     }
 
     @Test fun legacySettingsSplitAcrossSectionsAreAllRestored() = runBlocking {

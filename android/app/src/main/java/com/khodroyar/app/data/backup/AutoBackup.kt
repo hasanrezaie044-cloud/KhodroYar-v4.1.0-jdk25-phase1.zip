@@ -72,13 +72,8 @@ object AutoBackup {
     private fun saveToDownloadsQ(context: Context, content: String, name: String): String? {
         val resolver = context.contentResolver
         val relative = "${Environment.DIRECTORY_DOWNLOADS}/$FOLDER"
-        // Same-day rerun (forced, or a retry after a crash) replaces the file instead of
-        // letting MediaStore invent "name (1).json".
-        resolver.delete(
-            MediaStore.Downloads.EXTERNAL_CONTENT_URI,
-            "${MediaStore.MediaColumns.DISPLAY_NAME} = ? AND ${MediaStore.MediaColumns.RELATIVE_PATH} LIKE ?",
-            arrayOf(name, "$relative%"),
-        )
+        // Keep any existing good copy until the replacement has been fully written and
+        // published. If creation or writing fails, the previous day's file remains usable.
         val values = ContentValues().apply {
             put(MediaStore.MediaColumns.DISPLAY_NAME, name)
             put(MediaStore.MediaColumns.MIME_TYPE, BackupFiles.MIME_JSON)
@@ -90,11 +85,26 @@ object AutoBackup {
             resolver.delete(uri, null, null)
             return null
         }
-        resolver.update(
-            uri,
-            ContentValues().apply { put(MediaStore.MediaColumns.IS_PENDING, 0) },
-            null, null,
-        )
+        val published = runCatching {
+            resolver.update(
+                uri,
+                ContentValues().apply { put(MediaStore.MediaColumns.IS_PENDING, 0) },
+                null, null,
+            ) > 0
+        }.getOrDefault(false)
+        if (!published) {
+            resolver.delete(uri, null, null)
+            return null
+        }
+        // Remove previous same-day copies only after the replacement is visible.
+        val newId = ContentUris.parseId(uri)
+        runCatching {
+            resolver.delete(
+                MediaStore.Downloads.EXTERNAL_CONTENT_URI,
+                "${MediaStore.MediaColumns.DISPLAY_NAME} = ? AND ${MediaStore.MediaColumns.RELATIVE_PATH} LIKE ? AND ${MediaStore.MediaColumns._ID} != ?",
+                arrayOf(name, "$relative%", newId.toString()),
+            )
+        }
         pruneDownloads(resolver, relative)
         return relative
     }

@@ -5,7 +5,13 @@ import android.content.Intent
 import android.net.Uri
 import androidx.core.content.FileProvider
 import com.khodroyar.app.core.jalali.Jalali
+import java.io.BufferedInputStream
+import java.io.BufferedOutputStream
 import java.io.File
+import java.io.FileInputStream
+import java.io.FileOutputStream
+import java.io.OutputStreamWriter
+import java.util.UUID
 
 /**
  * Real device file storage for backups — the native equivalent of the legacy
@@ -21,25 +27,85 @@ object BackupFiles {
 
     fun suggestedFileName(): String {
         val date = Jalali.todayString().replace("/", "-")
-        val stamp = System.currentTimeMillis() / 1000L
+        val stamp = System.currentTimeMillis()
         return "car-backup-$date-$stamp.json"
     }
 
     /** Writes [content] into the user-picked document. Returns false on any failure. */
-    fun writeToUri(context: Context, uri: Uri, content: String): Boolean = try {
-        // `return` is not allowed inside an expression-body function, so the null
-        // stream is handled as a value instead. Behaviour is unchanged: no stream
-        // means no backup written, i.e. false.
-        val out = context.contentResolver.openOutputStream(uri, "wt")
-        if (out == null) false else {
-            out.use {
-                it.write(content.toByteArray(Charsets.UTF_8))
-                it.flush()
+    fun writeToUri(context: Context, uri: Uri, content: String): Boolean {
+        if (content.isEmpty()) return false
+        val ok = try {
+            // Some document providers reject the non-default "wt" mode. The default
+            // mode is the most interoperable SAF write mode; the newly-created document
+            // is already empty, so truncation is unnecessary.
+            val output = context.contentResolver.openOutputStream(uri)
+                ?: throw IllegalStateException("No output stream for SAF document")
+            output.bufferedWriter(Charsets.UTF_8).use { writer ->
+                writer.write(content)
+                writer.flush()
             }
             true
+        } catch (_: Exception) {
+            false
         }
-    } catch (e: Exception) {
-        false
+        if (!ok) runCatching { context.contentResolver.delete(uri, null, null) }
+        return ok
+    }
+
+    /** Streams an already-created backup file to SAF without buffering another full copy in RAM. */
+    fun writeToUri(context: Context, uri: Uri, source: File): Boolean {
+        if (!source.isFile || source.length() <= 0L) {
+            runCatching { context.contentResolver.delete(uri, null, null) }
+            return false
+        }
+        val ok = try {
+            val output = context.contentResolver.openOutputStream(uri)
+                ?: throw IllegalStateException("No output stream for SAF document")
+            var copied = 0L
+            BufferedInputStream(FileInputStream(source)).use { input ->
+                BufferedOutputStream(output).use { out ->
+                    val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+                    while (true) {
+                        val read = input.read(buffer)
+                        if (read < 0) break
+                        out.write(buffer, 0, read)
+                        copied += read
+                    }
+                    out.flush()
+                }
+            }
+            copied == source.length()
+        } catch (_: Exception) {
+            false
+        }
+        if (!ok) runCatching { context.contentResolver.delete(uri, null, null) }
+        return ok
+    }
+
+    /** Creates an atomic cache file so a large backup is not kept in Compose state or copied on UI. */
+    fun writeExportFile(context: Context, content: String, fileName: String): File {
+        require(content.isNotEmpty()) { "پشتیبان خالی ساخته نشد." }
+        val directory = File(context.cacheDir, "backup-exports")
+        check(directory.isDirectory || directory.mkdirs()) { "فضای موقت برای ساخت پشتیبان در دسترس نیست." }
+        val target = File(directory, fileName)
+        check(!target.exists()) { "نام فایل موقت پشتیبان تکراری است." }
+        val temporary = File(directory, ".$fileName.${UUID.randomUUID()}.tmp")
+        try {
+            FileOutputStream(temporary).use { stream ->
+                OutputStreamWriter(stream, Charsets.UTF_8).buffered().use { writer ->
+                    writer.write(content)
+                    writer.flush()
+                    stream.fd.sync()
+                }
+            }
+            check(temporary.length() > 0L && temporary.renameTo(target)) {
+                "ذخیرهٔ موقت پشتیبان کامل نشد. فضای خالی دستگاه را بررسی کنید."
+            }
+            return target
+        } catch (e: Exception) {
+            temporary.delete()
+            throw e
+        }
     }
 
     fun readFromUri(context: Context, uri: Uri): String? = try {
@@ -48,13 +114,22 @@ object BackupFiles {
         null
     }
 
-    /**
-     * Also keeps a copy inside the app's own files dir (declared in file_paths.xml),
-     * so a backup exists even if the user cancels the folder picker.
-     */
+    /** Keeps an internal copy for automatic-backup fallback; this folder is removed on uninstall. */
     fun writeInternalCopy(context: Context, content: String, fileName: String): File? = try {
         val dir = File(context.filesDir, "VehicleManager").apply { mkdirs() }
-        File(dir, fileName).apply { writeText(content) }
+        val temporary = File(dir, ".$fileName.${UUID.randomUUID()}.tmp")
+        val target = File(dir, fileName)
+        FileOutputStream(temporary).use { stream ->
+            OutputStreamWriter(stream, Charsets.UTF_8).buffered().use { writer ->
+                writer.write(content)
+                writer.flush()
+                stream.fd.sync()
+            }
+        }
+        if (!temporary.renameTo(target)) {
+            temporary.delete()
+            null
+        } else target
     } catch (e: Exception) {
         null
     }
