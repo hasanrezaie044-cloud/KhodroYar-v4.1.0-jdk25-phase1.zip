@@ -1,0 +1,173 @@
+name: Offline model evaluation (Qwen3.5-4B vs Gemma 4 E2B, ARM64)
+
+# Real models, real pixels, the app's exact prompt + tool schemas. Runs on a GitHub ARM64
+# (Neoverse) runner limited to 4 threads and a conservative phone ISA baseline
+# (armv8.2-a+dotprod+fp16+i8mm, which every Exynos 2200 core supports). This is a proxy for
+# accuracy and relative cost, NOT a Galaxy S23 FE measurement.
+on:
+  workflow_dispatch:
+    inputs:
+      image_max_tokens:
+        description: 'Qwen vision token budget per image'
+        default: '1024'
+      mmproj:
+        description: 'Qwen vision projector: Q8_0 or BF16'
+        default: 'Q8_0'
+      backends:
+        description: 'Space separated: qwen gemma'
+        default: 'qwen gemma'
+  push:
+    branches: [arena/c66aaad2-khodroyar-v4-1-0-jdk25-phase1]
+    paths: ['tools/offline-eval/**', '.github/workflows/offline-model-eval.yml']
+
+concurrency:
+  group: offline-model-eval-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  LLAMA_CPP_TAG: v1.0.0
+  LLAMA_CPP_SHA: 2d8a32502909ca065c41c4cf5f2fb1c427c047fc
+  QWEN_REPO: ggml-org/Qwen3.5-4B-GGUF
+  QWEN_REV: 8d43d974efc48399cb58957ad49c8b26bf5a109c
+  QWEN_FILE: Qwen3.5-4B-Q4_K_M.gguf
+  QWEN_SHA: 217002fa8008ef4fc6d548353a3aebef055a96e6ff8e0e2c0953ef8254a89c14
+  MMPROJ_Q8_FILE: mmproj-Qwen3.5-4B-Q8_0.gguf
+  MMPROJ_Q8_SHA: 5a5ba634d46f9888599963bfc52194eadf099e1efdbee46d71957d911cf62654
+  MMPROJ_BF16_FILE: mmproj-Qwen3.5-4B-BF16.gguf
+  MMPROJ_BF16_SHA: aebc8a348f0be53d0eb7efc28fd2a42aa224c800a6c83fc9d42d5b96c7fa47c0
+  GEMMA_REPO: litert-community/gemma-4-E2B-it-litert-lm
+  GEMMA_REV: 2d74ac41a33d7da82f39f7d5720a04c68514a103
+  GEMMA_FILE: gemma-4-E2B-it.litertlm
+  GEMMA_SHA: 181938105e0eefd105961417e8da75903eacda102c4fce9ce90f50b97139a63c
+
+jobs:
+  export:
+    name: Export app prompt + tool schemas
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: '25' }
+      - uses: android-actions/setup-android@v3
+        with: { packages: 'platforms;android-36 build-tools;36.0.0 platform-tools' }
+      - uses: gradle/actions/setup-gradle@v4
+        with: { gradle-version: '9.4.1', cache-read-only: true }
+      - name: Export
+        working-directory: android
+        run: |
+          [ -f gradle/wrapper/gradle-wrapper.jar ] || gradle wrapper --gradle-version 9.4.1 --distribution-type bin
+          chmod +x ./gradlew
+          ./gradlew :app:testDebugUnitTest --tests 'com.khodroyar.app.ai.offline.OfflineEvalExportTest' --stacktrace
+          test -s app/build/offline-eval/app-agent.json
+      - uses: actions/upload-artifact@v4
+        with: { name: app-agent, path: android/app/build/offline-eval/app-agent.json }
+
+  eval:
+    name: Evaluate on ARM64 (4 threads)
+    needs: export
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 330
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with: { name: app-agent, path: build/offline-eval }
+      - name: System
+        run: |
+          lscpu | sed -n '1,25p'; free -m; nproc
+          grep -o -w 'asimddp\|i8mm\|sve\|sve2\|bf16\|fphp' /proc/cpuinfo | sort | uniq -c
+      - name: Tooling
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq libraqm0 libfribidi0 cmake ninja-build time
+          python3 -m venv /tmp/ev && /tmp/ev/bin/pip install -q pillow jdatetime numpy 'litert-lm-api==0.19.2'
+      - name: Cache llama.cpp build
+        id: llcache
+        uses: actions/cache@v4
+        with:
+          path: /tmp/llama-bin
+          key: llama-${{ env.LLAMA_CPP_SHA }}-arm64-armv82dpi8mm-v1
+      - name: Build llama.cpp ${{ env.LLAMA_CPP_TAG }} (portable phone baseline ISA)
+        if: steps.llcache.outputs.cache-hit != 'true'
+        run: |
+          curl -fsSL https://codeload.github.com/ggml-org/llama.cpp/tar.gz/${LLAMA_CPP_SHA} -o /tmp/llama.tgz
+          mkdir -p /tmp/llama && tar xzf /tmp/llama.tgz -C /tmp/llama --strip-components=1
+          cmake -S /tmp/llama -B /tmp/llama/build -G Ninja -DCMAKE_BUILD_TYPE=Release -DGGML_NATIVE=OFF \
+            -DGGML_CPU_ARM_ARCH=armv8.2-a+dotprod+fp16+i8mm -DLLAMA_OPENSSL=OFF -DLLAMA_BUILD_TESTS=OFF \
+            -DBUILD_SHARED_LIBS=OFF -DGGML_OPENMP=OFF
+          cmake --build /tmp/llama/build --target llama-server llama-mtmd-cli llama-bench -j"$(nproc)"
+          mkdir -p /tmp/llama-bin && cp /tmp/llama/build/bin/llama-server /tmp/llama/build/bin/llama-mtmd-cli /tmp/llama/build/bin/llama-bench /tmp/llama-bin/
+      - name: Cache models
+        uses: actions/cache@v4
+        with:
+          path: /tmp/models
+          key: models-${{ env.QWEN_SHA }}-${{ env.MMPROJ_Q8_SHA }}-${{ env.MMPROJ_BF16_SHA }}-${{ env.GEMMA_SHA }}
+      - name: Download + verify SHA-256 (pinned revisions)
+        run: |
+          mkdir -p /tmp/models && cd /tmp/models
+          get() { # repo rev file sha
+            if [ -f "$3" ] && echo "$4  $3" | sha256sum -c --quiet; then return; fi
+            curl -fL --retry 5 -C - -o "$3" "https://huggingface.co/$1/resolve/$2/$3"
+            echo "$4  $3" | sha256sum -c
+          }
+          get "$QWEN_REPO" "$QWEN_REV" "$QWEN_FILE" "$QWEN_SHA"
+          get "$QWEN_REPO" "$QWEN_REV" "$MMPROJ_Q8_FILE" "$MMPROJ_Q8_SHA"
+          get "$QWEN_REPO" "$QWEN_REV" "$MMPROJ_BF16_FILE" "$MMPROJ_BF16_SHA"
+          get "$GEMMA_REPO" "$GEMMA_REV" "$GEMMA_FILE" "$GEMMA_SHA"
+          ls -la
+      - name: Generate identical Persian prompts + document photos
+        run: /tmp/ev/bin/python tools/offline-eval/make_cases.py build/offline-eval
+      - name: Qwen3.5-4B sanity (real image through mtmd)
+        run: |
+          /usr/bin/time -v /tmp/llama-bin/llama-mtmd-cli -m /tmp/models/$QWEN_FILE --mmproj /tmp/models/$MMPROJ_Q8_FILE \
+            --image build/offline-eval/images/fuel_receipt.jpg -t 4 -c 8192 --image-max-tokens 1024 --temp 0 -n 160 \
+            --reasoning off -p 'متن این رسید را بخوان: تاریخ، مقدار لیتر و مبلغ کل را بنویس.' 2>&1 | tee build/offline-eval/qwen-sanity.log | tail -40
+      - name: Gemma 4 E2B (LiteRT-LM, app settings)
+        if: contains(inputs.backends || 'qwen gemma', 'gemma')
+        continue-on-error: true
+        run: |
+          /tmp/ev/bin/python tools/offline-eval/run_eval.py --backend gemma --model /tmp/models/$GEMMA_FILE \
+            --agent build/offline-eval/app-agent.json --cases build/offline-eval/cases.json --out build/offline-eval/gemma
+      - name: Qwen3.5-4B Q4_K_M (llama.cpp ${{ env.LLAMA_CPP_TAG }})
+        if: contains(inputs.backends || 'qwen gemma', 'qwen')
+        continue-on-error: true
+        run: |
+          MM=$MMPROJ_Q8_FILE; [ "${{ inputs.mmproj }}" = "BF16" ] && MM=$MMPROJ_BF16_FILE
+          /tmp/ev/bin/python tools/offline-eval/run_eval.py --backend qwen --server /tmp/llama-bin/llama-server \
+            --model /tmp/models/$QWEN_FILE --mmproj /tmp/models/$MM --image-max-tokens ${{ inputs.image_max_tokens || '1024' }} \
+            --agent build/offline-eval/app-agent.json --cases build/offline-eval/cases.json --out build/offline-eval/qwen \
+            --label "qwen3.5-4b-q4_k_m+mmproj-${MM##*-}"
+      - name: Report
+        if: always()
+        run: |
+          ls build/offline-eval/*/results.json
+          /tmp/ev/bin/python tools/offline-eval/report.py $(ls build/offline-eval/qwen/results.json build/offline-eval/gemma/results.json 2>/dev/null) | tee report.md
+          cat report.md >> "$GITHUB_STEP_SUMMARY"
+          python3 - <<'PY'
+          import json, pathlib
+          md = pathlib.Path("report.md").read_text()
+          print("::notice title=offline-eval-report::" + md.replace("%", "%25").replace("\r", "").replace("\n", "%0A"))
+          for name in ("qwen", "gemma"):
+              p = pathlib.Path(f"build/offline-eval/{name}/results.json")
+              if not p.exists(): continue
+              r = json.loads(p.read_text())
+              rows = []
+              for c in r["cases"]:
+                  for i, t in enumerate(c["turns"]):
+                      bad = [k for k, v in t["checks"].items() if not v]
+                      calls = "; ".join(f"{x['name']}{json.dumps(x['args'], ensure_ascii=False)}" for x in t["calls"])[:600]
+                      rows.append(f"{c['id']}#{i} {'PASS' if not bad else 'FAIL ' + ','.join(bad)} | calls: {calls} | text: {t['text'][:300]}".replace("%", "%25"))
+                  if c.get("error"): rows.append(f"{c['id']} ERROR {c['error']}")
+              print(f"::notice title=offline-eval-{name}-details::" + "%0A".join(rows).replace("\r", "").replace("\n", " ")[:60000])
+          s = pathlib.Path("build/offline-eval/qwen-sanity.log")
+          if s.exists():
+              print("::notice title=qwen-sanity::" + s.read_text(errors="replace")[-6000:].replace("%", "%25").replace("\n", "%0A"))
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: offline-eval-results
+          path: |
+            build/offline-eval/**/*.json
+            build/offline-eval/**/*.log
+            build/offline-eval/images/*.jpg
+            build/offline-eval/summary.md
+          if-no-files-found: ignore
