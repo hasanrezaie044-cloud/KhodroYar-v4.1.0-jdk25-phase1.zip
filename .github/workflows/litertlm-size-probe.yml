@@ -9,12 +9,14 @@ jobs:
     steps:
       - run: |
           set -e
-          for v in 0.19.1; do
-            B=https://dl.google.com/android/maven2/com/google/ai/edge/litertlm/litertlm-android/$v
-            curl -fsSL $B/litertlm-android-$v.pom
-            curl -fsSL $B/litertlm-android-$v.aar -o l.aar
-            ls -l l.aar
-            unzip -lv l.aar
-            mkdir x && cd x && unzip -q ../l.aar && for so in $(find jni -name '*.so'); do echo "$so $(stat -c %s $so) gz=$(gzip -9c $so | wc -c)"; done
-          done
-          curl -fsSL https://dl.google.com/android/maven2/com/google/ai/edge/litertlm/litertlm-android/maven-metadata.xml
+          V=0.19.1
+          B=https://dl.google.com/android/maven2/com/google/ai/edge/litertlm/litertlm-android/$V
+          curl -fsSL $B/litertlm-android-$V.aar -o l.aar
+          mkdir x && cd x && unzip -q ../l.aar
+          S="aar=$(stat -c %s ../l.aar);"
+          for f in $(find . -type f \( -name '*.so' -o -name '*.jar' \) | sort); do S="$S $f=$(stat -c %s $f)/gz$(gzip -9c $f | wc -c);"; done
+          echo "::notice title=aar-files::$S"
+          DEPS=$(curl -fsSL $B/litertlm-android-$V.pom | tr -d ' \n' | grep -o '<dependency>[^/]*<artifactId>[^<]*</artifactId><version>[^<]*' | sed 's/<[^>]*>/ /g' | tr -s ' ' | tr '\n' ';')
+          echo "::notice title=pom-deps::$DEPS"
+          META=$(curl -fsSL https://dl.google.com/android/maven2/com/google/ai/edge/litertlm/litertlm-android/maven-metadata.xml | tr -d ' \n')
+          echo "::notice title=versions::$META"
