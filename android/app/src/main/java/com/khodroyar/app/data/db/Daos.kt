@@ -184,6 +184,8 @@ interface PersonalIncomeDao {
     @Query("SELECT * FROM personal_incomes WHERE date LIKE :prefix || '%' ORDER BY date DESC")
     fun observeByDatePrefix(prefix: String): Flow<List<PersonalIncomeEntity>>
     @Query("SELECT * FROM personal_incomes ORDER BY date") suspend fun allOnce(): List<PersonalIncomeEntity>
+    @Query("SELECT * FROM personal_incomes WHERE id = :id") suspend fun byId(id: String): PersonalIncomeEntity?
+    @Query("SELECT * FROM personal_incomes WHERE id LIKE :prefix || '%' LIMIT 2") suspend fun byIdPrefix(prefix: String): List<PersonalIncomeEntity>
     @Query("SELECT COALESCE(SUM(amount),0) FROM personal_incomes WHERE date LIKE :prefix || '%'")
     fun observeTotal(prefix: String): Flow<Double>
     @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun insert(item: PersonalIncomeEntity)

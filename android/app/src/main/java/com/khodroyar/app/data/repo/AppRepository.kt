@@ -523,6 +523,83 @@ class AppRepository(context: Context) {
 
     suspend fun deleteLoan(id: String) = withContext(io) { db.loans().deleteById(id) }
 
+    // ------------------------------------------------- assistant (approved, verified writes)
+
+    /** Resolve one explicit income/loan ID for the assistant; bounded lookup, never a title guess. */
+    suspend fun agentIncome(prefix: String): PersonalIncomeEntity? = withContext(io) {
+        require(Regex("[A-Za-z0-9-]{4,40}").matches(prefix))
+        db.personalIncomes().byIdPrefix(prefix).singleOrNull()
+    }
+    suspend fun agentLoan(id: String): LoanEntity? = withContext(io) {
+        require(Regex("[A-Za-z0-9-]{4,40}").matches(id))
+        db.loans().byId(id) ?: db.loans().allOnce().filter { it.id.startsWith(id) }.singleOrNull()
+    }
+
+    /**
+     * Applies exactly the previewed income change (add when [before] is null, delete when [after]
+     * is null) and reads it back inside the same transaction. A replayed ticket is a no-op.
+     */
+    suspend fun applyApprovedAgentIncome(before: PersonalIncomeEntity?, after: PersonalIncomeEntity?) =
+        withContext(io + kotlinx.coroutines.NonCancellable) {
+            val id = requireNotNull(before?.id ?: after?.id)
+            require(before == null || after == null || before.id == after.id)
+            RecordMutations.mutate(db, settingsStore, invalidateReceipt = true) {
+                db.withTransaction {
+                    val actual = db.personalIncomes().byId(id)
+                    if (actual == after) return@withTransaction
+                    check(actual == before) { "درآمد بعد از پیش‌نمایش تغییر یا حذف شده؛ دوباره انتخاب و تأیید کنید." }
+                    if (after == null) db.personalIncomes().deleteById(id) else db.personalIncomes().insert(after)
+                    check(db.personalIncomes().byId(id) == after) { "بازخوانی درآمد تأیید نشد." }
+                }
+            }
+        }
+
+    enum class InstallmentPayment { MARKED, MARKED_AND_COMPLETED }
+
+    /**
+     * Marks ONE unpaid installment as paid, exactly like the finance tab's toggle, but only if the
+     * loan is unchanged since the preview. A loan whose last installment is paid is removed, which
+     * is the existing finance-tab behaviour; the preview tells the owner before approval.
+     */
+    suspend fun applyApprovedInstallmentPayment(loanId: String, index: Int, expectedPaid: String): InstallmentPayment =
+        withContext(io + kotlinx.coroutines.NonCancellable) {
+            db.withTransaction {
+                val loan = checkNotNull(db.loans().byId(loanId)) { "وام پیدا نشد یا حذف شده است؛ فهرست تازه بگیرید." }
+                check(loan.paidInstallments == expectedPaid) { "اقساط این وام بعد از پیش‌نمایش تغییر کرده است؛ دوباره تأیید کنید." }
+                val paid = parseInstallments(loan.paidInstallments).toMutableSet()
+                check(index in 1..maxOf(1, loan.installmentsCount)) { "شمارهٔ قسط معتبر نیست." }
+                check(paid.add(index)) { "این قسط قبلاً پرداخت‌شده ثبت شده است؛ چیزی تغییر نکرد." }
+                val updated = paid.sorted()
+                val schedule = LoanCalculator.schedule(loan.date, loan.totalAmount, loan.interestPercent, loan.installmentsCount, updated)
+                if (schedule.isNotEmpty() && schedule.all { it.paid }) {
+                    db.loans().deleteById(loanId)
+                    check(db.loans().byId(loanId) == null) { "بازخوانی تأیید نشد." }
+                    InstallmentPayment.MARKED_AND_COMPLETED
+                } else {
+                    db.loans().update(loan.copy(paidInstallments = updated.joinToString(",")))
+                    check(db.loans().byId(loanId)?.let { index in parseInstallments(it.paidInstallments) } == true) { "بازخوانی تأیید نشد." }
+                    InstallmentPayment.MARKED
+                }
+            }
+        }
+
+    data class AssistantSearchRows(
+        val expenses: List<PersonalExpenseEntity>, val incomes: List<PersonalIncomeEntity>, val fuels: List<FuelEntity>,
+        val maintenances: List<MaintenanceEntity>, val services: List<ServiceEntity>, val insurance: List<InsuranceEntity>,
+        val loans: List<LoanEntity>,
+    )
+
+    /** Read-only rows for the assistant's bounded record search (a year prefix, or everything). */
+    suspend fun assistantSearchRows(prefix: String): AssistantSearchRows = withContext(io) {
+        fun ok(date: String) = prefix.isBlank() || date.startsWith(prefix)
+        AssistantSearchRows(
+            db.personalExpenses().allOnce().filter { ok(it.date) }, db.personalIncomes().allOnce().filter { ok(it.date) },
+            db.fuels().allOnce().filter { ok(it.date) }, db.maintenances().allOnce().filter { ok(it.date) },
+            if (prefix.isBlank()) db.services().allOnce() else db.services().byDatePrefixOnce(prefix),
+            db.insurance().allOnce(), db.loans().allOnce(),
+        )
+    }
+
     /**
      * Legacy behaviour: installments whose due date has passed are marked paid on
      * load. Preserved, but surfaced as an explicit result count so the user is told

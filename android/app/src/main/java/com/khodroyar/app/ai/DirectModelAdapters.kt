@@ -95,7 +95,7 @@ class DirectModelAdapter(
                 val context = if (mode == AiMode.GEMINI) row.optInt("inputTokenLimit", 0) else if (mode == AiMode.CLOUDFLARE) 24000 else row.optInt("context_window", 0)
                 val fp = MessageDigest.getInstance("SHA-256").digest("$providerId|$id|$context|${AIProviderRegistry.VERIFIED_ON}".toByteArray()).joinToString("") { "%02x".format(it) }
                 AIModel(AIModelKey(providerId, id), row.optString("displayName", id), AIProviderRegistry.get(mode).title, row.optString("owned_by", providerId),
-                    AIModelPricing(null, null, false), AIModelCapability(true, context, imageInput = mode == AiMode.GEMINI), AIModelAuthorization.AUTHORIZED, now, fp,
+                    AIModelPricing(null, null, false), AIModelCapability(true, context, imageInput = mode == AiMode.GEMINI || mode == AiMode.GROQ && id in AIProviderRegistry.groqVisionModels), AIModelAuthorization.AUTHORIZED, now, fp,
                     costEvidence = AICostEvidence.FREE_QUOTA, freeQuotaEligible = true)
             }
             require(models.map { it.key }.distinct().size == models.size)
@@ -135,6 +135,8 @@ class DirectModelAdapter(
                 .put("max_tokens", request.maxOutputTokens).put("stream", request.stream)
             if (request.tools.isNotEmpty()) body.put("tools", OpenRouterToolSchemas.tools(request.tools, compact = true)).put("tool_choice", "auto")
             if (mode == AiMode.GROQ) { body.remove("max_tokens"); body.put("max_completion_tokens", request.maxOutputTokens) }
+            // Documented instruct mode: no hidden reasoning tokens are billed or leaked into the Persian reply.
+            if (mode == AiMode.GROQ && model.id == "qwen/qwen3.8-27b") body.put("reasoning_effort", "none")
             if (request.stream) body.put("stream_options", JSONObject().put("include_usage", true))
             val decoder = OpenRouterStream(model.id, emptyList(), { text -> unchanged(s); onText(text) }, setOf(model.id))
             val url = base(s) + if (mode == AiMode.CLOUDFLARE) "/v1/chat/completions" else "/chat/completions"

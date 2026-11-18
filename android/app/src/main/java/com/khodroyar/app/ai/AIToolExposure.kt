@@ -5,16 +5,19 @@ import org.json.JSONObject
 /** Lazy native schema discovery, not a user-intent parser. All existing tools remain in the registry/executor. */
 object AIToolExposure {
     const val DISCOVER = "request_app_tools"
-    private val groups = listOf("services", "finance", "vehicle", "reports", "automation", "other")
+    private val groups = listOf("services", "finance", "vehicle", "reports", "automation", "memory", "other")
     val discovery = ToolSpec(DISCOVER, ToolKind.READ, "تعریف ابزارهای بیشتر را بدون خواندن داده دریافت کن؛ هر صفحه حداکثر ۸ ابزار دارد.", listOf(
         ToolParam("group", ParamType.ENUM, true, options = groups), ToolParam("page", ParamType.INT, min = 1.0, max = 10.0)))
-    private val basic = setOf("get_jalali_calendar", "get_service_catalog", "search_services_range", "add_service", "add_expense")
+    private val basic = setOf("get_jalali_calendar", "get_service_catalog", "search_services_range", "add_service", "add_expense",
+        "search_records", "recall_memory", AgentScratchpad.PLAN, AgentScratchpad.MARK)
     fun greeting(messages: List<FunctionMessage>): Boolean {
         if (messages.any { it.role == "tool" || it.calls.isNotEmpty() }) return false
         val text = messages.lastOrNull { it.role == "user" }?.content.orEmpty().trim().replace(Regex("[!؟?.،\\s]+"), " ").trim()
         return text in setOf("سلام", "درود", "سلام خوبی", "سلام خوبین", "hi", "hello")
     }
     private fun group(tool: ToolSpec): String = when {
+        tool.name in setOf("recall_memory", "remember_fact", "forget_fact", AgentScratchpad.PLAN, AgentScratchpad.MARK, "search_records") -> "memory"
+        tool.name.contains("loan") || tool.name.contains("installment") -> "finance"
         tool.name.contains("service") || tool.name.contains("jalali") -> "services"
         tool.name.contains("automation") -> "automation"
         tool.name.contains("company") || tool.name.contains("report") -> "reports"

@@ -85,6 +85,8 @@ object AIProviderRegistry {
     }
     /** Known official IDs are intersected with the live, authenticated model list. No suffix guessing or auto substitution. */
     val groqModels = setOf("openai/gpt-oss-20b", "openai/gpt-oss-120b", "qwen/qwen3.8-27b")
+    /** Groq's /models list has no modality field; these IDs are documented as text+image input (console.groq.com/docs/vision). */
+    val groqVisionModels = setOf("qwen/qwen3.8-27b")
     val geminiModels = setOf("gemini-2.5-flash-lite", "gemini-3.5-flash-lite", "gemini-3.8-flash")
     val cloudflareModels = setOf("@cf/meta/llama-3.3-70b-instruct-fp8-fast")
     fun permittedEndpoint(request: AiHttpRequest): Boolean {

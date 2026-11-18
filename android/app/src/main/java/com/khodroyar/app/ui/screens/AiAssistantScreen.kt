@@ -187,7 +187,7 @@ fun AiAssistantScreen(vm: AiAssistantViewModel = viewModel(), onNavigate: (Agent
         confirmLabel = "حذف گفتگو", destructive = true, onConfirm = { deleteConversation = null; vm.deleteConversation(c) }, onDismiss = { deleteConversation = null }) }
     if (confirmNew) ConfirmDialog(title = "گفتگوی جدید", message = "گفتگوی فعلی در تاریخچه می‌ماند و گفتگوی تازه‌ای شروع می‌شود. ادامه می‌دهید؟",
         confirmLabel = "شروع گفتگوی جدید", onConfirm = { confirmNew = false; vm.newChat() }, onDismiss = { confirmNew = false })
-    if (confirmClear) ConfirmDialog(title = "پاک کردن تاریخچه", message = "همهٔ گفتگوها و تصویرهای بدون استفاده از این دستگاه پاک می‌شوند. اطلاعات مالی، سوخت و تعمیرات تغییری نمی‌کند.",
+    if (confirmClear) ConfirmDialog(title = "پاک کردن تاریخچه", message = "همهٔ گفتگوها، حافظهٔ دستیار و تصویرهای بدون استفاده از این دستگاه پاک می‌شوند. اطلاعات مالی، سوخت و تعمیرات تغییری نمی‌کند.",
         confirmLabel = "پاک کردن", destructive = true, onConfirm = { confirmClear = false; vm.clearAllHistory() }, onDismiss = { confirmClear = false })
 }
 

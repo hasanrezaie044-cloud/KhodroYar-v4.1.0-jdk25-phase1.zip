@@ -9,7 +9,7 @@ class AIToolExposureTest {
         val greeting = listOf(FunctionMessage("user", "سلام!"))
         assertTrue(AIToolExposure.tools(greeting, true).isEmpty())
         val tools = AIToolExposure.tools(listOf(FunctionMessage("user", "وضعیت سرویس را بگو")), true)
-        assertEquals(6, tools.size); assertTrue(tools.any { it.name == AIToolExposure.DISCOVER })
+        assertEquals(10, tools.size); assertTrue(tools.any { it.name == AIToolExposure.DISCOVER })
         val compact = OpenRouterToolSchemas.tools(tools, compact = true).toString().toByteArray().size
         val full = OpenRouterToolSchemas.tools().toString().toByteArray().size
         assertTrue("compact=$compact full=$full", compact < full / 3)
@@ -17,11 +17,12 @@ class AIToolExposureTest {
     }
     @Test fun everyExistingToolRemainsDiscoverableWithBoundedSchemaPagesWithoutReadingData() {
         val discovered = mutableSetOf<String>()
-        for (group in listOf("services", "finance", "vehicle", "reports", "automation", "other")) for (page in 1..10) {
+        for (group in listOf("services", "finance", "vehicle", "reports", "automation", "memory", "other")) for (page in 1..10) {
             val call = FunctionCall("discover_${group}_$page", AIToolExposure.DISCOVER, """{"group":"$group","page":$page}""")
             val messages = listOf(FunctionMessage("user", "ابزار لازم را پیدا کن"), FunctionMessage("assistant", calls = listOf(call)))
             val schemas = AIToolExposure.tools(messages, true)
-            assertTrue(schemas.size <= 14); discovered += schemas.map { it.name }
+            // discovery + 9 always-on (incl. plan/mark/recall/search) + one 8-tool page
+            assertTrue(schemas.size <= 18); discovered += schemas.map { it.name }
             assertTrue(AIToolExposure.discover(call).ok)
         }
         assertTrue(discovered.containsAll(AgentToolRegistry.tools.map { it.name }))

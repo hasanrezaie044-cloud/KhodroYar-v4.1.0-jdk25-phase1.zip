@@ -289,10 +289,15 @@ class ManagedAIProvider(
             if (identity != turnIdentity) { turnIdentity = identity; turnRequests = 0; turnModel = null; turnReplacements = 0 }
             val attempted = mutableSetOf<AIModelKey>()
             var last: AiResult.Failure? = null
-            while (attempted.size < (if (p.allowModelFallback) 2 else 1) && stillAuthorized(p)) {
-                val model = candidates(p).firstOrNull { it.key !in attempted } ?: break
+            // Model pool rules: an image needs a vision model, and after an approved change was committed in this
+            // turn no other model continues automatically (the effect may already exist; never replay it).
+            val needsVision = messages.any { it.images.isNotEmpty() }
+            val committed = AgentCommit.anyCommitted(messages)
+            while (attempted.size < (if (p.allowModelFallback && !committed) 2 else 1) && stillAuthorized(p)) {
+                val model = candidates(p).firstOrNull { it.key !in attempted && (!needsVision || it.capability.imageInput) } ?: break
                 if (turnRequests > 0 && lastSelection != model.key && !p.allowModelFallback) return@withLock stopTurn("مدل قبلی متوقف شد؛ جایگزینی این نوبت بدون اجازه انجام نمی‌شود.")
                 val replacing = turnModel != null && turnModel != model.key
+                if (replacing && committed) return@withLock stopTurn("در این نوبت یک تغییر تأییدشده ثبت شده است؛ مدل دیگری خودکار ادامه نمی‌دهد تا چیزی تکرار نشود. سوابق را بررسی و درخواست را تازه بفرستید.")
                 if (replacing && (!p.allowModelFallback || turnReplacements >= 1))
                     return@withLock stopTurn("سقف یک جایگزینِ مجاز در این نوبت رسیده است؛ مدل دیگری انتخاب یا درخواست نمی‌شود.")
                 attempted += model.key
@@ -327,6 +332,7 @@ class ManagedAIProvider(
                     val failed = AIModelEvaluation(model.key, model.fingerprint, clock(), emptyList(), 0, explanation = error.message)
                     store.save(scope, failed); evaluations = store.load(scope)
                 }
+                if (committed) { publish(error.message); return@withLock FunctionResult.Failed(error.copy(message = error.message + "\nتغییر تأییدشدهٔ این نوبت ممکن است انجام شده باشد؛ پیش از درخواست دوباره سوابق را بررسی کنید.")) }
                 if (p.mode == AISelectionMode.MANUAL || !p.allowModelFallback) { select(null, "مدل دستی معتبر نیست"); publish(error.message); return@withLock FunctionResult.Failed(error) }
                 adapter.invalidate()
                 if (!discover(true)) break

@@ -50,6 +50,23 @@ class DirectModelAdapterTest {
         assertEquals(256, body.getInt("max_completion_tokens")); assertFalse(body.has("max_tokens")); assertFalse(body.has("tools")); assertFalse(body.has("models"))
         assertEquals("Bearer ${key(AiMode.GROQ)}", post.headers["Authorization"]); assertFalse(post.body.orEmpty().contains(key(AiMode.GROQ)))
     }
+    @Test fun groqVisionModelReceivesRealImagePixelsInInstructModeWhileTextModelsStayTextOnly() = runBlocking {
+        val vision = "qwen/qwen3.8-27b"
+        val list = JSONObject().put("data", JSONArray().put(JSONObject().put("id", groqModel).put("context_window", 131072))
+            .put(JSONObject().put("id", vision).put("context_window", 131072))).toString()
+        val http = Http { q -> if (q.method == "GET") AiHttpResponse(200, list) else AiHttpResponse(200, OpenRouterFixture.completion(model = vision)) }
+        val a = adapter(AiMode.GROQ, http)
+        val models = (a.discover(true) as AIModelDiscovery.Found).models.associateBy { it.key.id }
+        assertFalse(models.getValue(groqModel).capability.imageInput); assertTrue(models.getValue(vision).capability.imageInput)
+        val image = AIImage("image/jpeg", "/9j/4AAQSkZJRg==")
+        val withImage = listOf(messages[0], messages[1].copy(images = listOf(image)))
+        assertTrue(a.infer(models.getValue(groqModel).key, AIModelRequest(withImage, emptyList(), 256, false)) is FunctionResult.Failed)
+        assertEquals(1, http.requests.size) // the text-only model never receives the image
+        assertTrue(a.infer(models.getValue(vision).key, AIModelRequest(withImage, emptyList(), 256, false)) is FunctionResult.Reply)
+        val body = JSONObject(requireNotNull(http.requests.last().body))
+        assertEquals("none", body.getString("reasoning_effort"))
+        assertTrue(body.toString().contains("data:image/jpeg;base64,/9j/4AAQSkZJRg=="))
+    }
     @Test fun geminiHasNativeSystemContentsAndUsageAndNeverReceivesRealAppTools() = runBlocking {
         val http = Http { q -> AiHttpResponse(200, if (q.method == "GET") metadata(AiMode.GEMINI) else gemini()) }
         val rt = AIRequestRuntime(http, clock = { now }); val a = adapter(AiMode.GEMINI, http, runtime = rt)

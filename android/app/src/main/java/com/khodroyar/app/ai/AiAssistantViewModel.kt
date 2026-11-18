@@ -49,7 +49,8 @@ class AiAssistantViewModel @JvmOverloads constructor(
             s.modelAccountScope, s.modelSelectionMode, AIModelKey(AIProviderRegistry.get(s.mode).id, s.modelFor()),
             s.allowModelFallback && s.mode == AiMode.OPENROUTER, s.effectiveUsage()) }
     }, AndroidModelEvaluationStore(app))
-    private val agent = PersianToolAgent(managedModels, tools) { settingsStore.load().effectiveUsage() }
+    private val memory = AssistantAgentTools.memoryFor(app)
+    private val agent = PersianToolAgent(managedModels, tools, { settingsStore.load().effectiveUsage() }, { memory.count() })
     private val local = LocalAssistant(tools, dialogue = LocalDialogueEngine(rules = { automationStore.rules.value }))
 
     var localContext by mutableStateOf(LocalDialogueContext())
@@ -522,6 +523,7 @@ class AiAssistantViewModel @JvmOverloads constructor(
         failure = null
         declineConsent()
         messages.clear(); contextStart = 0
+        agent.clearPlan()
         conversationId = UUID.randomUUID().toString()
         createdAt = System.currentTimeMillis()
         pruneImages()
@@ -591,6 +593,7 @@ class AiAssistantViewModel @JvmOverloads constructor(
         newChat()
         viewModelScope.launch {
             storageLock.withLock { conversations.clearAll(); history = emptyList() }
+            withContext(Dispatchers.IO) { memory.clear() } // Assistant memory is chat data too, never financial records.
             pruneImages()
         }
     }

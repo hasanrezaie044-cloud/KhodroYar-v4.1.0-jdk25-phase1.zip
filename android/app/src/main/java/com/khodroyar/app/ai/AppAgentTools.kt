@@ -26,6 +26,7 @@ import java.util.UUID
 /** Connects the agent to the SAME repositories used by the tabs, not simulated UI clicks. */
 class AppAgentTools(context: Context, private val repo: AppRepository) : AgentToolRunner {
     private val app = context.applicationContext
+    private val assistant = AssistantAgentTools(app, repo)
     private val records = SafeRecordTools(repo)
     private val domain = DomainAgentTools(app, repo)
     private val serviceRecords = ServiceRecordTools(repo)
@@ -41,6 +42,7 @@ class AppAgentTools(context: Context, private val repo: AppRepository) : AgentTo
     }
 
     override suspend fun prepare(call: ValidatedCall): ValidatedCall {
+        if (call.spec.name in AssistantToolSpecs.names) return assistant.prepare(call)
         if (call.spec.name in DomainToolSpecs.names) return domain.prepare(call)
         if (call.spec.name in ServiceCommandSpecs.names) return serviceRecords.prepare(call)
         if (call.spec.name !in extraNames) return records.prepare(call)
@@ -100,6 +102,7 @@ class AppAgentTools(context: Context, private val repo: AppRepository) : AgentTo
     }
 
     override fun describe(call: ValidatedCall): String = when (call.spec.name) {
+        in AssistantToolSpecs.names -> assistant.describe(call)
         in DomainToolSpecs.names -> domain.describe(call)
         in ServiceCommandSpecs.names -> serviceRecords.describe(call)
         "repeat_expense" -> "تکرار هزینهٔ «${call.str("source_title") }» از ${call.str("source_date")} برای ${call.str("date")}\nمبلغ: ${Analytics.formatNumber(call.dbl("source_amount") ?: 0.0)} تومان\nیک ثبت جدید؛ سابقهٔ قبلی تغییر نمی‌کند."
@@ -117,10 +120,11 @@ class AppAgentTools(context: Context, private val repo: AppRepository) : AgentTo
         else -> records.describe(call)
     }
 
-    override suspend fun describeTarget(call: ValidatedCall): String? = if (call.spec.name in DomainToolSpecs.names) domain.describeTarget(call) else if (call.spec.name in ServiceCommandSpecs.names) serviceRecords.describeTarget(call) else if (call.spec.name == "remove_automation_rule")
+    override suspend fun describeTarget(call: ValidatedCall): String? = if (call.spec.name in AssistantToolSpecs.names) assistant.describeTarget(call) else if (call.spec.name in DomainToolSpecs.names) domain.describeTarget(call) else if (call.spec.name in ServiceCommandSpecs.names) serviceRecords.describeTarget(call) else if (call.spec.name == "remove_automation_rule")
         store.rules.value.singleOrNull { it.id == call.str("id") }?.let { ruleSummary(it) } else records.describeTarget(call)
 
     override suspend fun execute(call: ValidatedCall): ToolOutcome {
+        if (call.spec.name in AssistantToolSpecs.names) return assistant.execute(call)
         if (call.spec.name in DomainToolSpecs.names) return domain.execute(call)
         if (call.spec.name in ServiceCommandSpecs.names) return serviceRecords.execute(call)
         if (call.spec.name !in extraNames) return records.execute(call)
