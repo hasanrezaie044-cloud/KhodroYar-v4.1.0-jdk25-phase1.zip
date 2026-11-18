@@ -12,6 +12,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -41,7 +42,10 @@ import com.khodroyar.app.ui.theme.AppDimens
 import com.khodroyar.app.ui.theme.AppPalette
 import com.khodroyar.app.ui.theme.heroBrush
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.io.File
 
 /**
  * Settings — and settings only.
@@ -66,7 +70,7 @@ fun SettingsScreen(repository: AppRepository, settings: AppSettings, onToggleThe
     var profileLast by remember(settings.userLastName) { mutableStateOf(settings.userLastName) }
     val pinStore = remember { PinStore(context) }
 
-    var backupJson by remember { mutableStateOf<String?>(null) }
+    var pendingBackupPath by rememberSaveable { mutableStateOf<String?>(null) }
     var restoreJson by remember { mutableStateOf<String?>(null) }
     var restorePreview by remember { mutableStateOf<LegacyBackup.Preview?>(null) }
     var goalText by remember { mutableStateOf(settings.monthlyIncomeGoal.trimNumber().digitsOnly()) }
@@ -83,16 +87,27 @@ fun SettingsScreen(repository: AppRepository, settings: AppSettings, onToggleThe
     val saveBackup = rememberLauncherForActivityResult(
         ActivityResultContracts.CreateDocument(BackupFiles.MIME_JSON)
     ) { uri ->
-        val json = backupJson
-        if (uri == null || json == null) { toast.show("ذخیره پشتیبان لغو شد"); return@rememberLauncherForActivityResult }
-        val ok = BackupFiles.writeToUri(context, uri, json)
-        if (ok) {
-            repository.markBackupDone()
-            toast.show("فایل پشتیبان روی دستگاه ذخیره شد")
-        } else {
-            toast.show("ذخیره فایل پشتیبان انجام نشد")
+        val source = pendingBackupPath?.let { File(it) }
+        if (uri == null || source == null) {
+            source?.delete()
+            pendingBackupPath = null
+            toast.show(if (uri == null) "ذخیره پشتیبان لغو شد" else "فایل موقت پشتیبان پیدا نشد؛ دوباره تلاش کنید")
+            return@rememberLauncherForActivityResult
         }
-        backupJson = null
+        scope.launch {
+            try {
+                val ok = withContext(Dispatchers.IO) { BackupFiles.writeToUri(context, uri, source) }
+                if (ok) {
+                    repository.markBackupDone()
+                    toast.show("فایل پشتیبان با موفقیت ذخیره شد")
+                } else {
+                    toast.show("ذخیره در این مکان انجام نشد؛ فضای خالی یا دسترسی پوشه را بررسی و مکان دیگری انتخاب کنید")
+                }
+            } finally {
+                source.delete()
+                if (pendingBackupPath == source.absolutePath) pendingBackupPath = null
+            }
+        }
     }
 
     val pickBackup = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
@@ -452,15 +467,24 @@ fun SettingsScreen(repository: AppRepository, settings: AppSettings, onToggleThe
                 Icons.Outlined.SaveAlt,
             ) {
                 scope.launch {
+                    var exportFile: File? = null
                     try {
                         val json = repository.exportBackupJson()
-                        backupJson = json
-                        BackupFiles.writeInternalCopy(context, json, BackupFiles.suggestedFileName())
-                        saveBackup.launch(BackupFiles.suggestedFileName())
+                        val fileName = BackupFiles.suggestedFileName()
+                        val file = withContext(Dispatchers.IO) {
+                            BackupFiles.writeExportFile(context, json, fileName)
+                        }
+                        exportFile = file
+                        pendingBackupPath = file.absolutePath
+                        saveBackup.launch(fileName)
                     } catch (e: CancellationException) {
+                        exportFile?.delete()
+                        pendingBackupPath = null
                         throw e
                     } catch (e: Exception) {
-                        toast.show(e.message ?: "ساخت پشتیبان کامل انجام نشد")
+                        exportFile?.delete()
+                        pendingBackupPath = null
+                        toast.show(e.message ?: "ساخت فایل پشتیبان انجام نشد؛ فضای خالی دستگاه را بررسی کنید")
                     }
                 }
             }
