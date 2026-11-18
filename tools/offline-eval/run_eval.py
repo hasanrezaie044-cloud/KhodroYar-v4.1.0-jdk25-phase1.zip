@@ -153,7 +153,7 @@ class GemmaLiteRt:
         lm = self.lm
         def to_native(m):
             if m["role"] == "user":
-                content = ([{"type": "image", "path": m["image"]}] if m.get("image") else []) + [{"type": "text", "text": m["content"]}]
+                content = ([{"type": "image", "path": str(Path(m["image"]).resolve())}] if m.get("image") else []) + [{"type": "text", "text": m["content"]}]
                 return {"role": "user", "content": content}
             if m["role"] == "assistant":
                 out = {"role": "assistant", "content": [{"type": "text", "text": m.get("content") or ""}]}
@@ -161,7 +161,14 @@ class GemmaLiteRt:
                     out["tool_calls"] = [{"type": "function", "function": {"name": c["name"], "arguments": c["args"]}} for c in m["calls"]]
                 return out
             return {"role": "tool", "content": [{"type": "tool_response", "name": m["name"], "response": json.loads(m["content"])}]}
-        native = [to_native(m) for m in messages]
+        native = []
+        for m in messages:
+            n = to_native(m)
+            # One tool message per model step with all of its responses, as LiteRT-LM's own tool loop sends them.
+            if n["role"] == "tool" and native and native[-1]["role"] == "tool":
+                native[-1]["content"].extend(n["content"])
+            else:
+                native.append(n)
         tool_objs = [lm_tool(lm, t) for t in tools]
         t0 = time.time()
         conv = self.engine.create_conversation(messages=native[:-1], tools=tool_objs or None, automatic_tool_calling=False,
@@ -190,8 +197,11 @@ class SecurityException(Exception):
 
 
 def lm_tool(lm, desc):
+    # LiteRT-LM Python 0.19.2 (engine.create_conversation) requires {"type":"function","function":{name,...}};
+    # `desc` is the app's own DescriptionOnlyOpenApiTool JSON (exported by OfflineEvalExportTest), unchanged.
+    wrapped = {"type": "function", "function": desc}
     class T(lm.Tool):
-        def get_tool_description(self): return desc
+        def get_tool_description(self): return wrapped
         def execute(self, param): raise SecurityException("tool execution is app-owned")
     return T()
 
