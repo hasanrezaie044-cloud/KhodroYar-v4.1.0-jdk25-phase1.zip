@@ -5,8 +5,6 @@ import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
 
-const val APP_DATABASE_SCHEMA_VERSION = 6
-
 @Database(
     entities = [
         ServiceEntity::class, FuelEntity::class, MaintenanceEntity::class,
@@ -14,7 +12,7 @@ const val APP_DATABASE_SCHEMA_VERSION = 6
         PersonnelEntity::class, HolidayEntity::class, RatesEntity::class,
         SuggestionEntity::class, InsuranceEntity::class,
     ],
-    version = APP_DATABASE_SCHEMA_VERSION,
+    version = 6,
     exportSchema = false,
 )
 abstract class AppDatabase : RoomDatabase() {

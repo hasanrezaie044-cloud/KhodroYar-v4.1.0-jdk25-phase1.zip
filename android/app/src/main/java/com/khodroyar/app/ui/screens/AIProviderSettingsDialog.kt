@@ -25,19 +25,11 @@ import com.khodroyar.app.ai.*
 import com.khodroyar.app.ui.components.FieldShape
 import com.khodroyar.app.ui.components.fieldColors
 
-/** Callbacks for «مدیریت هوش مصنوعی آفلاین». */
-internal class OfflineModelActions(
-    val metered: () -> Boolean, val download: () -> Unit, val pause: () -> Unit,
-    val cancel: () -> Unit, val delete: () -> Unit, val redownload: () -> Unit,
-)
-
 /** Same app/settings workflow. Secrets are ephemeral remember state, never saveable or shown from storage. */
 @Composable
 internal fun AIProviderSettingsDialog(
     current: AiSettings, models: AIModelState, hasKey: Boolean, saving: Boolean,
     message: String?, error: String?, diagnostics: List<AIRequestDiagnostic>, ledger: AIUsageLedger,
-    offlineModel: com.khodroyar.app.ai.offline.OfflineModelUiState,
-    offline: OfflineModelActions,
     onRefresh: () -> Unit, onTest: (AiSettings, String, Boolean) -> Unit,
     onEvaluate: (AiSettings, String, Boolean) -> Unit, onSave: (AiSettings, String, Boolean) -> Unit,
     onClearHistory: () -> Unit, onDismiss: () -> Unit,
@@ -109,13 +101,7 @@ internal fun AIProviderSettingsDialog(
                         providerTitle = descriptor.title)
                     Text("برای اتصال تازه ابتدا ذخیره و بررسی اتصال را بزنید، سپس مدل را از فهرست مجاز انتخاب کنید. آزمون مدل شرط گفتگو نیست.", style = MaterialTheme.typography.labelSmall)
                 }
-            } else {
-                Text("در حالت آفلاین هیچ سرویس هوش مصنوعی آنلاینی صدا زده نمی‌شود. با مدل نصب‌شده، مدل زبانی روی خود گوشی اجرا می‌شود و ثبت/ویرایش/حذف همچنان با تأیید شما و از همان ابزارهای برنامه انجام می‌شود.", style = MaterialTheme.typography.bodySmall)
-            }
-
-            HorizontalDivider()
-            OfflineAiManagementSection(state = offlineModel, meteredNetwork = offline.metered, onDownload = offline.download,
-                onPause = offline.pause, onCancel = offline.cancel, onDelete = offline.delete, onRedownload = offline.redownload)
+            } else Text("فرمان‌های داخلی و امکانات عادی برنامه آفلاین‌اند؛ مدل بزرگ دانلود نمی‌شود. کارهای خودکار قبلی مستقل‌اند.", style = MaterialTheme.typography.bodySmall)
 
             HorizontalDivider()
             Text("حریم خصوصی و ابزارها", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)

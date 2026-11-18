@@ -23,8 +23,8 @@ import com.khodroyar.app.data.attachments.Attachments
 
 /**
  * Photo preview for an attached file. Decodes a downsampled bitmap off the main thread,
- * and shows a plain notice instead of failing when the file is gone (for example, when
- * restoring a legacy backup that recorded only a path rather than embedding the file).
+ * and shows a plain notice instead of failing when the file is gone (e.g. a backup was
+ * restored on another phone — only the path travels in the JSON backup).
  */
 @Composable
 fun AttachmentPreview(path: String, modifier: Modifier = Modifier, onClick: (() -> Unit)? = null) {

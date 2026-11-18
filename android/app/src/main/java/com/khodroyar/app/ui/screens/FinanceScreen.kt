@@ -1,7 +1,6 @@
 package com.khodroyar.app.ui.screens
 
 import androidx.compose.foundation.horizontalScroll
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -775,8 +774,6 @@ private fun PurchasesSection(
     val total by repository.personalExpenseTotal(yearPrefix).collectAsState(initial = 0.0)
     var showForm by remember { mutableStateOf(quickDate != null) }
     var editing by remember { mutableStateOf<com.khodroyar.app.data.db.PersonalExpenseEntity?>(null) }
-    var details by remember { mutableStateOf<com.khodroyar.app.data.db.PersonalExpenseEntity?>(null) }
-    var pendingDelete by remember { mutableStateOf<com.khodroyar.app.data.db.PersonalExpenseEntity?>(null) }
 
     if (showForm || editing != null) {
         val existing = editing
@@ -843,9 +840,13 @@ private fun PurchasesSection(
                                     title = expense.title.ifBlank { PurchaseCategory.fromWire(expense.category).label },
                                     subtitle = "${expense.date} · ${PurchaseCategory.fromWire(expense.category).label}",
                                     amountText = amount(expense.amount),
-                                    onClick = { details = expense },
-                                    onEdit = { details = null; editing = expense },
-                                    onDelete = { pendingDelete = expense },
+                                    onEdit = { editing = expense },
+                                    onDelete = {
+                                        scope.launch {
+                                            repository.deletePersonalExpense(expense.id)
+                                            toast.show("خرید حذف شد")
+                                        }
+                                    },
                                 )
                             }
                         }
@@ -862,31 +863,6 @@ private fun PurchasesSection(
             shape = FieldShape,
         ) { Icon(Icons.Outlined.Add, null); Spacer(Modifier.width(8.dp)); Text(tr("ثبت خرید شخصی", "Add Personal Purchase")) }
     }
-    details?.let { expense ->
-        LedgerDetailDialog(
-            title = expense.title.ifBlank { PurchaseCategory.fromWire(expense.category).label },
-            date = expense.date,
-            category = PurchaseCategory.fromWire(expense.category).label,
-            value = expense.amount,
-            onDismiss = { details = null },
-            onEdit = { details = null; editing = expense },
-        )
-    }
-    pendingDelete?.let { expense ->
-        ConfirmDialog(
-            title = tr("حذف خرید", "Delete purchase"),
-            message = "${expense.date} · ${expense.title.ifBlank { PurchaseCategory.fromWire(expense.category).label }} · ${amount(expense.amount)} تومان",
-            confirmLabel = tr("حذف", "Delete"), destructive = true,
-            onConfirm = {
-                scope.launch {
-                    repository.deletePersonalExpense(expense.id)
-                    toast.show("خرید حذف شد")
-                    pendingDelete = null
-                }
-            },
-            onDismiss = { pendingDelete = null },
-        )
-    }
 }
 
 @Composable
@@ -899,8 +875,6 @@ private fun IncomesSection(repository: AppRepository, year: Int) {
     val total by repository.personalIncomeTotal(yearPrefix).collectAsState(initial = 0.0)
     var showForm by remember { mutableStateOf(false) }
     var editing by remember { mutableStateOf<com.khodroyar.app.data.db.PersonalIncomeEntity?>(null) }
-    var details by remember { mutableStateOf<com.khodroyar.app.data.db.PersonalIncomeEntity?>(null) }
-    var pendingDelete by remember { mutableStateOf<com.khodroyar.app.data.db.PersonalIncomeEntity?>(null) }
 
     if (showForm || editing != null) {
         val existing = editing
@@ -963,9 +937,13 @@ private fun IncomesSection(repository: AppRepository, year: Int) {
                                     title = income.title.ifBlank { PersonalIncomeCategory.fromWire(income.category).label },
                                     subtitle = "${income.date} · ${PersonalIncomeCategory.fromWire(income.category).label}",
                                     amountText = amount(income.amount),
-                                    onClick = { details = income },
-                                    onEdit = { details = null; editing = income },
-                                    onDelete = { pendingDelete = income },
+                                    onEdit = { editing = income },
+                                    onDelete = {
+                                        scope.launch {
+                                            repository.deletePersonalIncome(income.id)
+                                            toast.show("درآمد حذف شد")
+                                        }
+                                    },
                                 )
                             }
                         }
@@ -982,67 +960,15 @@ private fun IncomesSection(repository: AppRepository, year: Int) {
             shape = FieldShape,
         ) { Icon(Icons.Outlined.Add, null); Spacer(Modifier.width(8.dp)); Text(tr("ثبت درآمد شخصی", "Add Personal Income")) }
     }
-    details?.let { income ->
-        LedgerDetailDialog(
-            title = income.title.ifBlank { PersonalIncomeCategory.fromWire(income.category).label },
-            date = income.date,
-            category = PersonalIncomeCategory.fromWire(income.category).label,
-            value = income.amount,
-            onDismiss = { details = null },
-            onEdit = { details = null; editing = income },
-        )
-    }
-    pendingDelete?.let { income ->
-        ConfirmDialog(
-            title = tr("حذف درآمد", "Delete income"),
-            message = "${income.date} · ${income.title.ifBlank { PersonalIncomeCategory.fromWire(income.category).label }} · ${amount(income.amount)} تومان",
-            confirmLabel = tr("حذف", "Delete"), destructive = true,
-            onConfirm = {
-                scope.launch {
-                    repository.deletePersonalIncome(income.id)
-                    toast.show("درآمد حذف شد")
-                    pendingDelete = null
-                }
-            },
-            onDismiss = { pendingDelete = null },
-        )
-    }
 }
 
 @Composable
-private fun LedgerDetailDialog(
-    title: String,
-    date: String,
-    category: String,
-    value: Double,
-    onDismiss: () -> Unit,
-    onEdit: () -> Unit,
-) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("جزئیات رکورد") },
-        text = {
-            Column {
-                Text(title, style = MaterialTheme.typography.titleMedium)
-                Spacer(Modifier.height(8.dp))
-                InfoRow("تاریخ", date)
-                InfoRow("دسته‌بندی", category)
-                InfoRow("مبلغ", "${amount(value)} تومان", emphasis = true, valueColor = MaterialTheme.colorScheme.primary)
-            }
-        },
-        confirmButton = { TextButton(onClick = onEdit) { Text("ویرایش") } },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("بستن") } },
-    )
-}
-
-@Composable
-private fun LedgerRow(title: String, subtitle: String, amountText: String, onClick: () -> Unit, onEdit: (() -> Unit)? = null, onDelete: () -> Unit) {
+private fun LedgerRow(title: String, subtitle: String, amountText: String, onEdit: (() -> Unit)? = null, onDelete: () -> Unit) {
     Surface(
         shape = FieldShape,
         color = MaterialTheme.colorScheme.surfaceContainerLowest,
         border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-        modifier = Modifier.fillMaxWidth().defaultMinSize(minHeight = AppDimens.rowMinHeight)
-            .clickable(onClick = onClick),
+        modifier = Modifier.fillMaxWidth().defaultMinSize(minHeight = AppDimens.rowMinHeight),
     ) {
         Row(
             Modifier.padding(horizontal = 12.dp, vertical = 10.dp),

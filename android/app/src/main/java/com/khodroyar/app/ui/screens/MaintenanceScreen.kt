@@ -4,7 +4,6 @@ import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.testTag
 
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -92,7 +91,6 @@ fun MaintenanceScreen(
     var recordingType by remember { mutableStateOf<MaintenanceType?>(null) }
     var showForm by remember { mutableStateOf(quickDate != null) }
     var editing by remember { mutableStateOf<MaintenanceEntity?>(null) }
-    var details by remember { mutableStateOf<MaintenanceEntity?>(null) }
     var pendingDelete by remember { mutableStateOf<MaintenanceEntity?>(null) }
     var editingTracked by remember { mutableStateOf<MaintenanceType?>(null) }
 
@@ -203,7 +201,6 @@ fun MaintenanceScreen(
                             yearRecords.forEach { item ->
                                 MaintenanceRow(
                                     item,
-                                    onDetails = { details = item },
                                     onEdit = { editing = item },
                                     onDelete = { pendingDelete = item },
                                 )
@@ -230,15 +227,6 @@ fun MaintenanceScreen(
                 Text(tr("ثبت تعمیرات", "Add Maintenance"))
             }
         }
-    }
-
-    details?.let { item ->
-        MaintenanceDetailDialog(
-            item = item,
-            onDismiss = { details = null },
-            onEdit = { details = null; editing = item },
-            onDelete = { details = null; pendingDelete = item },
-        )
     }
 
     pendingDelete?.let { item ->
@@ -277,13 +265,12 @@ fun MaintenanceScreen(
 }
 
 @Composable
-private fun MaintenanceRow(item: MaintenanceEntity, onDetails: () -> Unit, onEdit: () -> Unit = {}, onDelete: () -> Unit) {
+private fun MaintenanceRow(item: MaintenanceEntity, onEdit: () -> Unit = {}, onDelete: () -> Unit) {
     Surface(
         shape = FieldShape,
         color = MaterialTheme.colorScheme.surfaceContainerLowest,
         border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-        modifier = Modifier.fillMaxWidth().defaultMinSize(minHeight = AppDimens.rowMinHeight)
-            .clickable(onClick = onDetails).testTag("maintenance-row-${item.id}"),
+        modifier = Modifier.fillMaxWidth().defaultMinSize(minHeight = AppDimens.rowMinHeight),
     ) {
         Row(Modifier.padding(horizontal = 12.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
             Icon(

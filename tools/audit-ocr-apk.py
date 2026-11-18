@@ -9,13 +9,6 @@ import zipfile
 
 
 MAIN = Path(__file__).resolve().parents[1] / 'android/app/src/main'
-# The on-device llama.cpp runtime: when the JNI bridge ships, every library it needs at run time must ship
-# too, including the ggml CPU variants that are dlopen()ed by name (not visible to the linker) and the
-# baseline variant every arm64 phone can run. Model and vision weights are downloaded, never packaged.
-LLAMA_BRIDGE = 'lib/arm64-v8a/libkhodroyar_llama.so'
-LLAMA_RUNTIME = ['libllama.so', 'libllama-common.so', 'libmtmd.so', 'libggml.so', 'libggml-base.so',
-                 'libggml-cpu-android_armv8.0_1.so', 'libc++_shared.so']
-MODEL_SUFFIXES = ('.gguf', '.litertlm', '.tflite', '.task', '.bin.part')
 PACKAGED_RESOURCES = [MAIN / 'res/font' / f'vazirmatn_{weight}.ttf' for weight in ('regular', 'medium', 'semibold', 'bold')] + [
     MAIN / 'res/raw/vazirmatn_license.txt', MAIN / 'res/raw/bazaar_updater_license.txt']
 
@@ -28,13 +21,6 @@ def audit(path):
         assert z.testzip() is None, 'APK ZIP CRC failure'
         names = z.namelist()
         assert not any(n.startswith('assets/ocr/') or n.endswith('.traineddata') for n in names), 'Retired offline models still packaged'
-        assert not any(n.lower().endswith(MODEL_SUFFIXES) for n in names), 'Model weights must be downloaded in the app, never packaged'
-        llama_runtime = 'absent'
-        if LLAMA_BRIDGE in names:
-            missing = [lib for lib in LLAMA_RUNTIME if 'lib/arm64-v8a/' + lib not in names]
-            assert not missing, f'llama.cpp runtime incomplete in APK: {missing}'
-            variants = sorted(n.rsplit('/', 1)[1] for n in names if n.startswith('lib/arm64-v8a/libggml-cpu-'))
-            llama_runtime = 'complete; CPU variants: ' + ', '.join(variants)
         assert not any('tesseract' in n.lower() or 'leptonica' in n.lower() or n.endswith('/liblept.so') for n in names), 'Retired native OCR engine still packaged'
         # Resources may have optimised names. Check the exact packaged bytes,
         # not a source-only claim that fonts/notices will survive shrinking.
@@ -57,7 +43,7 @@ def audit(path):
             libraries.append(name)
     return {'apk': path.name, 'bytes': path.stat().st_size, 'sha256': hashlib.sha256(path.read_bytes()).hexdigest(),
             'zip_crc': 'passed', 'ocr_mode': 'online-only', 'offline_model_assets': 'absent (online-only)',
-            'offline_native_engine': 'absent', 'bundled_notices_fonts': 'all hashes verified', 'native_64_bit_16kb_alignment': 'passed', 'llama_runtime': llama_runtime, 'libraries': libraries}
+            'offline_native_engine': 'absent', 'bundled_notices_fonts': 'all hashes verified', 'native_64_bit_16kb_alignment': 'passed', 'libraries': libraries}
 
 
 if __name__ == '__main__':

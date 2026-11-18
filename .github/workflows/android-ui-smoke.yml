@@ -1,8 +1,6 @@
 name: KhodroYar Native UI Smoke
 
 on:
-  push:
-    branches: [arena/c66aaad2-khodroyar-v4-1-0-jdk25-phase1]
   workflow_dispatch:
   workflow_call:
     inputs:
@@ -33,7 +31,7 @@ jobs:
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
         with:
-          packages: 'platforms;android-36 build-tools;36.0.0 platform-tools ndk;29.0.13113456 cmake;3.31.6'
+          packages: 'platforms;android-36 build-tools;36.0.0 platform-tools'
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
         with:

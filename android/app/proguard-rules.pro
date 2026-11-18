@@ -18,15 +18,3 @@
 # Annotation-only artifacts pulled in for R8 (jsr305 / error_prone).
 -dontwarn javax.annotation.**
 -dontwarn com.google.errorprone.annotations.**
-
-# LiteRT-LM uses a Kotlin/JNI facade and Gson message conversion. Keep the official runtime API
-# stable under release shrinking; model files themselves are never packaged as resources.
--keep class com.google.ai.edge.litertlm.** { *; }
--keep class com.google.gson.** { *; }
--dontwarn com.google.gson.**
-
-# llama.cpp JNI bridge (libkhodroyar_llama.so): native method names and the streaming callback that
-# native code looks up by name must survive R8.
--keep class com.khodroyar.app.ai.offline.llama.LlamaNative { native <methods>; }
--keep interface com.khodroyar.app.ai.offline.llama.LlamaNative$Listener { boolean onContent(java.lang.String); }
--keep class * implements com.khodroyar.app.ai.offline.llama.LlamaNative$Listener { boolean onContent(java.lang.String); }

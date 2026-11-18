@@ -12,7 +12,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -28,7 +27,6 @@ import com.khodroyar.app.R
 import com.khodroyar.app.core.holidays.IranHolidays
 import com.khodroyar.app.core.jalali.Jalali
 import com.khodroyar.app.data.backup.AutoBackup
-import com.khodroyar.app.data.backup.BackupAttachmentCodec
 import com.khodroyar.app.data.backup.BackupFiles
 import com.khodroyar.app.data.legacy.LegacyBackup
 import com.khodroyar.app.data.prefs.AppSettings
@@ -42,11 +40,7 @@ import com.khodroyar.app.ui.components.*
 import com.khodroyar.app.ui.theme.AppDimens
 import com.khodroyar.app.ui.theme.AppPalette
 import com.khodroyar.app.ui.theme.heroBrush
-import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
-import java.io.File
 
 /**
  * Settings — and settings only.
@@ -63,7 +57,7 @@ fun SettingsScreen(repository: AppRepository, settings: AppSettings, onToggleThe
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val toast = LocalToast.current
-    val sectionOpen = remember { mutableStateOf(emptySet<String>()) }
+    val sectionOpen = remember { mutableStateOf(setOf("appearance")) }
     fun toggleSection(key: String) {
         sectionOpen.value = if (key in sectionOpen.value) sectionOpen.value - key else sectionOpen.value + key
     }
@@ -71,8 +65,7 @@ fun SettingsScreen(repository: AppRepository, settings: AppSettings, onToggleThe
     var profileLast by remember(settings.userLastName) { mutableStateOf(settings.userLastName) }
     val pinStore = remember { PinStore(context) }
 
-    var pendingBackupPath by rememberSaveable { mutableStateOf<String?>(null) }
-    var pendingBackupOmittedCount by rememberSaveable { mutableStateOf(0) }
+    var backupJson by remember { mutableStateOf<String?>(null) }
     var restoreJson by remember { mutableStateOf<String?>(null) }
     var restorePreview by remember { mutableStateOf<LegacyBackup.Preview?>(null) }
     var goalText by remember { mutableStateOf(settings.monthlyIncomeGoal.trimNumber().digitsOnly()) }
@@ -89,35 +82,16 @@ fun SettingsScreen(repository: AppRepository, settings: AppSettings, onToggleThe
     val saveBackup = rememberLauncherForActivityResult(
         ActivityResultContracts.CreateDocument(BackupFiles.MIME_JSON)
     ) { uri ->
-        val source = pendingBackupPath?.let { File(it) }
-        if (uri == null || source == null) {
-            source?.delete()
-            pendingBackupPath = null
-            pendingBackupOmittedCount = 0
-            toast.show(if (uri == null) "ذخیره پشتیبان لغو شد" else "فایل موقت پشتیبان پیدا نشد؛ دوباره تلاش کنید")
-            return@rememberLauncherForActivityResult
+        val json = backupJson
+        if (uri == null || json == null) { toast.show("ذخیره پشتیبان لغو شد"); return@rememberLauncherForActivityResult }
+        val ok = BackupFiles.writeToUri(context, uri, json)
+        if (ok) {
+            repository.markBackupDone()
+            toast.show("فایل پشتیبان روی دستگاه ذخیره شد")
+        } else {
+            toast.show("ذخیره فایل پشتیبان انجام نشد")
         }
-        scope.launch {
-            try {
-                val ok = withContext(Dispatchers.IO) { BackupFiles.writeToUri(context, uri, source) }
-                if (ok) {
-                    repository.markBackupDone()
-                    val omitted = pendingBackupOmittedCount
-                    toast.show(
-                        if (omitted == 0) "فایل پشتیبان با موفقیت ذخیره شد"
-                        else "فایل پشتیبان ذخیره شد؛ $omitted پیوستِ پیدا نشده از آن کنار گذاشته شد. آن پیوست‌ها را دوباره اضافه کنید."
-                    )
-                } else {
-                    toast.show("ذخیره در این مکان انجام نشد؛ فضای خالی یا دسترسی پوشه را بررسی و مکان دیگری انتخاب کنید")
-                }
-            } finally {
-                source.delete()
-                if (pendingBackupPath == source.absolutePath) {
-                    pendingBackupPath = null
-                    pendingBackupOmittedCount = 0
-                }
-            }
-        }
+        backupJson = null
     }
 
     val pickBackup = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
@@ -477,44 +451,19 @@ fun SettingsScreen(repository: AppRepository, settings: AppSettings, onToggleThe
                 Icons.Outlined.SaveAlt,
             ) {
                 scope.launch {
-                    var exportFile: File? = null
-                    try {
-                        val json = repository.exportBackupJson()
-                        val fileName = BackupFiles.suggestedFileName()
-                        val (file, omittedCount) = withContext(Dispatchers.IO) {
-                            val skipped = BackupAttachmentCodec.omittedAttachmentCount(json)
-                            BackupFiles.writeExportFile(context, json, fileName) to skipped
-                        }
-                        exportFile = file
-                        pendingBackupPath = file.absolutePath
-                        pendingBackupOmittedCount = omittedCount
-                        saveBackup.launch(fileName)
-                    } catch (e: CancellationException) {
-                        exportFile?.delete()
-                        pendingBackupPath = null
-                        pendingBackupOmittedCount = 0
-                        throw e
-                    } catch (e: Exception) {
-                        exportFile?.delete()
-                        pendingBackupPath = null
-                        pendingBackupOmittedCount = 0
-                        toast.show(e.message ?: "ساخت فایل پشتیبان انجام نشد؛ فضای خالی دستگاه را بررسی کنید")
-                    }
+                    val json = repository.exportBackupJson()
+                    backupJson = json
+                    BackupFiles.writeInternalCopy(context, json, BackupFiles.suggestedFileName())
+                    saveBackup.launch(BackupFiles.suggestedFileName())
                 }
             }
         }
         item {
             ActionRow("اشتراک‌گذاری فایل پشتیبان", "ارسال با پیام‌رسان یا ایمیل", Icons.Outlined.Share) {
                 scope.launch {
-                    try {
-                        val json = repository.exportBackupJson()
-                        val ok = BackupFiles.shareText(context, json, BackupFiles.suggestedFileName(), "اشتراک فایل پشتیبان")
-                        toast.show(if (ok) "فایل پشتیبان آماده اشتراک شد" else "ساخت فایل پشتیبان انجام نشد")
-                    } catch (e: CancellationException) {
-                        throw e
-                    } catch (e: Exception) {
-                        toast.show(e.message ?: "ساخت پشتیبان کامل انجام نشد")
-                    }
+                    val json = repository.exportBackupJson()
+                    val ok = BackupFiles.shareText(context, json, BackupFiles.suggestedFileName(), "اشتراک فایل پشتیبان")
+                    toast.show(if (ok) "فایل پشتیبان آماده اشتراک شد" else "ساخت فایل پشتیبان انجام نشد")
                 }
             }
         }
@@ -606,7 +555,6 @@ fun SettingsScreen(repository: AppRepository, settings: AppSettings, onToggleThe
                         InfoRow("درآمد شخصی", preview.counts.personalIncomes.toString())
                         InfoRow("پرسنل", preview.counts.personnel.toString())
                         InfoRow("تعطیلات دستی", preview.counts.holidays.toString())
-                        InfoRow("بیمه‌نامه‌ها", preview.counts.insurance.toString())
                         InfoRow("سال‌های نرخ", preview.counts.rateYears.toString())
                         preview.versionWarning?.let {
                             Spacer(Modifier.height(8.dp))

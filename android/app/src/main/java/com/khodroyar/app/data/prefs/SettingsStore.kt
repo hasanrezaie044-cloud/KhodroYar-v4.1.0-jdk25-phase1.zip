@@ -342,30 +342,13 @@ class SettingsStore private constructor(context: Context) {
     fun toBackupJson(): String {
         val s = _state.value
         fun b(v: Boolean) = if (v) "true" else "false"
-        fun q(v: String): String = buildString(v.length + 2) {
-            append('"')
-            v.forEach { ch ->
-                when (ch) {
-                    '"' -> append("\\\"")
-                    '\\' -> append("\\\\")
-                    '\b' -> append("\\b")
-                    '\u000c' -> append("\\f")
-                    '\n' -> append("\\n")
-                    '\r' -> append("\\r")
-                    '\t' -> append("\\t")
-                    else -> if (ch.code < 0x20) append("\\u%04x".format(ch.code)) else append(ch)
-                }
-            }
-            append('"')
-        }
+        fun q(v: String) = "\"" + v.replace("\\", "\\\\").replace("\"", "\\\"") + "\""
         return "{" +
             "\"themeMode\":\"" + s.themeMode + "\"," +
             "\"themeColor\":\"" + s.themeColor + "\"," +
             "\"language\":\"" + s.language + "\"," +
             "\"userFirstName\":" + q(s.userFirstName) + "," +
             "\"userLastName\":" + q(s.userLastName) + "," +
-            "\"vehicleCurrentKm\":" + s.vehicleCurrentKm + "," +
-            "\"isRental\":" + b(s.isRental) + "," +
             "\"oilCurrentKm\":" + s.oilCurrentKm + "," +
             "\"oilNextKm\":" + s.oilNextKm + "," +
             "\"beltCurrentKm\":" + s.beltCurrentKm + "," +
@@ -404,8 +387,7 @@ class SettingsStore private constructor(context: Context) {
             "\"autoServiceEndTime\":" + q(s.autoServiceEndTime) + "," +
             "\"autoServiceTollCount\":" + s.autoServiceTollCount + "," +
             "\"servicePresetsJson\":" + q(s.servicePresetsJson) + "," +
-            "\"autoBackupEnabled\":" + b(s.autoBackupEnabled) + "," +
-            "\"trafficNotifyEnabled\":" + b(s.trafficNotifyEnabled) +
+            "\"autoBackupEnabled\":" + b(s.autoBackupEnabled) +
             "}"
     }
 
@@ -429,12 +411,6 @@ class SettingsStore private constructor(context: Context) {
         autoServiceTollCount: Int? = null,
         servicePresetsJson: String? = null,
         autoBackupEnabled: Boolean? = null,
-        vehicleCurrentKm: Double? = null, isRental: Boolean? = null,
-        beltCurrentKm: Double? = null, beltNextKm: Double? = null,
-        sparkCurrentKm: Double? = null, sparkNextKm: Double? = null,
-        brakeCurrentKm: Double? = null, brakeNextKm: Double? = null,
-        filterCurrentKm: Double? = null, filterNextKm: Double? = null,
-        trafficNotifyEnabled: Boolean? = null,
     ) = update { c ->
         c.copy(
             themeMode = themeMode ?: c.themeMode,
@@ -442,18 +418,8 @@ class SettingsStore private constructor(context: Context) {
             language = language ?: c.language,
             userFirstName = userFirstName ?: c.userFirstName,
             userLastName = userLastName ?: c.userLastName,
-            vehicleCurrentKm = vehicleCurrentKm ?: c.vehicleCurrentKm,
-            isRental = isRental ?: c.isRental,
             oilCurrentKm = oilCurrentKm ?: c.oilCurrentKm,
             oilNextKm = oilNextKm ?: c.oilNextKm,
-            beltCurrentKm = beltCurrentKm ?: c.beltCurrentKm,
-            beltNextKm = beltNextKm ?: c.beltNextKm,
-            sparkCurrentKm = sparkCurrentKm ?: c.sparkCurrentKm,
-            sparkNextKm = sparkNextKm ?: c.sparkNextKm,
-            brakeCurrentKm = brakeCurrentKm ?: c.brakeCurrentKm,
-            brakeNextKm = brakeNextKm ?: c.brakeNextKm,
-            filterCurrentKm = filterCurrentKm ?: c.filterCurrentKm,
-            filterNextKm = filterNextKm ?: c.filterNextKm,
             privacyMode = privacyMode ?: c.privacyMode,
             monthlyIncomeGoal = monthlyIncomeGoal ?: c.monthlyIncomeGoal,
             remindDailySummary = remindDailySummary ?: c.remindDailySummary,
@@ -483,7 +449,6 @@ class SettingsStore private constructor(context: Context) {
             autoServiceTollCount = autoServiceTollCount ?: c.autoServiceTollCount,
             servicePresetsJson = servicePresetsJson ?: c.servicePresetsJson,
             autoBackupEnabled = autoBackupEnabled ?: c.autoBackupEnabled,
-            trafficNotifyEnabled = trafficNotifyEnabled ?: c.trafficNotifyEnabled,
         )
     }
 

@@ -8,13 +8,6 @@ import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.khodroyar.app.data.repo.AppRepository
-import com.khodroyar.app.ai.offline.OfflineChatEngine
-import com.khodroyar.app.ai.offline.OfflineLiteRtProvider
-import com.khodroyar.app.ai.offline.OfflineLlamaProvider
-import com.khodroyar.app.ai.offline.OfflineRuntime
-import com.khodroyar.app.ai.offline.OfflineModelManager
-import com.khodroyar.app.ai.offline.OfflineModelUiState
-import kotlinx.coroutines.flow.StateFlow
 import com.khodroyar.app.automation.AutomationRule
 import com.khodroyar.app.automation.AutomationStore
 import com.khodroyar.app.notifications.AgentAutomationScheduler
@@ -57,13 +50,6 @@ class AiAssistantViewModel @JvmOverloads constructor(
             s.allowModelFallback && s.mode == AiMode.OPENROUTER, s.effectiveUsage()) }
     }, AndroidModelEvaluationStore(app))
     private val agent = PersianToolAgent(managedModels, tools) { settingsStore.load().effectiveUsage() }
-    private val offlineManager = OfflineModelManager.get(app)
-    /** The on-device engine for the installed package; neither runtime has any network path. */
-    private val offlineModel: OfflineChatEngine = when (offlineManager.pkg.runtime) {
-        OfflineRuntime.LITERT_LM -> OfflineLiteRtProvider(app) { settingsStore.load().effectiveUsage() }
-        OfflineRuntime.LLAMA_CPP -> OfflineLlamaProvider(app) { settingsStore.load().effectiveUsage() }
-    }
-    private val offlineAgent = PersianToolAgent(offlineModel, tools) { settingsStore.load().effectiveUsage() }
     private val local = LocalAssistant(tools, dialogue = LocalDialogueEngine(rules = { automationStore.rules.value }))
 
     var localContext by mutableStateOf(LocalDialogueContext())
@@ -143,19 +129,7 @@ class AiAssistantViewModel @JvmOverloads constructor(
     private fun safeText(value: String): String = AiTextSafety.redact(selectedSecret?.let { value.replace(it, "[کلید حذف شد]") } ?: value)
     private var pendingFromAgent = false
 
-    val activeModel: String get() = if (settings.mode == AiMode.LOCAL) {
-        if (offlineModel.modelPresent) "محلی · ${offlineManager.pkg.title} · روی دستگاه" else "داخلی · بدون مدل زبانی/شبکه"
-    } else modelState.active?.let { "${AIProviderRegistry.get(settings.mode).title} · ${it.id}" } ?: "مدل را در تنظیمات انتخاب کنید"
-    /** Download/install state of the on-device model for «مدیریت هوش مصنوعی آفلاین». */
-    val offlineModelState: StateFlow<OfflineModelUiState> = offlineManager.state
-    fun refreshOfflineModel() = offlineManager.refresh()
-    fun offlineNetworkMetered(): Boolean = offlineManager.isMeteredNetwork()
-    /** Explicit user action only: Hugging Face is contacted; no AI provider is ever called. */
-    fun downloadOfflineModel() { offlineManager.download() }
-    fun pauseOfflineModelDownload() = offlineManager.pause()
-    fun cancelOfflineModelDownload() = offlineManager.cancel()
-    fun deleteOfflineModel() = offlineManager.delete()
-    fun redownloadOfflineModel() = offlineManager.redownload()
+    val activeModel: String get() = if (settings.mode == AiMode.LOCAL) "داخلی · بدون مدل/شبکه" else modelState.active?.let { "${AIProviderRegistry.get(settings.mode).title} · ${it.id}" } ?: "مدل را در تنظیمات انتخاب کنید"
 
     val imageStore = ChatImageStore(app)
     var draftImage by mutableStateOf<ChatImageRef?>(null)
@@ -378,10 +352,7 @@ class AiAssistantViewModel @JvmOverloads constructor(
     private fun submit(raw: String): Boolean {
         val text = raw.trim()
         if ((text.isEmpty() && draftImage == null) || networkBusy || !settings.enabled) return false
-        if (draftImage != null && settings.mode == AiMode.LOCAL && !offlineModel.modelPresent) {
-            failure = AiResult.Failure(AiErrorKind.MODEL_INVALID, "برای تصویر در حالت آفلاین، ابتدا مدل ${offlineManager.pkg.title} را از «مدیریت هوش مصنوعی آفلاین» دانلود کنید؛ تصویر به هیچ سرویس آنلاینی ارسال نشد.")
-            return false
-        }
+        if (draftImage != null && settings.mode == AiMode.LOCAL) { failure = AiResult.Failure(AiErrorKind.MODEL_INVALID, "برای تصویر یک مدل آنلاین تصویری انتخاب کنید."); return false }
         if (OpenRouterFreePolicy.containsCredential(text) || selectedSecret?.let { it in text } == true) {
             failure = AiResult.Failure(AiErrorKind.BAD_REQUEST, "این متن شبیه کلید API است؛ در تاریخچه ذخیره یا ارسال نشد. کلید را فقط در تنظیمات امن وارد کنید.")
             return false
@@ -431,8 +402,7 @@ class AiAssistantViewModel @JvmOverloads constructor(
         if (settings.mode != AiMode.LOCAL && !settings.consented) return
         if (settings.mode == AiMode.LOCAL && messages.lastOrNull()?.role != ChatRole.USER) return
         failure = null
-        val resumable = if (settings.mode == AiMode.LOCAL) offlineModel.modelPresent && offlineAgent.canResume else agent.canResume
-        runAgent(retrying = resumable)
+        runAgent(retrying = settings.mode != AiMode.LOCAL && agent.canResume)
     }
     private fun textCallback(run: Int): (String) -> Unit = { text ->
         viewModelScope.launch { if (run == generation && busy) streamingText = safeText(text) }
@@ -442,13 +412,13 @@ class AiAssistantViewModel @JvmOverloads constructor(
         add(ChatRole.RESULT, "ابزار $name · ${if (out.ok) "تأیید شد" else "ناموفق"}\n${out.text}")
         if (out.ok && out.section != null) navigation = out.section
     }
-    private fun applyStep(step: AgentStep, fromAgent: Boolean = settings.mode != AiMode.LOCAL) {
+    private fun applyStep(step: AgentStep) {
         streamingText = ""; canContinue = false
         when (step) {
             AgentStep.Continue -> canContinue = true
             is AgentStep.Reply -> add(ChatRole.ASSISTANT, step.text)
             is AgentStep.Result -> { add(ChatRole.RESULT, (if (step.outcome.ok) "" else "⚠️ ") + step.outcome.text); if (step.outcome.ok) navigation = step.outcome.section }
-            is AgentStep.Confirm -> { pendingFromAgent = fromAgent; if (step.pending.lead.isNotBlank()) add(ChatRole.ASSISTANT, step.pending.lead); pending = step.pending }
+            is AgentStep.Confirm -> { pendingFromAgent = settings.mode != AiMode.LOCAL; if (step.pending.lead.isNotBlank()) add(ChatRole.ASSISTANT, step.pending.lead); pending = step.pending }
             is AgentStep.Failure -> {
                 failure = step.error
                 // A failed provider send is still visible in chat; keep its editable draft as well.
@@ -470,24 +440,15 @@ class AiAssistantViewModel @JvmOverloads constructor(
         val run = ++generation; val mode = settings.mode; val snapshot = messages.drop(contextStart.coerceIn(0, messages.size))
         job = viewModelScope.launch {
             try {
-                val useOnDeviceModel = mode == AiMode.LOCAL && offlineModel.modelPresent
-                val step = when {
-                    useOnDeviceModel -> {
-                        val images = snapshot.lastOrNull { it.role == ChatRole.USER }?.image
-                            ?.let { listOf(imageStore.wire(it)) }.orEmpty()
-                        if (retrying && offlineAgent.canResume) offlineAgent.retry(textCallback(run), ::toolResult)
-                        else offlineAgent.start(snapshot, textCallback(run), ::toolResult, images)
-                    }
-                    mode == AiMode.LOCAL -> local.run(snapshot.last().text)
-                    retrying -> agent.retry(textCallback(run), ::toolResult)
-                    else -> agent.start(snapshot, textCallback(run), ::toolResult,
+                val step = if (mode == AiMode.LOCAL) local.run(snapshot.last().text)
+                    else if (retrying) agent.retry(textCallback(run), ::toolResult)
+                    else agent.start(snapshot, textCallback(run), ::toolResult,
                         snapshot.lastOrNull { it.role == ChatRole.USER }?.image?.let { listOf(imageStore.wire(it)) }.orEmpty())
-                }
                 coroutineContext.ensureActive()
                 if (run != generation) return@launch
-                if (mode == AiMode.LOCAL && !useOnDeviceModel) localContext = local.dialogue.context
+                if (mode == AiMode.LOCAL) localContext = local.dialogue.context
                 if (mode != AiMode.LOCAL && step !is AgentStep.Failure) connection = ConnectionState.ONLINE
-                applyStep(step, fromAgent = mode != AiMode.LOCAL || useOnDeviceModel)
+                applyStep(step)
             } catch (e: CancellationException) { throw e }
             catch (_: ChatImageUnavailable) { if (run == generation) applyStep(AgentStep.Failure(AiResult.Failure(AiErrorKind.BAD_REQUEST, "تصویر محلی موجود نیست؛ دوباره پیوست کنید."))) }
             catch (_: Exception) { if (run == generation) applyStep(AgentStep.Failure(AiResult.Failure(AiErrorKind.UNKNOWN, "دریافت پاسخ کامل نشد؛ عملیات تأییدنشده اجرا نمی‌شود."))) }
@@ -501,12 +462,11 @@ class AiAssistantViewModel @JvmOverloads constructor(
         val run = ++generation
         job = viewModelScope.launch {
             try {
-                if (pendingFromAgent) {
-                    val activeAgent = if (settings.mode == AiMode.LOCAL) offlineAgent else agent
-                    val step = activeAgent.confirm(p, textCallback(run)) { name, out ->
+                if (settings.mode != AiMode.LOCAL && pendingFromAgent) {
+                    val step = agent.confirm(p, textCallback(run)) { name, out ->
                         toolResult(name, out); executingAction = false // The verified DB phase is finished; streaming can now be stopped.
                     }
-                    if (run == generation) applyStep(step, fromAgent = true)
+                    if (run == generation) applyStep(step)
                 } else {
                     val out = tools.execute(p.call)
                     add(ChatRole.RESULT, (if (out.ok) "✅ " else "⚠️ ") + out.text)
@@ -524,7 +484,6 @@ class AiAssistantViewModel @JvmOverloads constructor(
         if (pending == null) return
         pending = null
         agent.reset()
-        offlineAgent.reset()
         local.dialogue.discardDraft()
         localContext = local.dialogue.context
         add(ChatRole.RESULT, "این پیش‌نمایش و مراحلِ تأییدنشده لغو شد. نتایجِ قبلاً تأییدشده تغییری نمی‌کنند.")
@@ -536,8 +495,6 @@ class AiAssistantViewModel @JvmOverloads constructor(
         generation++
         job?.cancel()
         agent.reset()
-        offlineAgent.reset()
-        offlineModel.cancelActive()
         streamingText = ""; canContinue = false
         busy = false
     }
@@ -636,11 +593,5 @@ class AiAssistantViewModel @JvmOverloads constructor(
             storageLock.withLock { conversations.clearAll(); history = emptyList() }
             pruneImages()
         }
-    }
-
-    override fun onCleared() {
-        stop()
-        offlineModel.close()
-        super.onCleared()
     }
 }
