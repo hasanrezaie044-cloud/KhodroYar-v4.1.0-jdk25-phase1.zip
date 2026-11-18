@@ -23,21 +23,24 @@ FA_DIGITS = str.maketrans("۰۱۲۳۴۵۶۷۸۹٠١٢٣٤٥٦٧٨٩", "012345678
 class RssSampler:
     """Samples VmRSS/VmHWM of a pid (the engine process) or of this process (LiteRT-LM in-process)."""
     def __init__(self, pid):
-        self.pid, self.peak_kb, self._stop = pid, 0, threading.Event()
+        self.pid, self.peak_kb, self.peak_anon_kb, self._stop = pid, 0, 0, threading.Event()
         threading.Thread(target=self._run, daemon=True).start()
 
     def _read(self):
         try:
             txt = Path(f"/proc/{self.pid}/status").read_text()
-            return {k: int(v.split()[0]) for k, v in (l.split(":", 1) for l in txt.splitlines() if l.startswith(("VmRSS", "VmHWM")))}
+            return {k: int(v.split()[0]) for k, v in (l.split(":", 1) for l in txt.splitlines() if l.startswith(("VmRSS", "VmHWM", "RssAnon", "RssFile")))}
         except Exception:
             return {}
 
     def _run(self):
         while not self._stop.is_set():
-            v = self._read(); self.peak_kb = max(self.peak_kb, v.get("VmHWM", 0), v.get("VmRSS", 0)); time.sleep(0.2)
+            v = self._read(); self.peak_kb = max(self.peak_kb, v.get("VmHWM", 0), v.get("VmRSS", 0))
+            self.peak_anon_kb = max(self.peak_anon_kb, v.get("RssAnon", 0)); time.sleep(0.2)
 
     def current_mb(self): return self._read().get("VmRSS", 0) / 1024
+    def current_anon_mb(self): return self._read().get("RssAnon", 0) / 1024
+    def peak_anon_mb(self): return max(self.peak_anon_kb, self._read().get("RssAnon", 0)) / 1024
     def peak_mb(self):
         v = self._read(); return max(self.peak_kb, v.get("VmHWM", 0)) / 1024
     def stop(self): self._stop.set()
@@ -70,6 +73,7 @@ class QwenAppEngine:
             raise SystemExit("vision projector failed to load; see engine.log")
         self.load_s = time.time() - t0
         self.idle_rss_mb = self.loaded["rss_kb"] / 1024
+        self.idle_anon_mb = self.loaded.get("rss_anon_kb", 0) / 1024
         self.seq = 0
 
     def chat(self, system, messages, tools, image_paths):
@@ -116,7 +120,8 @@ class QwenAppEngine:
                 "image_encode_ms": t.get("image_ms") if t.get("images") else None,
                 "checkpoints": t.get("checkpoints"), "checkpoint_mb": (t.get("checkpoint_bytes") or 0) / 2**20,
                 "context_mb": (t.get("context_bytes") or 0) / 2**20, "stop": r.get("stop"),
-                "rss_mb": out.get("rss_kb", 0) / 1024}
+                "rss_mb": out.get("rss_kb", 0) / 1024, "rss_anon_mb": out.get("rss_anon_kb", 0) / 1024,
+                "diverged_at": t.get("diverged_at")}
 
     def close(self):
         self.rss.stop()
@@ -140,6 +145,7 @@ class GemmaLiteRt:
                                 max_num_tokens=4096, max_num_images=1, cache_dir=a.out + "/litert-cache", enable_benchmark=True)
         self.load_s = time.time() - t0
         self.idle_rss_mb = self.rss.current_mb()
+        self.idle_anon_mb = self.rss.current_anon_mb()
         self.python_baseline_mb = base
 
     def chat(self, system, messages, tools, image_paths):
@@ -343,6 +349,7 @@ def main():
     img_dir = str(Path(a.cases).parent / "images")
     backend = QwenAppEngine(a) if a.backend == "qwen" else GemmaLiteRt(a)
     results = {"backend": a.label or backend.name, "load_s": backend.load_s, "idle_rss_mb": backend.idle_rss_mb,
+               "idle_anon_mb": backend.idle_anon_mb,
                "settings": {"threads": a.threads, "ctx": a.ctx if a.backend == "qwen" else 4096,
                             "image_max_tokens": a.image_max_tokens if a.backend == "qwen" else None, "kv_type": a.kv_type},
                "machine": {"cpu": Path("/proc/cpuinfo").read_text().count("processor"), "uname": os.uname().machine}, "cases": []}
@@ -362,6 +369,7 @@ def main():
             Path(a.out, "results.json").write_text(json.dumps(results, ensure_ascii=False, indent=1))
     finally:
         results["peak_rss_mb"] = backend.rss.peak_mb()
+        results["peak_anon_mb"] = backend.rss.peak_anon_mb()
         backend.close()
         Path(a.out, "results.json").write_text(json.dumps(results, ensure_ascii=False, indent=1))
 

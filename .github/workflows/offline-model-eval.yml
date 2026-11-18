@@ -21,7 +21,7 @@ on:
     paths: ['tools/offline-eval/**', '.github/workflows/offline-model-eval.yml']
 
 concurrency:
-  group: offline-model-eval-${{ github.ref }}
+  group: offline-model-eval-${{ github.ref }}-${{ inputs.image_max_tokens }}-${{ inputs.backends }}-${{ inputs.mmproj }}
   cancel-in-progress: true
 
 env:
@@ -134,17 +134,23 @@ jobs:
         if: contains(inputs.backends || 'qwen gemma', 'gemma')
         continue-on-error: true
         run: |
+          set -o pipefail
           /tmp/ev/bin/python tools/offline-eval/run_eval.py --backend gemma --model /tmp/models/$GEMMA_FILE \
-            --agent build/offline-eval/app-agent.json --cases build/offline-eval/cases.json --out build/offline-eval/gemma
+            --agent build/offline-eval/app-agent.json --cases build/offline-eval/cases.json --out build/offline-eval/gemma \
+            2>&1 | tee build/offline-eval/gemma-run.log \
+            || { tail -n 30 build/offline-eval/gemma-run.log | tr '\n' ' ' | cut -c1-3500 | sed 's/^/::error title=gemma run::/'; echo; exit 1; }
       - name: Qwen3.5-4B Q4_K_M (llama.cpp ${{ env.LLAMA_CPP_TAG }})
         if: contains(inputs.backends || 'qwen gemma', 'qwen')
         continue-on-error: true
         run: |
+          set -o pipefail
           MM=$MMPROJ_Q8_FILE; [ "${{ inputs.mmproj }}" = "BF16" ] && MM=$MMPROJ_BF16_FILE
           /tmp/ev/bin/python tools/offline-eval/run_eval.py --backend qwen --engine /tmp/engine-bin/khodroyar-engine-cli \
             --model /tmp/models/$QWEN_FILE --mmproj /tmp/models/$MM --image-max-tokens ${{ inputs.image_max_tokens || '1024' }} \
             --agent build/offline-eval/app-agent.json --cases build/offline-eval/cases.json --out build/offline-eval/qwen \
-            --label "qwen3.5-4b-q4_k_m+mmproj-${MM##*-}"
+            --label "qwen3.5-4b-q4_k_m+mmproj-${MM##*-}+img${{ inputs.image_max_tokens || '1024' }}" \
+            2>&1 | tee build/offline-eval/qwen-run.log \
+            || { tail -n 30 build/offline-eval/qwen-run.log | tr '\n' ' ' | cut -c1-3500 | sed 's/^/::error title=qwen run::/'; echo; exit 1; }
       - name: Report
         if: always()
         run: |

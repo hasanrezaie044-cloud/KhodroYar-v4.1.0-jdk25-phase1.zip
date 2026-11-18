@@ -28,6 +28,7 @@ def agg(r):
         "skills": {k: f"{v[0]}/{v[1]}" for k, v in sorted(skills.items())},
         "errors": [f"{c['id']}: {c['error']}" for c in r["cases"] if c.get("error")],
         "load_s": round(r["load_s"], 1), "peak_rss_mb": round(r["peak_rss_mb"]), "idle_rss_mb": round(r["idle_rss_mb"]),
+        "peak_anon_mb": round(r.get("peak_anon_mb") or 0), "idle_anon_mb": round(r.get("idle_anon_mb") or 0),
         "median_ttft_s_text": med([s["ttft_s"] for c in r["cases"] if not c.get("image") for t in c["turns"] for s in t["steps"]]),
         "median_ttft_s_image": med([s["ttft_s"] for s in img_steps]),
         "median_image_encode_ms": med([s["image_encode_ms"] for s in img_steps if s.get("image_encode_ms")]),
@@ -50,6 +51,8 @@ def main(paths):
         rows.append((f"skill: {skill}", lambda a, s=skill: a["skills"].get(s, "-")))
     rows += [("model load (s)", lambda a: a["load_s"]), ("peak RSS (MB)", lambda a: a["peak_rss_mb"]),
              ("RSS after load (MB)", lambda a: a["idle_rss_mb"]),
+             ("peak anonymous RSS (MB, not reclaimable)", lambda a: a["peak_anon_mb"]),
+             ("anonymous RSS after load (MB)", lambda a: a["idle_anon_mb"]),
              ("median TTFT text step (s)", lambda a: a["median_ttft_s_text"]),
              ("median TTFT image step (s)", lambda a: a["median_ttft_s_image"]),
              ("median image encode (ms)", lambda a: a["median_image_encode_ms"]),

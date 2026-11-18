@@ -143,7 +143,8 @@ int main(int argc, char ** argv) {
                       {"info", json::parse(khodroyar::info(engine))}, {"backends", backends},
                       {"settings", {{"ctx", ctx}, {"threads", threads}, {"batch", batch}, {"image_max_tokens", image_max_tokens},
                                     {"max_side", max_side}, {"kv", kv_q8 ? "q8_0" : "f16"}}},
-                      {"rss_kb", status_kb("VmRSS:")}, {"peak_rss_kb", status_kb("VmHWM:")}}.dump() << std::endl;
+                      {"rss_kb", status_kb("VmRSS:")}, {"peak_rss_kb", status_kb("VmHWM:")},
+                      {"rss_anon_kb", status_kb("RssAnon:")}, {"rss_file_kb", status_kb("RssFile:")}}.dump() << std::endl;
 
     std::string line;
     while (std::getline(std::cin, line)) {
@@ -169,6 +170,8 @@ int main(int argc, char ** argv) {
         }
         out["rss_kb"] = status_kb("VmRSS:");
         out["peak_rss_kb"] = status_kb("VmHWM:");
+        out["rss_anon_kb"] = status_kb("RssAnon:"); // heap: weights (repacked), KV, compute buffers, checkpoints
+        out["rss_file_kb"] = status_kb("RssFile:"); // file-backed pages (reclaimable by the kernel)
         std::cout << out.dump() << std::endl;
     }
     khodroyar::free(engine);

@@ -127,7 +127,7 @@ struct EngineImpl {
     }
 };
 
-constexpr size_t MAX_CHECKPOINTS = 3;
+constexpr size_t MAX_CHECKPOINTS = 4; // ~50 MB each for Qwen3.5-4B (recurrent state only)
 constexpr size_t CHECKPOINT_TAIL = 4; // tokens left after a checkpoint so a repeated prompt still decodes
 
 bool abort_callback(void * data) {
@@ -213,15 +213,21 @@ void save_checkpoint(EngineImpl & e) {
     if (llama_state_seq_get_data_ext(e.ctx, ck.data.data(), size, 0, LLAMA_STATE_SEQ_FLAGS_PARTIAL_ONLY) != size) return;
     e.checkpoints.erase(std::remove_if(e.checkpoints.begin(), e.checkpoints.end(),
         [&](const Checkpoint & c) { return c.n_entries == ck.n_entries; }), e.checkpoints.end());
-    while (e.checkpoints.size() >= MAX_CHECKPOINTS) e.checkpoints.erase(e.checkpoints.begin());
+    while (e.checkpoints.size() >= MAX_CHECKPOINTS) {
+        // Keep the earliest one: it marks the stable prefix (system prompt) that every request shares.
+        auto anchor = std::min_element(e.checkpoints.begin(), e.checkpoints.end(),
+            [](const Checkpoint & a, const Checkpoint & b) { return a.n_entries < b.n_entries; });
+        e.checkpoints.erase(anchor == e.checkpoints.begin() ? e.checkpoints.begin() + 1 : e.checkpoints.begin());
+    }
     e.checkpoints.push_back(std::move(ck));
 }
 
 // Keep the longest reusable prefix of the memory. Returns the number of entries kept.
-size_t reuse_prefix(EngineImpl & e, const std::vector<Entry> & next) {
+size_t reuse_prefix(EngineImpl & e, const std::vector<Entry> & next, size_t & diverged_at) {
     size_t common = 0;
     while (common < e.cached.size() && common < next.size() && e.cached[common] == next[common]) common++;
     if (common >= next.size()) common = next.size() - 1; // always decode at least one token for logits
+    diverged_at = common;
     // (an image is a single entry, so a prefix never ends inside an image)
 
     auto * mem = llama_get_memory(e.ctx);
@@ -294,7 +300,10 @@ Engine * load(const std::string & model_path, int n_ctx, int n_threads, int n_ba
 
         llama_model_params mp = llama_model_default_params();
         mp.n_gpu_layers = 0;                 // CPU baseline
-        mp.load_mode = LLAMA_LOAD_MODE_MMAP; // file-backed pages; no mlock (Android may reclaim them under pressure)
+        // No mmap: on ARM CPUs with i8mm/dotprod nearly every weight is repacked into an anonymous CPU_REPACK
+        // buffer, while a few small tensors scattered through the file keep the whole mapping resident, so mmap
+        // would hold the weights twice (measured: 6.5 GB RSS vs ~3.9 GB). Plain reads keep one copy.
+        mp.load_mode = LLAMA_LOAD_MODE_NONE;
         e->model = llama_model_load_from_file(e->model_path.c_str(), mp);
         if (!e->model) { LOGE("model load failed"); return nullptr; }
 
@@ -491,10 +500,24 @@ std::string chat(Engine * e, const std::string & request_json, const std::vector
         }
 
         // ---- prompt cache ----
-        const size_t kept = reuse_prefix(*e, tok.entries);
+        size_t diverged_at = 0;
+        const size_t kept = reuse_prefix(*e, tok.entries, diverged_at);
         const size_t n_cached_tokens = kept;
-        const size_t checkpoint_at = (e->needs_checkpoints && tok.entries.size() > CHECKPOINT_TAIL + 1)
-                                         ? tok.entries.size() - CHECKPOINT_TAIL : 0;
+        // Checkpoints (hybrid/recurrent memory can only roll back to a saved state):
+        //  * near the end of this prompt, so the next agent step only pre-fills the new tool result;
+        //  * where this prompt diverged from the previous one, when that point had to be recomputed. With
+        //    progressive tool exposure the tool list (rendered right after the system prompt) changes between
+        //    steps; this checkpoint lets the next change reuse the system prompt instead of starting over.
+        std::vector<size_t> checkpoint_at;
+        if (e->needs_checkpoints) {
+            if (diverged_at > kept + CHECKPOINT_TAIL && diverged_at + CHECKPOINT_TAIL < tok.entries.size()) checkpoint_at.push_back(diverged_at);
+            if (tok.entries.size() > CHECKPOINT_TAIL + 1) checkpoint_at.push_back(tok.entries.size() - CHECKPOINT_TAIL);
+        }
+        auto is_checkpoint = [&](size_t at) { return std::find(checkpoint_at.begin(), checkpoint_at.end(), at) != checkpoint_at.end(); };
+        auto next_checkpoint = [&](size_t from) {
+            for (size_t c : checkpoint_at) if (c > from) return c;
+            return tok.entries.size();
+        };
 
         // ---- prefill ----
         const auto t_prefill = clock_type::now();
@@ -519,11 +542,11 @@ std::string chat(Engine * e, const std::string & request_json, const std::vector
                 e->n_past = new_n_past;
                 e->cached.push_back(en);
                 i++;
-                if (i == checkpoint_at) save_checkpoint(*e);
+                if (is_checkpoint(i)) save_checkpoint(*e);
                 continue;
             }
             size_t end = i;
-            const size_t stop_at = (checkpoint_at > i) ? checkpoint_at : tok.entries.size();
+            const size_t stop_at = next_checkpoint(i);
             while (end < stop_at && tok.chunk_of[end] == nullptr) end++;
             std::vector<llama_token> run;
             run.reserve(end - i);
@@ -535,7 +558,7 @@ std::string chat(Engine * e, const std::string & request_json, const std::vector
             }
             for (size_t k = i; k < end; k++) e->cached.push_back(tok.entries[k]);
             i = end;
-            if (i == checkpoint_at) save_checkpoint(*e);
+            if (is_checkpoint(i)) save_checkpoint(*e);
         }
         const double prefill_ms = ms_since(t_prefill);
         const size_t prefilled = tok.entries.size() - kept;
@@ -611,6 +634,7 @@ std::string chat(Engine * e, const std::string & request_json, const std::vector
         common_json t = common_json::object();
         t["prompt_tokens"] = static_cast<int64_t>(tok.entries.size());
         t["cached_tokens"] = static_cast<int64_t>(n_cached_tokens);
+        t["diverged_at"] = static_cast<int64_t>(diverged_at);
         t["prefilled_tokens"] = static_cast<int64_t>(prefilled);
         t["prefill_ms"] = prefill_ms;
         t["images"] = images_encoded;
