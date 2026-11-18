@@ -124,7 +124,7 @@ internal fun ModelPackList(models: List<AIModelView>, selectedId: String, enable
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-internal fun ChatModelSheet(mode: AiMode, models: AIModelState, selectedId: String, busy: Boolean,
+internal fun ChatModelSheet(mode: AiMode, models: AIModelState, selectedId: String, busy: Boolean, localModelStatus: String,
     onProvider: (AiMode) -> Unit, onPick: (String) -> Unit, onRefresh: () -> Unit, onSettings: () -> Unit, onDismiss: () -> Unit) {
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
         shape = RoundedCornerShape(topStart = 30.dp, topEnd = 30.dp), containerColor = MaterialTheme.colorScheme.surface,
@@ -150,8 +150,14 @@ internal fun ChatModelSheet(mode: AiMode, models: AIModelState, selectedId: Stri
                 if (mode == AiMode.LOCAL) item {
                     Surface(shape = RoundedCornerShape(18.dp), color = MaterialTheme.colorScheme.secondaryContainer, modifier = Modifier.fillMaxWidth()) {
                         Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                            ChatBrandIcon("local"); Text("دستیار آفلاین", Modifier.weight(1f)); Text("—", style = MaterialTheme.typography.labelMedium)
+                            ChatBrandIcon("local"); Column(Modifier.weight(1f)) {
+                                Text("دستیار آفلاین")
+                                Text(localModelStatus, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }; Text(if (localModelStatus.contains("نصب است")) "نصب‌شده" else "مدل ندارد", style = MaterialTheme.typography.labelMedium)
                         }
+                    }
+                    FilledTonalButton(onClick = onSettings, modifier = Modifier.fillMaxWidth().padding(top = 8.dp).testTag("offline-ai-open-management")) {
+                        Text("مدیریت هوش مصنوعی آفلاین")
                     }
                 } else item {
                     ModelPackList(models.models, selectedId, !busy, onPick, includeUnavailable = true)

@@ -3,7 +3,7 @@ package com.khodroyar.app.ai
 /** One message sent to the model. [role] is "system", "user" or "assistant". */
 data class AiMessage(val role: String, val content: String)
 
-/** Local is an explicit command assistant, not a downloaded/generative language model. */
+/** Local mode never uses a network provider: it uses the command assistant unless a verified on-device model is available. */
 enum class AiMode { LOCAL, ONLINE, GAPGPT_DIRECT, OPENROUTER, GEMINI, GROQ, CLOUDFLARE, CEREBRAS, HUGGING_FACE, AVALAI, CLAUDE, FIREWORKS, GPT }
 
 enum class AiErrorKind {

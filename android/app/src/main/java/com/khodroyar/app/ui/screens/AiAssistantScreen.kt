@@ -25,6 +25,7 @@ import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -55,6 +56,7 @@ fun AiAssistantScreen(vm: AiAssistantViewModel = viewModel(), onNavigate: (Agent
     val focusManager = LocalFocusManager.current
     val keyboard = LocalSoftwareKeyboardController.current
     val settings = vm.settings
+    val offlineModel by vm.offlineModelState.collectAsStateWithLifecycle()
     var showSettings by remember { mutableStateOf(false) }
     var showMenu by remember { mutableStateOf(false) }
     var showModels by remember { mutableStateOf(false) }
@@ -146,7 +148,7 @@ fun AiAssistantScreen(vm: AiAssistantViewModel = viewModel(), onNavigate: (Agent
             })
     }
     if (showModels) ChatModelSheet(settings.mode, vm.modelState, vm.modelState.active?.id ?: settings.modelFor(),
-        busy = vm.networkBusy || vm.pending != null, onProvider = { vm.selectChatProvider(it) },
+        busy = vm.networkBusy || vm.pending != null, localModelStatus = offlineModelSummary(offlineModel), onProvider = { vm.selectChatProvider(it) },
         onPick = { id -> vm.selectChatModel(settings.mode, id) { showModels = false } }, onRefresh = { vm.refreshModels() },
         onSettings = ::settingsFromPanel, onDismiss = { showModels = false })
     if (showMenu) ChatOptionsSheet(taskCount = vm.automations.size, enabled = !vm.executingAction,
@@ -176,6 +178,10 @@ fun AiAssistantScreen(vm: AiAssistantViewModel = viewModel(), onNavigate: (Agent
     if (showSettings && !vm.needsConsent) AIProviderSettingsDialog(current = settings, message = vm.testMessage,
         hasKey = vm.hasOpenRouterKey, models = vm.modelState, onRefresh = { vm.refreshModels() }, saving = vm.networkBusy,
         error = vm.settingsError, diagnostics = vm.diagnostics, ledger = vm.usageLedger,
+        offlineModel = offlineModel,
+        offline = OfflineModelActions(metered = vm::offlineNetworkMetered, download = vm::downloadOfflineModel,
+            pause = vm::pauseOfflineModelDownload, cancel = vm::cancelOfflineModelDownload,
+            delete = vm::deleteOfflineModel, redownload = vm::redownloadOfflineModel),
         onClearHistory = { showSettings = false; confirmClear = true },
         onEvaluate = { new, key, forget -> vm.configure(new, key, forget) { vm.testModels() } },
         onTest = { new, key, forget -> vm.configure(new, key, forget) { vm.testConnection() } },
