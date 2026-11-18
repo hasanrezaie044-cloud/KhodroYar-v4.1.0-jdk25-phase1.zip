@@ -118,6 +118,33 @@ class BackupIntegrityIntegrationTest {
         assertEquals(TEST_KEY, settings.current.neshanApiKey)
     }
 
+    @Test fun missingAttachmentDoesNotBlockBackupAndIsReportedWithoutLeakingItsPath() = runBlocking {
+        val missingPath = File(Attachments.dir(context), "missing-${UUID.randomUUID()}.jpg").absolutePath
+        val service = ServiceEntity(
+            id = "missing-attachment-${UUID.randomUUID()}", date = "1404/04/14", type = "night", carType = "soren",
+            km = 10.0, hours = 0.0, workHours = 0.0, startTime = "", endTime = "", origin = "تهران",
+            destination = "کرج", passengers = "", requestNumber = "", tollCount = 0, missionFood = 0.0,
+            missionToll = 0.0, missionFine = 0.0, income = 10000, timestamp = "2025-07-06T10:00:00Z",
+            attachmentPath = missingPath,
+        )
+        db.services().insertAll(listOf(service))
+
+        val backup = repository.exportBackupJson()
+        assertFalse("A stale device path must not be exported", backup.contains(missingPath))
+        val root = JSONObject(backup)
+        assertEquals(1, root.getJSONObject("backupManifest").getInt("omittedAttachmentCount"))
+        assertEquals(1, BackupAttachmentCodec.omittedAttachmentCount(backup))
+        assertEquals("", root.getJSONArray("services").getJSONObject(0).getString("attachmentPath"))
+        val preview = repository.previewBackup(backup)
+        assertTrue(preview.error ?: "", preview.valid)
+
+        db.clearAllTables()
+        val restored = repository.restoreBackup(backup)
+        assertTrue(restored.exceptionOrNull()?.message ?: "Restore failed", restored.isSuccess)
+        assertEquals(service.id, db.services().allOnce().single().id)
+        assertEquals("", db.services().allOnce().single().attachmentPath)
+    }
+
     @Test fun exportedBackupStreamsToDownloadsAndReadsBackExactly() = runBlocking {
         val name = "backup-writer-${UUID.randomUUID()}.json"
         val expected = "{\"services\":[],\"message\":\"${"پشتیبان".repeat(32768)}\"}"

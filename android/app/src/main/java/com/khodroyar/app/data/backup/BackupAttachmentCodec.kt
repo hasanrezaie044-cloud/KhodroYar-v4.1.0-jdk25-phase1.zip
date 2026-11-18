@@ -57,6 +57,7 @@ object BackupAttachmentCodec {
         val content = linkedMapOf<String, ByteArray>()
         val referenced = linkedSetOf<String>()
         var total = 0L
+        var omittedAttachmentCount = 0
 
         fun rewrite(key: String): JsonArray {
             val rows = root[key]?.jsonArray ?: return JsonArray(emptyList())
@@ -64,21 +65,34 @@ object BackupAttachmentCodec {
                 val row = element.jsonObject
                 val path = row["attachmentPath"]?.let { if (it == JsonNull) "" else it.jsonPrimitive.content }?.trim().orEmpty()
                 if (path.isEmpty()) element else {
-                    require(Attachments.isOwn(context, path)) { "پیوست این رکورد داخل پوشهٔ امن برنامه نیست؛ برای جلوگیری از پشتیبان ناقص، ابتدا آن را دوباره پیوست کنید." }
                     val file = File(path)
-                    require(file.isFile && file.canRead()) { "فایل پیوست پیدا نشد: ${file.name}" }
-                    val length = file.length()
-                    require(length in 1..MAX_FILE_BYTES) { "اندازهٔ یکی از پیوست‌ها خارج از محدودهٔ پشتیبانی است." }
-                    val bytes = file.readBytes()
-                    val digest = sha256(bytes)
-                    if (digest !in content) {
-                        total += bytes.size
-                        require(total <= MAX_TOTAL_BYTES) { "حجم پیوست‌ها بیش از حد مجاز پشتیبان JSON است؛ فایل‌ها را جداگانه ذخیره کنید." }
-                        require(content.size < MAX_FILES) { "تعداد پیوست‌ها بیش از حد مجاز است." }
-                        content[digest] = bytes
+                    // Keep the database record, but don't let a stale or inaccessible
+                    // attachment path prevent backing up every other record. The actual
+                    // missing file cannot be restored, so clear only that path in the
+                    // exported copy and record a visible warning in the manifest.
+                    if (!Attachments.isOwn(context, path) || !file.isFile || !file.canRead() || file.length() == 0L) {
+                        omittedAttachmentCount++
+                        JsonObject(row + ("attachmentPath" to JsonPrimitive("")))
+                    } else {
+                        val length = file.length()
+                        require(length in 1..MAX_FILE_BYTES) { "اندازهٔ یکی از پیوست‌ها خارج از محدودهٔ پشتیبانی است." }
+                        val bytes = runCatching { file.readBytes() }.getOrNull()
+                        if (bytes == null) {
+                            omittedAttachmentCount++
+                            JsonObject(row + ("attachmentPath" to JsonPrimitive("")))
+                        } else {
+                            require(bytes.size.toLong() == length) { "فایل پیوست هنگام پشتیبان‌گیری تغییر کرد؛ دوباره تلاش کنید." }
+                            val digest = sha256(bytes)
+                            if (digest !in content) {
+                                total += bytes.size
+                                require(total <= MAX_TOTAL_BYTES) { "حجم پیوست‌ها بیش از حد مجاز پشتیبان JSON است؛ فایل‌ها را جداگانه ذخیره کنید." }
+                                require(content.size < MAX_FILES) { "تعداد پیوست‌ها بیش از حد مجاز است." }
+                                content[digest] = bytes
+                            }
+                            referenced += digest
+                            JsonObject(row + ("attachmentPath" to JsonPrimitive(PREFIX + digest)))
+                        }
                     }
-                    referenced += digest
-                    JsonObject(row + ("attachmentPath" to JsonPrimitive(PREFIX + digest)))
                 }
             })
         }
@@ -97,6 +111,7 @@ object BackupAttachmentCodec {
             put("createdAt", JsonPrimitive(Instant.now().toString()))
             put("payloadSha256", JsonPrimitive(sha256(payloadJson.toByteArray(Charsets.UTF_8))))
             put("attachmentCount", JsonPrimitive(referenced.size))
+            put("omittedAttachmentCount", JsonPrimitive(omittedAttachmentCount))
             put("attachments", JsonArray(referenced.sorted().map { digest ->
                 val bytes = content.getValue(digest)
                 buildJsonObject {
@@ -110,6 +125,22 @@ object BackupAttachmentCodec {
         output[MANIFEST] = manifest
         output[DATA] = data
         return JsonObject(output).toString()
+    }
+
+    /** Reads the lightweight warning count emitted by [pack] without parsing large base64 payloads. */
+    fun omittedAttachmentCount(sourceJson: String): Int {
+        val manifestIndex = sourceJson.indexOf("\"$MANIFEST\"")
+        if (manifestIndex < 0) return 0 // legacy backup, or no omissions
+        val key = "\"omittedAttachmentCount\""
+        val keyIndex = sourceJson.indexOf(key, manifestIndex + MANIFEST.length + 2)
+        if (keyIndex < 0) return 0 // older full-backup manifest
+        val colon = sourceJson.indexOf(':', keyIndex + key.length)
+        if (colon < 0) return 0
+        var start = colon + 1
+        while (start < sourceJson.length && sourceJson[start].isWhitespace()) start++
+        var end = start
+        while (end < sourceJson.length && sourceJson[end].isDigit()) end++
+        return sourceJson.substring(start, end).toIntOrNull() ?: 0
     }
 
     /** Validates manifest, payload and all file hashes before exposing a restore preview. */
