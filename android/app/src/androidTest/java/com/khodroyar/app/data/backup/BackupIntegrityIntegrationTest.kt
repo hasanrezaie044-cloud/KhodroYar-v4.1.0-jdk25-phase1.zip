@@ -6,7 +6,24 @@ import android.os.Environment
 import android.provider.MediaStore
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import com.khodroyar.app.ai.AgentOperation
+import com.khodroyar.app.ai.AgentScratchpad
+import com.khodroyar.app.ai.AgentTask
+import com.khodroyar.app.ai.AgentTaskStatus
+import com.khodroyar.app.ai.AiMode
+import com.khodroyar.app.ai.AssistantAgentTools
+import com.khodroyar.app.ai.ChatEntry
+import com.khodroyar.app.ai.ChatRole
+import com.khodroyar.app.ai.Conversation
+import com.khodroyar.app.ai.ConversationRepository
+import com.khodroyar.app.ai.ProviderApiKeyStore
+import com.khodroyar.app.automation.AutomationRule
+import com.khodroyar.app.automation.AutomationStore
+import com.khodroyar.app.automation.RepeatFrequency
+import com.khodroyar.app.automation.RepeatSchedule
+import com.khodroyar.app.automation.RuleKind
 import com.khodroyar.app.core.rates.Rates
+import com.khodroyar.app.data.db.RecordAttachmentEntity
 import com.khodroyar.app.data.attachments.Attachments
 import com.khodroyar.app.data.db.AppDatabase
 import com.khodroyar.app.data.db.InsuranceEntity
@@ -202,7 +219,95 @@ class BackupIntegrityIntegrationTest {
         assertEquals("stay-put-service", db.services().allOnce().single().id)
     }
 
+    private suspend fun clearAssistantData() {
+        ConversationRepository(context).clearAll()
+        AssistantAgentTools.memoryFor(context).clear()
+        AssistantAgentTools.tasksFor(context).clear()
+        AutomationStore.get(context).change { emptyList() }
+    }
+
+    @Test fun assistantDataInstallmentsAndRecordAttachmentsRoundTripWithoutApiKeys() = runBlocking {
+        val groqKey = "gsk_" + "k".repeat(48)
+        val openRouterKey = "sk-or-v1-" + "b".repeat(64)
+        ProviderApiKeyStore(context, AiMode.GROQ).save(groqKey)
+        ProviderApiKeyStore(context, AiMode.OPENROUTER).save(openRouterKey)
+        try {
+            clearAssistantData()
+            ConversationRepository(context).save(Conversation("conv-backup", "گفتگوی آزمایشی", 1L, 2L,
+                listOf(ChatEntry("m1", ChatRole.USER, "هزینهٔ امروز چقدر بود؟", 1L), ChatEntry("m2", ChatRole.ASSISTANT, "۲۵۰ هزار تومان", 2L)), AiMode.GROQ))
+            val fact = requireNotNull(AssistantAgentTools.memoryFor(context).remember("خودروی من سورن است", "vehicle"))
+            val task = AgentTask("task-backup-1", "conv-backup", "ثبت هزینه", listOf(AgentScratchpad.Step("ثبت", AgentScratchpad.Status.DONE, "add_expense")),
+                listOf(AgentOperation("op-backup-1", "add_expense", true, "ثبت شد", 3L)), AgentTaskStatus.COMPLETED, 1L, 3L)
+            assertTrue(AssistantAgentTools.tasksFor(context).upsert(task))
+            AutomationStore.get(context).change { listOf(AutomationRule(RULE_ID, RuleKind.TRAFFIC, "ترافیک صبح",
+                RepeatSchedule(RepeatFrequency.DAILY, "1404/01/01"), enabled = true)) }
+            val loanId = repository.addLoan("وام آزمایشی", 12_000_000.0, 0.0, "1404/01/01", 12)
+            val bytes = byteArrayOf(0xff.toByte(), 0xd8.toByte(), 1, 2, 3, 4, 0xff.toByte(), 0xd9.toByte())
+            val photo = File(File(context.filesDir, "record-attachments").apply { mkdirs() }, "backup-${UUID.randomUUID()}.jpg").apply { writeBytes(bytes); createdFiles += this }
+            repository.addAttachment("loan", loanId, RecordAttachmentEntity(UUID.randomUUID().toString(), "", "", photo.absolutePath, "image/jpeg", 5L))
+
+            val backup = repository.exportBackupJson()
+            assertFalse("Groq key must never be in a backup", backup.contains(groqKey))
+            assertFalse("OpenRouter key must never be in a backup", backup.contains(openRouterKey))
+            assertFalse(backup.contains("gsk_")); assertFalse(backup.contains("sk-or-"))
+            val preview = repository.previewBackup(backup)
+            assertTrue(preview.error ?: "", preview.valid)
+            assertEquals(1, preview.counts.conversations); assertEquals(1, preview.counts.memoryFacts)
+            assertEquals(1, preview.counts.agentTasks); assertEquals(1, preview.counts.automations)
+            assertEquals(12, preview.counts.loanInstallments); assertEquals(1, preview.counts.recordAttachments)
+
+            db.clearAllTables(); clearAssistantData(); photo.delete()
+            val restored = repository.restoreBackup(backup)
+            assertTrue(restored.exceptionOrNull()?.message ?: "Restore failed", restored.isSuccess)
+            assertTrue(restored.getOrThrow().skipped.isEmpty())
+            assertEquals("conv-backup", ConversationRepository(context).load().single().id)
+            assertEquals(fact.text, AssistantAgentTools.memoryFor(context).all().single().text)
+            assertEquals(task.operations, AssistantAgentTools.tasksFor(context).all().single().operations)
+            val rule = AutomationStore.get(context).rules.value.single()
+            assertEquals(RULE_ID, rule.id); assertFalse("restored automations stay paused", rule.enabled)
+            assertEquals(12, db.loanInstallments().forLoanOnce(loanId).size)
+            val attachment = db.attachments().allOnce().single()
+            assertArrayEquals(bytes, File(attachment.filePath).readBytes())
+            createdFiles += File(attachment.filePath)
+            // Device keys are neither exported nor overwritten, and the owner is told so.
+            assertEquals(groqKey, ProviderApiKeyStore(context, AiMode.GROQ).read())
+            assertTrue(AssistantBackup.keyStatusMessage(context).contains("هرگز در پشتیبان نیستند"))
+
+            // Restoring the same backup again replaces, never duplicates.
+            assertTrue(repository.restoreBackup(backup).isSuccess)
+            assertEquals(1, ConversationRepository(context).load().size)
+            assertEquals(1, AssistantAgentTools.memoryFor(context).all().size)
+            assertEquals(12, db.loanInstallments().allOnce().size)
+        } finally {
+            clearAssistantData()
+            ProviderApiKeyStore(context, AiMode.GROQ).clear(); ProviderApiKeyStore(context, AiMode.OPENROUTER).clear()
+        }
+    }
+
+    @Test fun oldBackupWithoutAssistantPartKeepsAssistantDataAndMalformedPartChangesNothing() = runBlocking {
+        try {
+            clearAssistantData()
+            AssistantAgentTools.memoryFor(context).remember("گزارش کوتاه می‌خواهم", "preference")
+            val legacy = """{"services":[],"fuels":[],"maintenances":[],"version":"3.0"}"""
+            assertTrue(repository.restoreBackup(legacy).isSuccess)
+            assertEquals(1, AssistantAgentTools.memoryFor(context).all().size)
+
+            db.services().insertAll(listOf(ServiceEntity(
+                id = "keep-service", date = "1404/01/01", type = "night", carType = "soren", km = 1.0,
+                hours = 0.0, workHours = 0.0, startTime = "", endTime = "", origin = "", destination = "",
+                passengers = "", requestNumber = "", tollCount = 0, missionFood = 0.0, missionToll = 0.0,
+                missionFine = 0.0, income = 1, timestamp = "2025-03-21T00:00:00Z",
+            )))
+            val malformed = """{"services":[],"fuels":[],"maintenances":[],"assistant":{"version":99}}"""
+            assertFalse(repository.previewBackup(malformed).valid)
+            assertFalse(repository.restoreBackup(malformed).isSuccess)
+            assertEquals("keep-service", db.services().allOnce().single().id)
+            assertEquals(1, AssistantAgentTools.memoryFor(context).all().size)
+        } finally { clearAssistantData() }
+    }
+
     companion object {
+        private const val RULE_ID = "6f1d2c3b-4a59-4e8f-9b7a-0c1d2e3f4a5b"
         private const val TEST_KEY = "TEST-NESHAN-API-KEY-NOT-A-REAL-CREDENTIAL"
     }
 }

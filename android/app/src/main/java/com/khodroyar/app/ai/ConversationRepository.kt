@@ -18,7 +18,7 @@ import java.util.UUID
 class ConversationRepository(context: Context) {
 
     private val file = File(context.applicationContext.filesDir, "ai_conversations.json")
-    private companion object { val lock = Any() }
+    private companion object { val lock = Any(); const val MAX_BACKUP_CONVERSATIONS = 2000 }
 
     suspend fun load(): List<Conversation> = withContext(Dispatchers.IO) {
         synchronized(lock) { readAll() }
@@ -45,6 +45,32 @@ class ConversationRepository(context: Context) {
         Unit
     }
 
+    /**
+     * Full-backup form: texts are redacted again and image references are dropped, because chat
+     * images live outside the backup and would otherwise point at files that do not exist.
+     */
+    fun exportForBackup(): JSONArray = synchronized(lock) {
+        encode(readAll().map { c -> c.copy(title = AiTextSafety.redact(c.title), messages = c.messages.map { it.copy(text = AiTextSafety.redact(it.text), image = null) }) })
+    }
+
+    /** Parses a backup array without touching the stored file; malformed entries are rejected, not guessed. */
+    fun parseBackup(array: JSONArray): List<Conversation> {
+        require(array.length() <= MAX_BACKUP_CONVERSATIONS) { "تعداد گفتگوهای پشتیبان بیش از حد مجاز است." }
+        return (0 until array.length()).map { i ->
+            val o = array.optJSONObject(i)
+            // Stricter than the on-disk reader: a crafted backup must look like an exported conversation.
+            val shaped = o != null && (o.opt("id") as? String)?.let { it.isNotBlank() && it.length <= 64 } == true && o.optJSONArray("messages") != null
+            requireNotNull(o?.takeIf { shaped }?.let(::parse)) { "گفتگوی شمارهٔ ${i + 1} در پشتیبان معتبر نیست." }
+        }
+            .map { c -> c.copy(messages = c.messages.map { it.copy(image = null) }) }.distinctBy { it.id }
+    }
+
+    /** Replaces the whole history (restore never duplicates conversations) and reads it back. */
+    fun replaceAllBlocking(list: List<Conversation>): Boolean = synchronized(lock) {
+        writeAll(list.sortedByDescending { it.updatedAt })
+        readAll().map { it.id }.toSet() == list.map { it.id }.toSet()
+    }
+
     private fun readAll(): List<Conversation> {
         if (!file.exists()) return emptyList()
         return try {
@@ -56,6 +82,16 @@ class ConversationRepository(context: Context) {
     }
 
     private fun writeAll(list: List<Conversation>) {
+        val arr = encode(list)
+        val tmp = File(file.parentFile, file.name + ".tmp")
+        tmp.writeText(arr.toString(), Charsets.UTF_8)
+        if (!tmp.renameTo(file)) {
+            file.writeText(arr.toString(), Charsets.UTF_8)
+            tmp.delete()
+        }
+    }
+
+    private fun encode(list: List<Conversation>): JSONArray {
         val arr = JSONArray()
         list.forEach { c ->
             arr.put(JSONObject().apply {
@@ -70,12 +106,7 @@ class ConversationRepository(context: Context) {
                 })
             })
         }
-        val tmp = File(file.parentFile, file.name + ".tmp")
-        tmp.writeText(arr.toString(), Charsets.UTF_8)
-        if (!tmp.renameTo(file)) {
-            file.writeText(arr.toString(), Charsets.UTF_8)
-            tmp.delete()
-        }
+        return arr
     }
 
     private fun parse(o: JSONObject?): Conversation? {
@@ -89,7 +120,7 @@ class ConversationRepository(context: Context) {
         }
         val id = o.optString("id", "")
         if (id.isBlank()) return null
-        val mode = runCatching { AiMode.valueOf(o.optString("mode", "ONLINE")) }.getOrDefault(AiMode.ONLINE)
+        val mode = AiMode.fromStored(o.optString("mode", ""), absent = AiMode.LOCAL)
         return Conversation(id, AiTextSafety.redact(o.optString("title", "")), o.optLong("createdAt", 0L), o.optLong("updatedAt", 0L), msgs, mode, o.optString("accountScope", ""), o.optInt("contextStart", 0).coerceIn(0, msgs.size))
     }
 }

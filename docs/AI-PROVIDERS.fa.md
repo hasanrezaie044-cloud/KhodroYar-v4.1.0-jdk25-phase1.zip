@@ -1,55 +1,19 @@
-# اتصال‌های دستیار۵.۶.۳ — بازبینی اسناد و wire، نه آزمون حساب زنده
+# اتصال‌های دستیار ۵.۸.۰
 
-سطح پشتیبانی این نسخه دقیقاً **دستیار آفلاین، OpenRouter، Gemini، Groq، Claude، Fireworks AI و GPT** است. Cloudflare، Cerebras، Hugging Face، AvalAI، GapGPT و بک‌اند قدیمی در picker و dispatch فعال نیستند؛ prefs قدیمی آن‌ها مهاجرت می‌کند و مسیر جایگزین مخفی نیستند. برنامه هیچ سقف روزانه/توکن/نرخ مصرف ندارد و هیچ خرید، billing، فعال‌سازی کارت یا اعتبار واقعی در توسعه/تست انجام نمی‌دهد. سهمیه، هزینه و دسترسیِ حساب نزد سرویس تعیین می‌شود.
+این نسخه دقیقاً **سه** سامانهٔ AI دارد:
 
-| اتصال | API و کشف مدل | ابزار و تصویر | هزینه/منطقه و مرز ادعا |
-|---|---|---|---|
-| دستیار آفلاین | parser و ابزارهای همین دستگاه؛ مدل مولد یا دانلودی نیست | ابزارهای قبلی با gate تأیید؛ تصویر آنلاین تحلیل نمی‌شود | بدون AI شبکه؛ ثبت دستی و محاسبات مستقل‌اند |
-| OpenRouter | `/api/v1/models`، `/models/user`، `/models/{exact-id}/endpoints`؛ Chat Completions/SSE | قابلیت‌های مشترک فهرست عمومی و فهرست مجاز کلید؛ متن‌تنها و context کوچک هم مجازند. تصویر `image_url` فقط برای ورودی تصویری اعلامی؛ ابزار فقط اگر پشتیبانی شود | همهٔ فیلدهای قیمت دقیقاً صفر، Guardrail و endpoint تازه، `max_price=0`، منع fallback پولی. رایگان دائمی/بدون سهمیه تضمین نمی‌شود؛ دسترسی ایران تضمین نشده و دور زده نمی‌شود |
-| Gemini | REST رسمی `v1beta/models` و `generateContent/streamGenerateContent`؛ IDهای مستند در تقاطع فهرست حساب: `gemini-2.5-flash-lite`، `gemini-3.5-flash-lite`، `gemini-3.8-flash` | متن/SSE و تصویر `inlineData`؛ ابزار سوابق برنامه به علت شرایط دادهٔ Free غیرفعال است. ابزار ساختگی فقط در evaluator اختیاری | تأیید مالک برای پروژهٔ Free بدون billing لازم است، اثبات API طرح نیست. ایران در مناطق مجاز نیست؛ حالت ایران/نامعلوم مسدود. دادهٔ Free ممکن است برای بهبود محصولات استفاده شود؛۲.۵Flash-Lite برای همهٔ پروژه‌های تازه قابل اتکا نیست |
-| Groq | `https://api.groq.com/openai/v1/models` و Chat Completions؛ `openai/gpt-oss-20b`، `openai/gpt-oss-120b`، `qwen/qwen3.8-27b` فقط اگر در فهرست رسمیِ کلید باشند | native tools/SSE؛ اجرای ابزار ترتیبی؛ برای این allowlist تصویر اعلام نشده و ارسال تصویری مسدود است | تأیید Free بدون billing لازم؛ Developer پولی است. quota حساب از هدر معتبر همان پاسخ، نه عدد نمونه/سهمیهٔ محلی. دسترسی ایران اثبات نشده و حالت ایران/نامعلوم مسدود است |
-| Claude | `https://api.anthropic.com/v1/models?limit=100&after_id=...` با pagination رسمی؛ فقط مدل active از فهرست حساب؛ Messages native | `capabilities.image_input.supported` برای تصویر؛ بلوک image/base64 و tool_use/tool_result، پیام شروع/پایان و مدل SSE بررسی می‌شوند. قابلیت server_tools به‌جای local tools فرض نمی‌شود؛ native local tools قرارداد Messages مدل‌های active است | طبق حساب Anthropic، ممکن است پولی باشد؛ پذیرش شرایط هزینه/سهمیه و منطقهٔ مجاز لازم. `max_tokens` الزامی از `max_tokens` رسمی همان مدل گرفته می‌شود؛ نبود metadata با عدد محلی جایگزین نمی‌شود |
-| Fireworks AI | `https://api.fireworks.ai/v1/accounts/fireworks/models?pageSize=200&pageToken=...` با pagination؛ inference در `/inference/v1/chat/completions` | camelCase رسمی `contextLength`، `conversationConfig`، `supportsImageInput`، `supportsTools`، `supportsServerless` و `state=READY`؛ فقط مدل عمومی serverless/chat-ready. `deprecationDate` رسمی پس از رسیدن تاریخ نامجاز می‌شود. تصویر `image_url`؛ tools فقط با اعلام پشتیبانی | طبق حساب Fireworks، ممکن است پولی باشد؛ پذیرش شرایط حساب و منطقه لازم. هیچ deployment، خرید یا جایگزینِ حساب/مدل ساخته نمی‌شود. فقط فهرست عمومی serverless، نه deployment خصوصی و پولیِ خودکار |
-| GPT | `https://api.openai.com/v1/models` و `/chat/completions`؛ ID دقیق از فهرست حساب؛ مدل‌های صوت/realtime/تصویرساز/codex/جستجو در این چت وارد نمی‌شوند | رجیستری مستقل و دقیق برای tools و تصویر، با منابع جدول پایین؛ وجود alias پاسخ یا prefix مدل جدید دلیل پشتیبانی تصویر نیست. برای۵nano تصویر تأیید نشده و ارسال تصویری مسدود است. مدل تازهٔ ناشناخته متن‌تنها می‌ماند تا قابلیت مستند شود. `/models` معمولاً context نمی‌دهد: UI `—`، نه ظرفیت حدسی. `image_url` و tool_calls/SSE واقعی | طبق حساب OpenAI، ممکن است پولی باشد؛ پذیرش شرایط حساب و منطقه لازم. alias پاسخ فقط از رابطهٔ دقیق ثبت‌شده و در تقاطع فهرست زنده؛ snapshot هرگز request/fallback حدسی نیست. هیچ اعتبار/فروش/انتشار یا آزمون زنده‌ای انجام نشده است |
+| سامانه | کار | داده و هزینه |
+|---|---|---|
+| دستیار آفلاین | `LocalAssistant` + `LocalIntentParser` + `LocalNumbers`؛ قطعی، ارقام فارسی/عربی، عبارات محاوره‌ای، مبلغ و تاریخ شمسی/نسبی. توانایی‌اش محدود است و همین را صادقانه می‌گوید. | بدون شبکه، بدون مدل دانلودی |
+| OpenRouter | `/api/v1/models`، `/models/user`، `/models/{id}/endpoints`؛ Chat Completions/SSE با native tools و تصویر واقعی برای مدل‌های تصویری. فقط مدل‌های قیمت‌صفر، `max_price` صفر و منع جایگزینی پولی. | کلید شخصی کاربر (Keystore) |
+| Groq | `https://api.groq.com/openai/v1/models` و `/chat/completions`؛ فهرست مجاز `openai/gpt-oss-20b`، `openai/gpt-oss-120b` و `qwen/qwen3.8-27b` (تصویر). | کلید شخصی کاربر؛ مشروط به حساب Free بدون billing |
 
-## رفتار مشترک
+حذف‌شده‌ها: بک‌اند سفارشی و GapGPT (مستقیم/پراکسی)، Gemini، Claude، Fireworks AI، GPT و Cloudflare؛ همچنین توصیف‌گرهای قدیمی Cerebras، Hugging Face و AvalAI.
+حالت ذخیره‌شدهٔ قدیمی هنگام خواندن به **دستیار آفلاین** تبدیل می‌شود و هرگز بی‌صدا به سرویس شبکه‌ای نمی‌رود. کلیدهای اتصال‌های حذف‌شده هنگام باز شدن دستیار از دستگاه پاک می‌شوند.
 
-- انتخاب اولیه/دستی از فراداده است؛ benchmark نه پیش‌شرط چت است نه کار پس‌زمینه. آزمون دستی چهار موردِ ساختگی با هشدار حداکثر مصرف دارد؛ خواندن فراداده اثبات inference یا کیفیت فارسی نیست.
-- یک پرواز فعال، بدون retry خودکار. خطای auth/billing/credit/quota/region چه در HTTP و چه در SSE همان flight را متوقف می‌کند. پیام کوتاه با نام اتصال، حفظ گفتگو/پیش‌نویس، انتخاب دستی یا انتظار؛ بدون جایگزینی خودکار ارائه‌دهنده/مدل پولی.
-- هزینهٔ account-based به‌اشتباه Free معرفی نمی‌شود. سیاست OpenRouter صفرقیمت، شرط انتخابِ اتصال است نه سقف تعداد درخواست/توکن. نمونهٔ عددی quota مستند هم باقی‌ماندهٔ زنده یا مجوز مصرف نیست.
-- ابزارها حداقل خلاصهٔ مرتبط می‌فرستند؛ تصویر فقط انتخاب صریح کاربر. اصل دیتابیس، URI، EXIF/GPS، کلید، فایل نامرتبط یا سند خصوصی برای تست ارسال نمی‌شود. فایل‌های پیوست محلی بیرون از backup هستند.
-- تشخیص مجازبودن منطقه از IP/موقعیت جمع‌آوری نمی‌شود؛ مالک باید منطقه/حساب مجاز را تأیید کند. هیچ راهنمای دورزدن یا تضمین مجوز ایران ارائه نمی‌شود. شواهد Free مستقیم فعلاً تا۲۰۲۶-۱۲-۱۰ معتبرند؛ انقضا fail-closed است، نه مصرف با شرایط قدیمی.
+قواعد مشترک:
 
-## منابع پیاده‌سازی
-
-این‌ها اسناد/SDK رسمی‌اند، نه اثبات حساب زنده. APIها و مدل‌ها ممکن است تغییر کنند؛ پاسخ و مجوز معتبر همان حساب ملاک است.
-
-- [OpenRouter مدل‌ها](https://openrouter.ai/docs/api_reference/models)، [provider routing](https://openrouter.ai/docs/guides/routing/provider-selection).
-- [Google قیمت](https://ai.google.dev/gemini-api/docs/pricing)، [مناطق](https://ai.google.dev/gemini-api/docs/available-regions)، [سهمیه](https://ai.google.dev/gemini-api/docs/rate-limits).
-- [Groq Free/Developer](https://console.groq.com/docs/billing-faqs)، [rate limits](https://console.groq.com/docs/rate-limits)، [tools](https://console.groq.com/docs/tool-use/overview)، [شرایط](https://console.groq.com/docs/legal/services-agreement).
-- [Anthropic ModelInfo](https://github.com/anthropics/anthropic-sdk-python/blob/main/src/anthropic/types/model_info.py)، [ModelCapabilities](https://github.com/anthropics/anthropic-sdk-python/blob/main/src/anthropic/types/model_capabilities.py)، [Messages](https://docs.anthropic.com/en/api/messages).
-- Fireworks SDK، revision `967134afcb7690223bef31f003cad1897bb18629`: [Model camelCase](https://github.com/fw-ai-external/python-sdk/blob/967134afcb7690223bef31f003cad1897bb18629/src/fireworks/types/model.py)، [list/pagination](https://github.com/fw-ai-external/python-sdk/blob/967134afcb7690223bef31f003cad1897bb18629/src/fireworks/resources/models.py)، [TypeDate](https://github.com/fw-ai-external/python-sdk/blob/967134afcb7690223bef31f003cad1897bb18629/src/fireworks/types/type_date.py).
-- OpenAI Cookbook، revision `2658c92cd4cd562504571b9d7491fc51524a7dc9` و OpenAPI رسمی revision `f437d0eccb8ca02f47be33ccc243b849b5bb0b74` مستقیماً از Git blob خوانده و بازبینی شدند؛ جزئیات مدرک هر قابلیت پایین است. صرف وجود enum نام مدل در SDK مدرک context/vision نیست.
-- نشان برندها: Lobe Icons با MIT، revision `55746b0b082258211121c70bd26e6878fd3bd292`؛ متن کامل مجوز در APK و `THIRD_PARTY_NOTICES.md`. علائم تجاری متعلق به مالکان‌اند؛ تأیید یا وابستگی ادعا نمی‌شود.
-
-## ممیزی دقیق GPT: هویت پاسخ جدا از قابلیت است
-
-فهرست کلید باید ID انتخابی و هر ID پاسخِ مجاز را واقعاً اعلام کند. `OpenAIResponseIdentities` فقط یک جدول صریح از نام‌ها/نسخه‌های منتشرشدهٔ همان خانواده دارد؛ نه prefix/تاریخ حدسی و نه ادعای اینکه alias همیشه به «آخرین» snapshot جدول اشاره دارد. یک ID دقیقِ انتخاب‌شده، snapshot دیگر را نمی‌پذیرد. این جدول **هیچ درخواست جایگزین** نمی‌فرستد و از روی آن نه vision و نه tools استخراج نمی‌شود.
-
-- معنای alias و نسخهٔ pinned در [Continuous model upgrades](https://github.com/openai/openai-cookbook/blob/2658c92cd4cd562504571b9d7491fc51524a7dc9/examples/data/oai_docs/models.txt) مستند است. نگاشت تاریخی همان صفحه برای۴o قدیمی است و به‌عنوان «نسخهٔ جاری» استفاده نشده است.
-- موجودیت دقیق snapshotهای۴.۱/۵ و۴o/mini در `ModelIdsShared` از [OpenAPI رسمیِ pinned](https://github.com/openai/openai-openapi/blob/f437d0eccb8ca02f47be33ccc243b849b5bb0b74/openapi.json) آمده است. این فقط inventory هویت‌ها/اعلان بازنشستگی است، نه مدرک ظرفیت/قابلیت یا مجوز حساب.
-- جفت‌های پاسخ مجاز:۴o→`2024-08-06` یا`2024-11-20`؛۴o-mini→`2024-07-18`؛۴.۱ و۴.۱-mini→`2025-04-14`؛۵،۵-mini،۵-nano→`2025-08-07`. همه با نام کامل و فقط در تقاطع catalogue همان کلید. رابطهٔ۴o-mini در خروجی ثبت‌شدهٔ Prompt Caching101 هم دیده می‌شود؛ راهنمای مدل‌گزینی،۴.۱/mini را با snapshot صریح نشان می‌دهد.
-
-منابع جدول همه از همان revision Cookbook بالاست و محتوای واقعی‌شان خوانده شده است؛ نمونه‌ها اجرا نشده‌اند:
-
-| مدل‌های دقیقِ رجیستری | تصویر | ابزار | مدرک مستقل |
-|---|---|---|---|
-|`gpt-4o`،`gpt-4o-2024-08-06`،`gpt-4o-2024-11-20`|بله|بله|[Vision+Function Calling، شناسهٔ۱۱-۲۰](https://github.com/openai/openai-cookbook/blob/2658c92cd4cd562504571b9d7491fc51524a7dc9/examples/multimodal/Using_GPT4_Vision_With_Function_Calling.ipynb)، [Prompt Caching101: تصویر با۰۸-۰۶ و tools](https://github.com/openai/openai-cookbook/blob/2658c92cd4cd562504571b9d7491fc51524a7dc9/examples/Prompt_Caching101.ipynb)، [vision fine-tuning/base۴o](https://github.com/openai/openai-cookbook/blob/2658c92cd4cd562504571b9d7491fc51524a7dc9/examples/multimodal/Vision_Fine_tuning_on_GPT4o_for_Visual_Question_Answering.ipynb)|
-|`gpt-4o-mini`،`gpt-4o-mini-2024-07-18`|بله|بله|[Introduction to GPT4o: متن+تصویر mini](https://github.com/openai/openai-cookbook/blob/2658c92cd4cd562504571b9d7491fc51524a7dc9/examples/gpt4o/introduction_to_gpt4o.ipynb)؛ Prompt Caching101 درخواست mini، `tool_calls` و مدل پاسخ۰۷-۱۸ را ثبت کرده است|
-|`gpt-4.1`،`gpt-4.1-2025-04-14`|بله|بله|[راهنمای۴.۱: native tools و snapshot](https://github.com/openai/openai-cookbook/blob/2658c92cd4cd562504571b9d7491fc51524a7dc9/examples/gpt4-1_prompting_guide.ipynb)، [model selection: OCR با تصویر و snapshot۴.۱](https://github.com/openai/openai-cookbook/blob/2658c92cd4cd562504571b9d7491fc51524a7dc9/examples/partners/model_selection_guide/model_selection_guide.ipynb)|
-|`gpt-4.1-mini`،`gpt-4.1-mini-2025-04-14`|بله|بله|[receipt inspection: تصویر وmini](https://github.com/openai/openai-cookbook/blob/2658c92cd4cd562504571b9d7491fc51524a7dc9/examples/partners/eval_driven_system_design/receipt_inspection.ipynb)، [tools evaluation:mini با function](https://github.com/openai/openai-cookbook/blob/2658c92cd4cd562504571b9d7491fc51524a7dc9/examples/evaluation/use-cases/tools-evaluation.ipynb)، snapshot در model selection|
-|`gpt-5`،`gpt-5-2025-08-07`|بله|بله|[frontend: GPT-5 صریحاً متن/تصویر native](https://github.com/openai/openai-cookbook/blob/2658c92cd4cd562504571b9d7491fc51524a7dc9/examples/gpt-5/gpt-5_frontend.ipynb)، [new params/tools: هر سه اندازه و Chat Completions](https://github.com/openai/openai-cookbook/blob/2658c92cd4cd562504571b9d7491fc51524a7dc9/examples/gpt-5/gpt-5_new_params_and_tools.ipynb)، inventory رسمی snapshot|
-|`gpt-5-mini`،`gpt-5-mini-2025-08-07`|بله|بله|OpenAPI pinned، مثال `GraderScoreModel` با`input_image` و`model=gpt-5-mini`؛ guide new params/tools و inventory رسمی snapshot|
-|`gpt-5-nano`،`gpt-5-nano-2025-08-07`|تأیید نشده؛ مسدود|بله|guide new params/tools هر سه مدل را پوشش می‌دهد؛ inventory snapshot فقط هویت را اثبات می‌کند و عمداً vision از آن ارث نمی‌برد|
-
-این رجیستری برچسب «موجود/رایگان/مجاز در ایران» نیست.۴.۱nano و snapshot قدیمی۴o۰۵-۱۳ در مجموعهٔ قابلیت‌ها نیستند؛ هویت یا مدلی که در فهرست حساب نباشد از سند قدیمی زنده نمی‌شود. ظرفیت context از enum/بایت حدس زده نمی‌شود و بدون metadata، `—` باقی می‌ماند. شناسهٔ تازه/ناشناخته متن‌تنهاست تا مدرک مستقل اضافه شود؛ تغییر یا رد واقعی پروتکل/سهمیه، پیام کوتاه و انتخاب دستی دارد نه retry یا تعویض حساب.
+- ارائه‌دهندهٔ انتخابی کاربر هرگز خودکار عوض نمی‌شود. جایگزینی مدل فقط داخل همان ارائه‌دهنده و با اجازهٔ کاربر انجام می‌شود، و نوشتنِ انجام‌شده هرگز دوباره اجرا نمی‌شود.
+- خطاهای ۴۰۱/۴۰۲/۴۰۳/۴۲۹ خودکار دوباره ارسال نمی‌شوند.
+- endpointهای غیرمجاز در `AIProviderRegistry.permittedEndpoint` رد می‌شوند.
+- کلیدها در پشتیبان نیستند.

@@ -81,9 +81,18 @@ fun MaintenanceScreen(
     }
 
     var selectedYear by remember { mutableStateOf(year) }
+    var search by remember { mutableStateOf("") }
+    var sortMode by remember { mutableStateOf("date") }
     val yearPrefix = "$selectedYear/"
-    val yearRecords = remember(records, yearPrefix) {
-        records.filter { it.date.startsWith(yearPrefix) }
+    val yearRecords = remember(records, yearPrefix, search, sortMode) {
+        val matching = records.filter { it.date.startsWith(yearPrefix) &&
+            (search.isBlank() || listOf(it.typeText, it.description, it.replacementParts, it.notes, it.date, it.km.toString(), it.cost.toString())
+                .any { value -> value.contains(search.trim(), ignoreCase = true) }) }
+        when (sortMode) {
+            "km" -> matching.sortedByDescending { it.km }
+            "cost" -> matching.sortedByDescending { it.cost }
+            else -> matching.sortedByDescending { it.date }
+        }
     }
     val yearCost = remember(yearRecords) { yearRecords.sumOf { it.cost } }
 
@@ -184,6 +193,18 @@ fun MaintenanceScreen(
                     IconButton(onClick = { selectedYear += 1 }) { Icon(Icons.Outlined.ChevronLeft, "سال بعد") }
                 }
             }
+            item {
+                OutlinedTextField(
+                    value = search, onValueChange = { search = it },
+                    modifier = Modifier.fillMaxWidth(), singleLine = true,
+                    label = { Text("جست‌وجوی نوع، توضیح، قطعه یا مقدار") },
+                )
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    listOf("date" to "تاریخ", "km" to "کیلومتر", "cost" to "هزینه").forEach { (key, label) ->
+                        FilterChip(modifier = Modifier.weight(1f), selected = sortMode == key, onClick = { sortMode = key }, label = { Text(label, maxLines = 1) })
+                    }
+                }
+            }
             if (yearRecords.isEmpty()) {
                 item {
                     EmptyState(
@@ -235,6 +256,7 @@ fun MaintenanceScreen(
     details?.let { item ->
         MaintenanceDetailDialog(
             item = item,
+            repository = repository,
             onDismiss = { details = null },
             onEdit = { details = null; editing = item },
             onDelete = { details = null; pendingDelete = item },
@@ -243,7 +265,7 @@ fun MaintenanceScreen(
 
     pendingDelete?.let { item ->
         ConfirmDialog(
-            title = "حذف سابقه تعمیر", message = "رکورد ${item.date} حذف شود?", confirmLabel = "حذف", destructive = true,
+            title = "حذف سابقه تعمیر", message = "رکورد ${item.date} حذف شود؟", confirmLabel = "حذف", destructive = true,
             onConfirm = { scope.launch { repository.deleteMaintenance(item.id); toast.show("سابقه تعمیر حذف شد"); pendingDelete = null } },
             onDismiss = { pendingDelete = null },
         )
@@ -367,6 +389,8 @@ private fun MaintenanceForm(
         else ""
     ) }
     var description by remember { mutableStateOf(existing?.description ?: "") }
+    var replacementParts by remember { mutableStateOf(existing?.replacementParts ?: "") }
+    var notes by remember { mutableStateOf(existing?.notes ?: "") }
     var attachmentPath by remember { mutableStateOf(existing?.attachmentPath ?: "") }
     val context = LocalContext.current
     val pickImage = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri: Uri? ->
@@ -402,6 +426,8 @@ private fun MaintenanceForm(
                 JalaliDateField("تاریخ", date, { date = it })
                 Spacer(Modifier.height(AppDimens.gap)); MoneyField("هزینه", costText, { costText = it })
                 Spacer(Modifier.height(AppDimens.gap)); TextFieldR("توضیحات", description, { description = it }, singleLine = false, imeAction = ImeAction.Done)
+                Spacer(Modifier.height(AppDimens.gap)); TextFieldR("قطعات تعویض‌شده", replacementParts, { replacementParts = it }, singleLine = false, imeAction = ImeAction.Done)
+                Spacer(Modifier.height(AppDimens.gap)); TextFieldR("یادداشت", notes, { notes = it }, singleLine = false, imeAction = ImeAction.Done)
             }
             FormSection("پیوست رسید / عکس", Icons.Outlined.AttachFile) {
                 if (attachmentPath.isNotBlank()) {
@@ -413,6 +439,7 @@ private fun MaintenanceForm(
                         Text("انتخاب از گالری")
                     }
                 }
+                existing?.let { RecordAttachmentsPanel(repository, "maintenance", it.id) }
             }
             FormSection("خودرو", Icons.Outlined.DirectionsCar) {
                 SegmentedSelector(options = CarType.entries.toList(), selected = carType, label = { it.label }, onSelect = { carType = it })
@@ -442,11 +469,13 @@ private fun MaintenanceForm(
                                     carType = carType.wire,
                                     description = description.trim(),
                                     attachmentPath = attachmentPath,
+                                    replacementParts = replacementParts.trim(),
+                                    notes = notes.trim(),
                                 )
                             )
                             toast.show("سابقه تعمیر ویرایش شد")
                         } else {
-                            repository.addMaintenance(date, type.wire, typeText.ifBlank { type.label }, costText.asDouble(), current, carType.wire, description.trim(), attachmentPath)
+                            repository.addMaintenance(date, type.wire, typeText.ifBlank { type.label }, costText.asDouble(), current, carType.wire, description.trim(), attachmentPath, replacementParts.trim(), notes.trim())
                             toast.show("سابقه تعمیر ثبت شد")
                         }
                         onClose()

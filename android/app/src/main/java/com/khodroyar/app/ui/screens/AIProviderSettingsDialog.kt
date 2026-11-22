@@ -78,11 +78,7 @@ internal fun AIProviderSettingsDialog(
                     listOf(AIUseRegion.UNKNOWN to "هنوز بررسی نکرده‌ام", AIUseRegion.IRAN to "ایران — این اتصال تأیید/مجاز نیست", AIUseRegion.SUPPORTED_ELSEWHERE to "منطقهٔ دیگری که طبق شرایط سرویس مجاز است").forEach { (region, title) ->
                         Row(verticalAlignment = Alignment.CenterVertically) { RadioButton(draft.useRegion == region, { draft = draft.copy(useRegion = region) }, enabled = !saving); Text(title, style = MaterialTheme.typography.bodySmall) }
                     }
-                    if (descriptor.cost == AICostEvidence.ACCOUNT_QUOTA) {
-                        SettingSwitch("شرایط هزینه و سهمیهٔ حساب را پذیرفته‌ام", descriptor.id in draft.accountTermsConfirmed, !saving) {
-                            draft = draft.copy(accountTermsConfirmed = if (it) draft.accountTermsConfirmed + descriptor.id else draft.accountTermsConfirmed - descriptor.id)
-                        }
-                    } else SettingSwitch("حساب Free و بدون billing است؛ شرایط را بررسی کرده‌ام", descriptor.id in draft.freeAccountConfirmed, !saving) {
+                    SettingSwitch("حساب Free و بدون billing است؛ شرایط را بررسی کرده‌ام", descriptor.id in draft.freeAccountConfirmed, !saving) {
                         draft = draft.copy(freeAccountConfirmed = if (it) draft.freeAccountConfirmed + descriptor.id else draft.freeAccountConfirmed - descriptor.id)
                     }
 
@@ -107,8 +103,8 @@ internal fun AIProviderSettingsDialog(
             Text("حریم خصوصی و ابزارها", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
             SettingSwitch("ذخیرهٔ تاریخچه روی همین گوشی", draft.usage.saveHistory, !saving) { draft = draft.copy(usage = draft.usage.copy(saveHistory = it)) }
             TextButton(onClick = onClearHistory, enabled = !saving) { Text("پاک‌کردن تاریخچه با تأیید جداگانه") }
-            SettingSwitch("استفاده از ابزارهای اطلاعات برنامه", draft.usage.toolsEnabled && draft.mode != AiMode.GEMINI, !saving && draft.mode != AiMode.GEMINI) { draft = draft.copy(usage = draft.usage.copy(toolsEnabled = it)) }
-            Text(if (draft.mode == AiMode.GEMINI) "برای جلوگیری از ارسال سوابق به طرح Free آموزشی Gemini، ابزارهای دادهٔ برنامه در این اتصال مسدودند." else "هر ثبت/ویرایش/حذف همچنان تأیید صریح جداگانه می‌خواهد؛ خاموش‌کردن ابزارها حتی خواندن سوابق را متوقف می‌کند.", style = MaterialTheme.typography.labelSmall)
+            SettingSwitch("استفاده از ابزارهای اطلاعات برنامه", draft.usage.toolsEnabled, !saving) { draft = draft.copy(usage = draft.usage.copy(toolsEnabled = it)) }
+            Text("هر ثبت/ویرایش/حذف همچنان تأیید صریح جداگانه می‌خواهد؛ خاموش‌کردن ابزارها حتی خواندن سوابق را متوقف می‌کند.", style = MaterialTheme.typography.labelSmall)
             if (draft.mode == AiMode.OPENROUTER) SettingSwitch("اجازهٔ یک جایگزینی داخل همین ارائه‌دهنده در خطای غیرسهمیه‌ای", draft.allowModelFallback, !saving) { draft = draft.copy(allowModelFallback = it) }
             Text("پیش‌فرض: بدون retry/fallback. ارائه‌دهنده هرگز خودکار عوض نمی‌شود؛ خطای کلید/اعتبار/سهمیه/مجوز هرگز retry نمی‌شود.", style = MaterialTheme.typography.labelSmall)
 

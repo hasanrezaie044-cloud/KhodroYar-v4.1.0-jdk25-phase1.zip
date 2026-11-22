@@ -1,6 +1,9 @@
 package com.khodroyar.app.ui.screens
 
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import com.khodroyar.app.data.repo.AppRepository
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.height
 import androidx.compose.material.icons.Icons
@@ -28,6 +31,7 @@ import com.khodroyar.app.ui.components.tr
 @Composable
 internal fun MaintenanceDetailDialog(
     item: MaintenanceEntity,
+    repository: AppRepository,
     onDismiss: () -> Unit,
     onEdit: () -> Unit,
     onDelete: () -> Unit,
@@ -41,13 +45,15 @@ internal fun MaintenanceDetailDialog(
         onDismissRequest = onDismiss,
         title = { Text(tr("جزئیات تعمیر و نگهداری", "Maintenance details")) },
         text = {
-            Column {
+            Column(Modifier.verticalScroll(rememberScrollState())) {
                 InfoRow(tr("نوع", "Type"), type)
                 InfoRow(tr("تاریخ", "Date"), item.date)
                 InfoRow(tr("هزینه", "Cost"), "${amount(item.cost)} ${tr("تومان", "Toman")}", emphasis = true)
                 if (item.km > 0) InfoRow(tr("کیلومتر خودرو", "Odometer"), "${money(item.km)} ${tr("کیلومتر", "km")}")
                 InfoRow(tr("خودرو", "Vehicle"), CarType.fromWire(item.carType).label)
                 if (item.description.isNotBlank()) InfoRow(tr("شرح", "Description"), item.description)
+                if (item.replacementParts.isNotBlank()) InfoRow(tr("قطعات تعویضی", "Replaced parts"), item.replacementParts)
+                if (item.notes.isNotBlank()) InfoRow(tr("یادداشت", "Notes"), item.notes)
                 if (item.attachmentPath.isNotBlank()) {
                     Spacer(Modifier.height(8.dp))
                     Text(tr("پیوست", "Attachment"), style = MaterialTheme.typography.titleSmall)
@@ -57,6 +63,7 @@ internal fun MaintenanceDetailDialog(
                         Text(tr("فایل پیوست در این دستگاه پیدا نشد.", "Attachment file is not available on this device."), color = MaterialTheme.colorScheme.error)
                     }
                 }
+                RecordAttachmentsPanel(repository, "maintenance", item.id)
             }
         },
         confirmButton = {

@@ -58,7 +58,7 @@ No database migration, permission addition, provider protocol change, core finan
 
 ## Validation
 
-- `bash VERIFY.sh`, `git diff --check`, `cd backend && npm test`.
+- `bash VERIFY.sh`, `git diff --check`.
 - Real JDK 25 Android compilation, JVM regression tests and signed release/permission/package/version/100 MB gates in `.github/workflows/android-release.yml`.
 - New JVM suites: display geometry (20 cases), report partitions (4), palette wire compatibility and text contrast (4, across all 16 light/dark palette combinations).
 - The original eleven native Compose smoke tests in `src/androidTest`: real repository fixtures and tab/tool navigation, privacy, RTL point selection at 320dp/1.35× text, signed-value LTR/dark chart selection, donut selection, empty states, native password input/biometric callback, explicit terms consent and usable dark navigation at 320dp/enlarged text, Home's left/right selection in both line/bar modes, relocated annual/recent records and narrow-screen table scrolling. First-use preferences are cleared, so tests also exercise navigation without automatic tutorial dialogs. Their twenty-four PNGs are captured from the actual Compose surface after frame synchronization, not drawn as mockups. The compact app capture is cropped to its genuine 320dp test surface; the bar capture scrolls the plot into view.

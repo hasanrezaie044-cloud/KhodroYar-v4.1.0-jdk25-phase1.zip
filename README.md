@@ -13,12 +13,12 @@ Same `com.khodroyar.app`, Room 6, financial formulas and original signing identi
   staged native schemas, shorter history and key-free usage/latency diagnostics guard
   dispatch. Auth/billing/quota/region failures are never retried or routed around.
 - **Explicit providers, truthful free conditions**: OpenRouter retains fresh all-zero
-  pricing, key guardrails, endpoints and zero-price routing caps. Groq, native Gemini
-  and Cloudflare Workers AI have fixed official adapters with conditional free-account,
-  model and region gates; no provider changes automatically. Free quota is not free
-  inference on a paid account. Gemini Free app-data tools are blocked for privacy.
-  Cerebras, Hugging Face and Iranian alternatives are shown with payment/unverified
-  reasons, not falsely activated as no-card-free. See the [current AI guide](docs/AI-MODEL-MANAGEMENT.fa.md)
+  pricing, key guardrails, endpoints and zero-price routing caps. Groq has a fixed
+  official adapter with conditional free-account, model and region gates. The app has
+  exactly three AI systems — the lightweight offline assistant, OpenRouter and Groq;
+  GapGPT/custom backend, Gemini, Claude, Fireworks, GPT and Cloudflare were removed in
+  5.8.0 and stored retired modes fall back to the offline assistant. No provider changes
+  automatically. See the [current AI guide](docs/AI-MODEL-MANAGEMENT.fa.md)
   and [official-source provider matrix](docs/AI-PROVIDERS.fa.md). Mock compatibility is
   not live account, Persian quality, billing-plan or Iran-access verification.
 - **Existing native-tool agent**: all previous typed app tools, approvals, snapshots,
@@ -135,11 +135,10 @@ The current assistant has two **explicit** choices:
   Expense/service processing is offline; explicitly requested Neshan traffic is online.
   This mode is **not** a general-purpose language model. Try `راهنما`.
 
-Legacy GapGPT/backend protocol classes, keys and historical chats are retained for compatibility,
-but are not active choices or fallback providers in the new free-only chat. The `backend/`
-folder and its regression tests are preserved; users do **not** need to deploy it.
+The retired GapGPT/backend protocol classes and the `backend/` proxy were removed in 5.8.0;
+historical chats are kept and reopen with the offline assistant.
 Read [current agent setup and limits](docs/OPENROUTER-AGENT.fa.md) and
-[API-free local commands](docs/LOCAL-AGENT.md). Room stays at schema version 6.
+[API-free local commands](docs/LOCAL-AGENT.md). Room is at schema version 7 (migration 6→7 adds record attachments and loan installments).
 Each create/edit/delete requires a fresh exact preview and approval; a recurring rule receives
 scoped permission once, then runs until paused/deleted/expired.
 Turning off chat or deleting history does not revoke approved rules; use the task manager.

@@ -6,7 +6,7 @@ import org.junit.Test
 class AppPrivacyPolicyTest {
     private val text = AppPrivacyPolicy.sections.joinToString("\n") { it.body }
     @Test fun materialPolicyChangeRequiresExplicitAcceptanceAgain() {
-        assertEquals(6, AppPrivacyPolicy.VERSION)
+        assertEquals(7, AppPrivacyPolicy.VERSION)
         assertTrue(AppPrivacyPolicy.INTRO.contains("پذیرش صریح"))
     }
     @Test fun policyDisclosesInternetUploadsAndNeverMakesTheRetiredOfflineOnlyClaim() {
@@ -17,7 +17,8 @@ class AppPrivacyPolicyTest {
         assertFalse(text.contains("هیچ داده‌ای"))
     }
     @Test fun freeAgentDisclosesModelProviderConsentAndVerifiedWriteBoundary() {
-        for (term in listOf("OpenRouter", "ارائه‌دهندهٔ مدل", "رضایت جداگانه", "قیمت‌صفر", "منع جایگزینی پولی", "Android Keystore", "نتیجهٔ واقعی برنامه", "تأیید جداگانه", "ثبت دستی", "مجوز تازه", "ساختگی", "سقف مصرف", "تعویض خودکار", "اختیاری", "Gemini", "پس‌زمینه اجرا نمی‌شود", "Claude", "Fireworks AI", "GPT", "تصویر انتخابی", "خارج از پشتیبان")) assertTrue(term, text.contains(term))
+        for (term in listOf("OpenRouter", "ارائه‌دهندهٔ مدل", "رضایت جداگانه", "قیمت‌صفر", "منع جایگزینی پولی", "Android Keystore", "نتیجهٔ واقعی برنامه", "تأیید جداگانه", "ثبت دستی", "مجوز تازه", "ساختگی", "سقف مصرف", "تعویض خودکار", "اختیاری", "Groq", "دستیار آفلاین", "پس‌زمینه اجرا نمی‌شود", "تصویر انتخابی", "خارج از پشتیبان", "دوباره وارد شوند")) assertTrue(term, text.contains(term))
+        for (retired in listOf("Gemini", "Claude", "Fireworks", "GPT", "GapGPT", "Cloudflare")) assertFalse(retired, text.contains(retired))
     }
     @Test fun inputOcrThirdPartyDecisionsAndUnofficialDocumentRisksAreCovered() {
         for (term in listOf("کیلومترشمار", "پیمایش", "فواصل نگهداری", "ارقام گزارش شرکت", "یادآورها", "مقایسه‌ها", "برآورد هزینه", "پیشنهادهای نگهداری",

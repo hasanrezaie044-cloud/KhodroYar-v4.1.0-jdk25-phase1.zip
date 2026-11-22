@@ -31,7 +31,15 @@ object BackupAttachmentCodec {
     private const val DATA = "attachmentData"
     private const val PREFIX = "backup-attachment:"
     private const val FORMAT = "com.khodroyar.app.full-backup"
-    private const val VERSION = 2
+    private const val VERSION = 3
+    private val READABLE_VERSIONS = setOf(2, 3)
+
+    /** Every (table, column) that may reference an app-private file. */
+    private val FILE_FIELDS = listOf(
+        "services" to "attachmentPath",
+        "maintenances" to "attachmentPath",
+        "recordAttachments" to "filePath",
+    )
     private const val MAX_FILES = 512
     private const val MAX_FILE_BYTES = 25L * 1024 * 1024
     private const val MAX_TOTAL_BYTES = 64L * 1024 * 1024
@@ -59,27 +67,30 @@ object BackupAttachmentCodec {
         var total = 0L
         var omittedAttachmentCount = 0
 
-        fun rewrite(key: String): JsonArray {
+        fun rewrite(key: String, field: String): JsonArray {
             val rows = root[key]?.jsonArray ?: return JsonArray(emptyList())
-            return JsonArray(rows.map { element ->
+            // A gallery row without its file is meaningless, so it is dropped (and counted).
+            val dropMissing = key == "recordAttachments"
+            return JsonArray(rows.mapNotNull { element ->
                 val row = element.jsonObject
-                val path = row["attachmentPath"]?.let { if (it == JsonNull) "" else it.jsonPrimitive.content }?.trim().orEmpty()
-                if (path.isEmpty()) element else {
+                val path = row[field]?.let { if (it == JsonNull) "" else it.jsonPrimitive.content }?.trim().orEmpty()
+                if (path.isEmpty()) element.takeUnless { dropMissing } else {
                     val file = File(path)
                     // Keep the database record, but don't let a stale or inaccessible
                     // attachment path prevent backing up every other record. The actual
                     // missing file cannot be restored, so clear only that path in the
                     // exported copy and record a visible warning in the manifest.
-                    if (!Attachments.isOwn(context, path) || !file.isFile || !file.canRead() || file.length() == 0L) {
+                    val owned = Attachments.isOwn(context, path) || RecordAttachmentFiles.isOwned(context, path)
+                    if (!owned || !file.isFile || !file.canRead() || file.length() == 0L) {
                         omittedAttachmentCount++
-                        JsonObject(row + ("attachmentPath" to JsonPrimitive("")))
+                        if (dropMissing) null else JsonObject(row + (field to JsonPrimitive("")))
                     } else {
                         val length = file.length()
                         require(length in 1..MAX_FILE_BYTES) { "اندازهٔ یکی از پیوست‌ها خارج از محدودهٔ پشتیبانی است." }
                         val bytes = runCatching { file.readBytes() }.getOrNull()
                         if (bytes == null) {
                             omittedAttachmentCount++
-                            JsonObject(row + ("attachmentPath" to JsonPrimitive("")))
+                            if (dropMissing) null else JsonObject(row + (field to JsonPrimitive("")))
                         } else {
                             require(bytes.size.toLong() == length) { "فایل پیوست هنگام پشتیبان‌گیری تغییر کرد؛ دوباره تلاش کنید." }
                             val digest = sha256(bytes)
@@ -90,7 +101,7 @@ object BackupAttachmentCodec {
                                 content[digest] = bytes
                             }
                             referenced += digest
-                            JsonObject(row + ("attachmentPath" to JsonPrimitive(PREFIX + digest)))
+                            JsonObject(row + (field to JsonPrimitive(PREFIX + digest)))
                         }
                     }
                 }
@@ -98,8 +109,7 @@ object BackupAttachmentCodec {
         }
 
         val payload = LinkedHashMap(root)
-        payload["services"] = rewrite("services")
-        payload["maintenances"] = rewrite("maintenances")
+        FILE_FIELDS.forEach { (key, field) -> if (key in root) payload[key] = rewrite(key, field) }
         val payloadJson = canonical(JsonObject(payload))
         val data = buildJsonObject {
             content.forEach { (digest, bytes) -> put(digest, JsonPrimitive(Base64.encodeToString(bytes, Base64.NO_WRAP))) }
@@ -169,7 +179,7 @@ object BackupAttachmentCodec {
     ): Pair<String, List<File>> {
         val manifest = root[MANIFEST]?.jsonObject ?: error("مانیفست پشتیبان نامعتبر است.")
         require(manifest["format"]?.jsonPrimitive?.content == FORMAT) { "قالب پشتیبان ناشناخته است." }
-        require(manifest["formatVersion"]?.jsonPrimitive?.int == VERSION) { "نسخهٔ قالب پشتیبان پشتیبانی نمی‌شود." }
+        require(manifest["formatVersion"]?.jsonPrimitive?.int in READABLE_VERSIONS) { "نسخهٔ قالب پشتیبان پشتیبانی نمی‌شود." }
         val dbVersion = manifest["databaseVersion"]?.jsonPrimitive?.int ?: error("نسخهٔ پایگاه‌داده در مانیفست نیست.")
         require(dbVersion in 1..APP_DATABASE_SCHEMA_VERSION) { "این پشتیبان با نسخهٔ جدیدتری از پایگاه‌داده ساخته شده است." }
 
@@ -209,42 +219,43 @@ object BackupAttachmentCodec {
         }
 
         val referenced = linkedSetOf<String>()
-        fun rewrite(key: String): JsonArray {
+        fun rewrite(key: String, field: String): JsonArray {
             val rows = payload[key]?.jsonArray ?: return JsonArray(emptyList())
             return JsonArray(rows.map { element ->
                 val row = element.jsonObject
-                val path = row["attachmentPath"]?.let { if (it == JsonNull) "" else it.jsonPrimitive.content }?.trim().orEmpty()
+                val path = row[field]?.let { if (it == JsonNull) "" else it.jsonPrimitive.content }?.trim().orEmpty()
                 if (path.isEmpty()) element else {
                     require(path.startsWith(PREFIX)) { "مسیر پیوست در پشتیبان جدید نامعتبر است." }
                     val id = path.removePrefix(PREFIX)
                     require(id in ids) { "یکی از رکوردها به پیوست ثبت‌نشده اشاره می‌کند." }
                     referenced += id
-                    JsonObject(row + ("attachmentPath" to JsonPrimitive(path)))
+                    JsonObject(row + (field to JsonPrimitive(path)))
                 }
             })
         }
-        payload["services"] = rewrite("services")
-        payload["maintenances"] = rewrite("maintenances")
+        FILE_FIELDS.forEach { (key, field) -> if (key in payload) payload[key] = rewrite(key, field) }
         require(referenced == ids.keys) { "پیوست بدون رکورد یا ارجاع پیوست ناسازگار در فایل وجود دارد." }
 
         val created = mutableListOf<File>()
         try {
             val rewritten = LinkedHashMap(payload)
-            fun materializeRows(key: String): JsonArray {
+            // One restored file per content hash: identical photos are never duplicated on disk.
+            val written = linkedMapOf<String, File>()
+            fun materializeRows(key: String, field: String): JsonArray {
                 val rows = payload[key]?.jsonArray ?: return JsonArray(emptyList())
                 return JsonArray(rows.map { element ->
                     val row = element.jsonObject
-                    val path = row["attachmentPath"]?.let { if (it == JsonNull) "" else it.jsonPrimitive.content }?.trim().orEmpty()
+                    val path = row[field]?.let { if (it == JsonNull) "" else it.jsonPrimitive.content }?.trim().orEmpty()
                     if (!path.startsWith(PREFIX)) element else {
                         val id = path.removePrefix(PREFIX)
-                        val file = if (materialize) writeRestoredFile(context, bytesById.getValue(id)) else null
-                        if (file != null) created += file
-                        JsonObject(row + ("attachmentPath" to JsonPrimitive(file?.absolutePath ?: path)))
+                        val file = if (!materialize) null else written.getOrPut(id) {
+                            writeRestoredFile(context, bytesById.getValue(id)).also { created += it }
+                        }
+                        JsonObject(row + (field to JsonPrimitive(file?.absolutePath ?: path)))
                     }
                 })
             }
-            rewritten["services"] = materializeRows("services")
-            rewritten["maintenances"] = materializeRows("maintenances")
+            FILE_FIELDS.forEach { (key, field) -> if (key in payload) rewritten[key] = materializeRows(key, field) }
             return JsonObject(rewritten).toString() to created
         } catch (e: Exception) {
             created.forEach { runCatching { it.delete() } }

@@ -1,6 +1,5 @@
 package com.khodroyar.app.data.legacy
 
-import com.khodroyar.app.core.finance.LoanCalculator
 import com.khodroyar.app.core.jalali.Jalali
 import com.khodroyar.app.core.rates.Rates
 import com.khodroyar.app.core.rates.ServiceType
@@ -34,6 +33,11 @@ object LegacyBackup {
         val loans: Int = 0, val personalExpenses: Int = 0, val personalIncomes: Int = 0,
         val personnel: Int = 0, val holidays: Int = 0, val rateYears: Int = 0,
         val insurance: Int = 0,
+        val loanInstallments: Int = 0, val recordAttachments: Int = 0,
+        /** Assistant data (conversations, long-term memory, agent tasks, automation rules); 0 when absent. */
+        val conversations: Int = 0, val memoryFacts: Int = 0, val agentTasks: Int = 0, val automations: Int = 0,
+        /** Parts that could not be restored and were therefore NOT claimed as restored. */
+        val skipped: List<String> = emptyList(),
     ) {
         val total: Int get() = services + fuels + maintenances + loans +
             personalExpenses + personalIncomes + personnel + holidays + insurance
@@ -63,6 +67,8 @@ object LegacyBackup {
         val rates: List<RatesEntity>,
         val suggestions: List<SuggestionEntity>,
         val counts: Counts,
+        val attachments: List<RecordAttachmentEntity> = emptyList(),
+        val loanInstallments: List<LoanInstallmentEntity> = emptyList(),
     )
 
     private val json = Json { ignoreUnknownKeys = true; isLenient = true }
@@ -97,7 +103,7 @@ object LegacyBackup {
 
     /** Structural check mirroring the JS `validateImportData`. */
     private fun isStructurallyValid(root: JsonObject): Boolean {
-        for (k in listOf("services", "fuels", "maintenances", "insurance")) {
+        for (k in listOf("services", "fuels", "maintenances", "insurance", "recordAttachments", "loanInstallments")) {
             val v = root[k]
             if (v != null && v !is JsonNull && v !is JsonArray) return false
         }
@@ -125,6 +131,8 @@ object LegacyBackup {
             holidays = root.arr("holidays")?.size ?: 0,
             rateYears = root.obj("ratesByYear")?.size ?: if (root.obj("rates") != null) 1 else 0,
             insurance = root.arr("insurance")?.size ?: 0,
+            loanInstallments = root.arr("loanInstallments")?.size ?: 0,
+            recordAttachments = root.arr("recordAttachments")?.size ?: 0,
         )
         val version = root.prim("version")?.contentOrNull
         val warning = if (version != null) {
@@ -181,6 +189,8 @@ object LegacyBackup {
                 total = o.dbl("total"),
                 carType = o.str("carType", "soren"),
                 timestamp = o.str("timestamp").ifEmpty { nowIso() },
+                km = o.dbl("km"),
+                station = o.str("station"),
             )
         }
 
@@ -196,18 +206,17 @@ object LegacyBackup {
                 description = o.str("description"),
                 timestamp = o.str("timestamp").ifEmpty { nowIso() },
                 attachmentPath = o.str("attachmentPath"),
+                replacementParts = o.str("replacementParts"),
+                notes = o.str("notes"),
             )
         }
 
-        val today = Jalali.todayString()
         val loans = root.arr("loans").orEmptyObjects().map { o ->
             val paidRaw = (o["paidInstallments"] as? JsonArray)
                 ?.mapNotNull { (it as? JsonPrimitive)?.intOrNull } ?: emptyList()
             val count = maxOf(1, o.int("installmentsCount", 1))
-            // Same auto-mark-overdue pass the JS load path performed.
-            val paid = LoanCalculator.autoMarkOverdue(
-                o.str("date").ifEmpty { null }, count, paidRaw, today,
-            )
+            // Overdue installments remain unpaid; their status is derived from dueDate.
+            val paid = paidRaw.filter { it in 1..count }.distinct().sorted()
             LoanEntity(
                 id = o.str("id").ifEmpty { newId() },
                 title = o.str("title"),
@@ -217,6 +226,8 @@ object LegacyBackup {
                 installmentsCount = count,
                 paidInstallments = paid.joinToString(","),
                 timestamp = o.str("timestamp").ifEmpty { nowIso() },
+                monthlyInstallment = o.dbl("monthlyInstallment"),
+                notes = o.str("notes"),
             )
         }
 
@@ -228,6 +239,8 @@ object LegacyBackup {
                 title = o.str("title"),
                 amount = o.dbl("amount"),
                 timestamp = o.str("timestamp").ifEmpty { nowIso() },
+                km = o.dbl("km"),
+                notes = o.str("notes"),
             )
         }
 
@@ -310,6 +323,27 @@ object LegacyBackup {
             }
         }
 
+        val attachments = root.arr("recordAttachments").orEmptyObjects().mapNotNull { o ->
+            val path = o.str("filePath")
+            val recordType = o.str("recordType")
+            val recordId = o.str("recordId")
+            if (path.isBlank() || recordType.isBlank() || recordId.isBlank()) null
+            else RecordAttachmentEntity(
+                id = o.str("id").ifBlank { newId() }, recordType = recordType, recordId = recordId,
+                filePath = path, mimeType = o.str("mimeType", "image/jpeg"), addedAt = o.lng("addedAt", now),
+            )
+        }
+        val installments = root.arr("loanInstallments").orEmptyObjects().mapNotNull { o ->
+            val loanId = o.str("loanId")
+            val dueDate = o.str("dueDate")
+            val number = o.int("number")
+            if (loanId.isBlank() || dueDate.isBlank() || number < 1) null
+            else LoanInstallmentEntity(
+                id = o.str("id").ifBlank { newId() }, loanId = loanId, number = number,
+                amount = o.lng("amount"), dueDate = dueDate, paidDate = o.str("paidDate"), notes = o.str("notes"),
+            )
+        }
+
         return Payload(
             services = services,
             fuels = fuels,
@@ -334,7 +368,11 @@ object LegacyBackup {
                 holidays = holidays.size,
                 rateYears = rateRows.size,
                 insurance = insurance.size,
+                loanInstallments = installments.size,
+                recordAttachments = attachments.size,
             ),
+            attachments = attachments,
+            loanInstallments = installments,
         )
     }
 

@@ -61,6 +61,7 @@ fun AiAssistantScreen(vm: AiAssistantViewModel = viewModel(), onNavigate: (Agent
     var showAttachments by remember { mutableStateOf(false) }
     var showHistory by remember { mutableStateOf(false) }
     var showTasks by remember { mutableStateOf(false) }
+    var showMemory by remember { mutableStateOf(false) }
     var confirmNew by remember { mutableStateOf(false) }
     var confirmClear by remember { mutableStateOf(false) }
     var deleteConversation by remember { mutableStateOf<Conversation?>(null) }
@@ -153,7 +154,12 @@ fun AiAssistantScreen(vm: AiAssistantViewModel = viewModel(), onNavigate: (Agent
         onNew = { showMenu = false; if (vm.messages.isEmpty()) vm.newChat() else confirmNew = true },
         onHistory = { showMenu = false; vm.loadHistory(); showHistory = true },
         onClear = { showMenu = false; confirmClear = true }, onTasks = { showMenu = false; showTasks = true },
+        onMemory = { showMenu = false; vm.loadMemory(); showMemory = true },
         onSettings = ::settingsFromPanel, onDismiss = { showMenu = false })
+    if (showMemory) AssistantMemorySheet(vm.memoryFacts, vm.agentTasks, vm.memoryMessage,
+        onSave = vm::saveMemory, onDelete = { vm.deleteMemory(it.id) }, onCancelTask = { vm.cancelTask(it.id) },
+        onDeleteTask = { vm.deleteTask(it.id) }, onDismissMessage = vm::dismissMemoryMessage,
+        onDismiss = { showMemory = false; vm.dismissMemoryMessage() })
     if (showAttachments) ChatAttachmentSheet(
         onCamera = {
             showAttachments = false

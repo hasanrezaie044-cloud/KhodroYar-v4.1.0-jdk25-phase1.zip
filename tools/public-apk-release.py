@@ -53,6 +53,10 @@ def digest(path):
     return result.hexdigest()
 
 
+# Room schema of the audited release; MIGRATION_6_7 added attachments and installment rows.
+ROOM_VERSION = 7
+
+
 def verified_proof(apk, verification, expected_head):
     """Metadata/hash gates; fixture tests of this function are NOT actual APK tests."""
     apk, verification = Path(apk), Path(verification)
@@ -64,7 +68,7 @@ def verified_proof(apk, verification, expected_head):
             or proof.get('sha256') != digest(apk) or proof.get('head_sha') != expected_head
             or proof.get('package') != 'com.khodroyar.app' or proof.get('certificate_sha256') != CERTIFICATE
             or proof.get('debuggable') is not False or proof.get('baseline') != BASELINE
-            or proof.get('room_version') != 6 or proof.get('zipalign_16kb') != 'passed'
+            or proof.get('room_version') != ROOM_VERSION or proof.get('zipalign_16kb') != 'passed'
             or proof.get('zip_crc') != 'passed' or proof.get('ocr_mode') != 'online-only'
             or proof.get('offline_model_assets') != 'absent (online-only)' or proof.get('offline_native_engine') != 'absent'
             or proof.get('native_64_bit_16kb_alignment') != 'passed' or proof.get('bundled_notices_fonts') != 'all hashes verified'
@@ -96,7 +100,7 @@ def prepare(apk, verification, directory, expected_head):
     shutil.copyfile(verification, root / 'verification.json')
     (root / 'SHA256SUMS').write_text(f"{proof['sha256']}  {name}\n")
     # No credentials, keystores, private delivery keys, or test APK are copied.
-    policy_version = '۶' if proof['version_code'] >= 79 else '۵' if proof['version_code'] >= 78 else '۴' if proof['version_code'] >= 77 else '۳' if proof['version_code'] >= 76 else '۲'
+    policy_version = '۷' if proof['version_code'] >= 82 else '۶' if proof['version_code'] >= 79 else '۵' if proof['version_code'] >= 78 else '۴' if proof['version_code'] >= 77 else '۳' if proof['version_code'] >= 76 else '۲'
     agent_notes = """## ارتقای ۵.۶ از ۵.۵.۸: ایجنت فارسی فقط‌رایگان
 
 - اتصال مستقیم OpenRouter با کلید شخصیِ Keystore-encrypted، مدل اولیه openrouter/free و رضایت تازه؛ بدون بک‌اند اجباری. فهرست مدل/قیمت صفر پیش از هر درخواست، max_price صفر، no paid fallback و منع خرید اعتبار.
@@ -153,9 +157,21 @@ def prepare(apk, verification, directory, expected_head):
 ## قابلیت‌ها و بررسی‌های غیرAI حفظ‌شده
 
 """
+    if proof['version_code'] >= 82:
+        agent_notes = """## ارتقای ۵.۸.۰: سه سامانهٔ AI، ایجنت سطح۲ و پشتیبان کامل
+
+- دقیقاً سه سامانه: دستیار آفلاین سبک (قطعی، بدون مدل)، OpenRouter و Groq. GapGPT/بک‌اند سفارشی، Gemini، Claude، Fireworks، GPT و Cloudflare حذف شدند؛ حالت ذخیره‌شدهٔ قدیمی به دستیار آفلاین برمی‌گردد و بی‌صدا به سرویس شبکه‌ای نمی‌رود. کلیدهای اتصال حذف‌شده از دستگاه پاک می‌شوند.
+- ایجنت: برنامهٔ ماندگار حداکثر۸مرحله/۱۲فراخوانی ابزار، شناسهٔ عملیات، بازخوانی پس از هر نوشتن، گزارش دقیق موفقیت جزئی، لغو و ادامه؛ حافظهٔ قابل مشاهده/ویرایش/حذف با منبع و اطمینان. بدون SQL و بدون تکرار نوشتن.
+- Room7: پیوست‌های چندگانهٔ رکورد، اقساط جدا، کیلومتر/جایگاه سوخت، قطعات تعمیر و یادداشت. مهاجرت۶←۷ بدون حذف داده.
+- پشتیبان کامل: همهٔ جدول‌ها، تنظیمات، پیوست‌ها، گفتگوها، حافظه، قوانین خودکار و کارهای ایجنت با بررسی SHA-256 پیش از جایگزینی؛ کلید API هرگز در پشتیبان نیست.
+- سیاست حریم خصوصی۷. تست‌ها با HTTP/SSE ساختگی‌اند، نه حساب زنده.
+
+## قابلیت‌ها و بررسی‌های غیرAI حفظ‌شده
+
+"""
     (root / 'test-summary.md').write_text(f"""# KhodroYar {proof['version_name']}
 
-بر پایهٔ ۵.۴.۰ بازیابی‌شده؛ بستهٔ `com.khodroyar.app`، کد {proof['version_code']}، Room 6.
+بر پایهٔ ۵.۴.۰ بازیابی‌شده؛ بستهٔ `com.khodroyar.app`، کد {proof['version_code']}، Room {proof['room_version']}.
 
 {agent_notes}- APK اصلی Release با امضای اصلی، R8 و resource shrinking فعال، غیرقابل‌دیباگ.
 - حذف موتور/مدل‌های OCR آفلاین؛ خواندن تصویر فقط با FastOCR، کلید شخصی رمزنگاری‌شده و تأیید صریح هر ارسال است. ثبت سوابق و محاسبات عادی آفلاین باقی می‌مانند.
@@ -171,7 +187,7 @@ def prepare(apk, verification, directory, expected_head):
 - اعلان نسخهٔ جدید هنگام ورود، فقط پس از پاسخ نسخهٔ بازار؛ دکمهٔ به‌روزرسانی صفحهٔ همان بسته را در خود بازار باز می‌کند. نبود بازار/شبکه ورود را مسدود نمی‌کند.
 - آزمون همان APK امضاشده روی امولاتور API 35: ثبت ۳ سرویس مصنوعی از فرم واقعی، SAF، رضایت/انصراف FastOCR، ورود صریح متن مصنوعیِ بدون کیلومتر/ساعت، نمایش شرکت ۲ / برنامه ۳ / اختلاف +۱ در ۱۴۰۵/۰۷/۰۵، اصلاح دستی و بازگشت، حفظ تعداد برنامه، IPC و لینک به‌روزرسانی با **بازار شبیه‌سازی‌شده**.
 - آزمون ادغام آنلاین از پاسخ HTTP ساختگی استفاده می‌کند؛ **آزمون زندهٔ FastOCR، انتشار واقعی در بازار یا آزمایش فیزیکی Samsung ادعا نمی‌شود**. سند خصوصی کاربر در مخزن/CI نیست؛ کامل‌خوانی هر اسکن تضمین نمی‌شود.
-- ابزار CI، APK تست و بازار مصنوعی جزو فایل تحویلی نیستند. بسته، گواهی اصلی، Room 6 و محاسبات مالی حفظ شده‌اند؛ مجوز نصب/دسترسی عمومی فایل اضافه نشده است.
+- ابزار CI، APK تست و بازار مصنوعی جزو فایل تحویلی نیستند. بسته، گواهی اصلی، Room و مهاجرت‌ها و محاسبات مالی حفظ شده‌اند؛ مجوز نصب/دسترسی عمومی فایل اضافه نشده است.
 
 برای انتشار بازار همین APK را با همین بسته/امضا بارگذاری کنید. نمایش اعلان برای کاربران نسخه‌های حاوی این قابلیت، پس از انتشار کد بالاتر در بازار ممکن است؛ ۵.۵.۵ قبلی هنوز اعلان جدید را ندارد.
 

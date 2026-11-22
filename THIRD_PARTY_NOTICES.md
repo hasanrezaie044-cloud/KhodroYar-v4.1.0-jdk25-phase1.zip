@@ -47,6 +47,6 @@ only using the owner's configured Neshan key.
 ## AI brand icons
 
 - Source: Lobe Icons, https://github.com/lobehub/lobe-icons, revision `55746b0b082258211121c70bd26e6878fd3bd292`.
-- Monochrome SVG paths converted to Android vectors for OpenRouter, Gemini, Groq, Claude, Fireworks, OpenAI, NVIDIA, Google, Anthropic, Meta, Qwen, DeepSeek and Mistral.
+- Monochrome SVG paths converted to Android vectors for OpenRouter, Groq, OpenAI, NVIDIA, Google, Anthropic, Meta, Qwen, DeepSeek and Mistral.
 - MIT licence: `android/app/src/main/res/raw/ai_brand_icons_license.txt`. Brand names/logos remain their owners’ trademarks; no endorsement is implied.
 - Bundled locally; no icon CDN or tracking request is made.

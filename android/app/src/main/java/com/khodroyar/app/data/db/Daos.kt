@@ -272,3 +272,30 @@ interface InsuranceDao {
     @Query("DELETE FROM insurance WHERE id = :id") suspend fun deleteById(id: String)
     @Query("DELETE FROM insurance") suspend fun clear()
 }
+
+@Dao
+interface RecordAttachmentDao {
+    @Query("SELECT * FROM record_attachments WHERE recordType = :type AND recordId = :recordId ORDER BY addedAt")
+    fun observeForRecord(type: String, recordId: String): Flow<List<RecordAttachmentEntity>>
+    @Query("SELECT * FROM record_attachments ORDER BY addedAt") suspend fun allOnce(): List<RecordAttachmentEntity>
+    @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun insert(item: RecordAttachmentEntity)
+    @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun insertAll(items: List<RecordAttachmentEntity>)
+    @Query("DELETE FROM record_attachments WHERE id = :id") suspend fun deleteById(id: String)
+    @Query("DELETE FROM record_attachments WHERE recordType = :type AND recordId = :recordId") suspend fun clearForRecord(type: String, recordId: String)
+    @Query("DELETE FROM record_attachments") suspend fun clear()
+}
+
+@Dao
+interface LoanInstallmentDao {
+    @Query("SELECT * FROM loan_installments ORDER BY loanId, number") fun observeAll(): Flow<List<LoanInstallmentEntity>>
+    @Query("SELECT * FROM loan_installments WHERE loanId = :loanId ORDER BY number")
+    fun observeForLoan(loanId: String): Flow<List<LoanInstallmentEntity>>
+    @Query("SELECT * FROM loan_installments WHERE loanId = :loanId ORDER BY number")
+    suspend fun forLoanOnce(loanId: String): List<LoanInstallmentEntity>
+    @Query("SELECT * FROM loan_installments ORDER BY loanId, number") suspend fun allOnce(): List<LoanInstallmentEntity>
+    @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun insert(item: LoanInstallmentEntity)
+    @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun insertAll(items: List<LoanInstallmentEntity>)
+    @Query("DELETE FROM loan_installments WHERE loanId = :loanId") suspend fun clearForLoan(loanId: String)
+    @Query("DELETE FROM loan_installments WHERE loanId = :loanId AND number > :maxNumber") suspend fun deleteAfter(loanId: String, maxNumber: Int)
+    @Query("DELETE FROM loan_installments") suspend fun clear()
+}

@@ -63,6 +63,16 @@ fun FuelScreen(
     var showForm by remember { mutableStateOf(quickDate != null) }
     var editingFuel by remember { mutableStateOf<FuelEntity?>(null) }
     var details by remember { mutableStateOf<FuelEntity?>(null) }
+    var search by remember { mutableStateOf("") }
+    var sortMode by remember { mutableStateOf("date") }
+    val visibleFuels = remember(fuels, search, sortMode) {
+        val query = search.trim()
+        val matching = fuels.filter { fuel ->
+            query.isEmpty() || listOf(fuel.date, FuelType.fromWire(fuel.type).label, fuel.station, fuel.km.toLong().toString(), fuel.liters.toString(), fuel.total.toLong().toString())
+                .any { value -> value.contains(query, ignoreCase = true) }
+        }
+        when (sortMode) { "km" -> matching.sortedByDescending { it.km }; "cost" -> matching.sortedByDescending { it.total }; else -> matching.sortedByDescending { it.date } }
+    }
     var pendingDelete by remember { mutableStateOf<FuelEntity?>(null) }
 
     if (showForm || editingFuel != null) {
@@ -125,6 +135,12 @@ fun FuelScreen(
                     )
                 }
             }
+            if (fuels.isNotEmpty()) OutlinedTextField(search, { search = it }, modifier = Modifier.fillMaxWidth(), singleLine = true, label = { Text(tr("جست‌وجوی سوخت (تاریخ، جایگاه، مبلغ)", "Search fuel (date, station, amount)")) })
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                listOf("date" to "تاریخ", "km" to "کیلومتر", "cost" to "هزینه").forEach { (key, label) ->
+                    FilterChip(modifier = Modifier.weight(1f), selected = sortMode == key, onClick = { sortMode = key }, label = { Text(label, maxLines = 1) })
+                }
+            }
         }
         if (fuels.isEmpty()) {
             EmptyState(
@@ -143,10 +159,11 @@ fun FuelScreen(
                 item {
                     Collapsible(
                         title = tr("سوخت‌های ثبت‌شده", "Recorded fuel"),
-                        summary = "${fuels.size} رکورد · ${amount(fuels.sumOf { it.total })} تومان",
+                        summary = "${visibleFuels.size} رکورد · ${amount(visibleFuels.sumOf { it.total })} تومان",
                     ) {
                         Column(verticalArrangement = Arrangement.spacedBy(AppDimens.gap)) {
-                            fuels.forEach { fuel ->
+                            if (visibleFuels.isEmpty()) Text(tr("موردی با این جست‌وجو پیدا نشد.", "No fuel entry matches this search."), color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            visibleFuels.forEach { fuel ->
                                 FuelRow(fuel, onDetails = { details = fuel }, onDelete = { pendingDelete = fuel })
                             }
                         }
@@ -167,6 +184,7 @@ fun FuelScreen(
     details?.let { fuel ->
         FuelDetailDialog(
             fuel = fuel,
+            repository = repository,
             onDismiss = { details = null },
             onEdit = { details = null; editingFuel = fuel },
             onDelete = { details = null; pendingDelete = fuel },
@@ -241,6 +259,8 @@ private fun FuelForm(repository: AppRepository, initialDate: String?, existing: 
     var fuelType by remember { mutableStateOf(existing?.let { FuelType.fromWire(it.type) } ?: FuelType.GOV) }
     var carType by remember { mutableStateOf(existing?.let { CarType.fromWire(it.carType) } ?: CarType.SOREN) }
     var litersText by remember { mutableStateOf(existing?.liters?.let { it.trimNumber().digitsOnly() } ?: "") }
+    var kmText by remember { mutableStateOf(existing?.km?.takeIf { it > 0 }?.trimNumber()?.digitsOnly().orEmpty()) }
+    var station by remember { mutableStateOf(existing?.station.orEmpty()) }
 
     val year = Jalali.parse(date)?.year ?: Jalali.currentYear()
     val rates = remember(ratesByYear, year) { ratesByYear.forYear(year) }
@@ -276,6 +296,10 @@ private fun FuelForm(repository: AppRepository, initialDate: String?, existing: 
                 JalaliDateField("تاریخ", date, { date = it })
                 Spacer(Modifier.height(AppDimens.gap))
                 NumberField("لیتر", litersText, { litersText = it }, suffix = "لیتر", imeAction = ImeAction.Done)
+                Spacer(Modifier.height(AppDimens.gap))
+                NumberField("کیلومترشمار", kmText, { kmText = it }, suffix = "کیلومتر")
+                Spacer(Modifier.height(AppDimens.gap))
+                TextFieldR("جایگاه سوخت (اختیاری)", station, { station = it })
             }
             FormSection("مبلغ محاسبه‌شده", Icons.Outlined.Calculate) {
                 InfoRow("نرخ ${fuelType.label} (سال $year)", "${money(rate)} تومان")
@@ -318,10 +342,10 @@ private fun FuelForm(repository: AppRepository, initialDate: String?, existing: 
                         if (litersValue <= 0.0) { toast.show("مقدار لیتر را وارد کنید"); return@Button }
                         scope.launch {
                             if (existing == null) {
-                                repository.addFuel(date, fuelType.wire, litersValue, total, carType.wire)
+                                repository.addFuel(date, fuelType.wire, litersValue, total, carType.wire, kmText.asDouble(), station.trim().take(80))
                                 toast.show("سوخت ثبت شد · ${money(total)} تومان")
                             } else {
-                                repository.updateFuel(existing.copy(date = date, type = fuelType.wire, liters = litersValue, total = total, carType = carType.wire))
+                                repository.updateFuel(existing.copy(date = date, type = fuelType.wire, liters = litersValue, total = total, carType = carType.wire, km = kmText.asDouble(), station = station.trim().take(80)))
                                 toast.show("رکورد سوخت ویرایش شد · ${money(total)} تومان")
                             }
                             onClose()

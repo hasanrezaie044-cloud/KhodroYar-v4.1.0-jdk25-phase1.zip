@@ -5,8 +5,21 @@ import org.json.JSONObject
 import java.io.File
 import java.util.UUID
 
-/** One durable fact the owner approved for the assistant to remember across conversations. */
-data class MemoryFact(val id: String, val text: String, val category: String, val createdAt: Long)
+/**
+ * One durable (long-term tier) fact the owner approved for the assistant to remember across conversations.
+ * [source] says how it got here; [confidence] is 1.0 only for facts the owner stated or typed themselves.
+ */
+data class MemoryFact(
+    val id: String, val text: String, val category: String, val createdAt: Long,
+    val source: String = SOURCE_CHAT, val confidence: Double = 1.0, val updatedAt: Long = createdAt,
+) {
+    val sourceLabel: String get() = when (source) { SOURCE_MANUAL -> "ویرایش/ثبت دستی شما"; SOURCE_RESTORED -> "بازیابی از پشتیبان"; else -> "گفتگو با تأیید شما" }
+    companion object {
+        const val SOURCE_CHAT = "chat-approved"
+        const val SOURCE_MANUAL = "manual"
+        const val SOURCE_RESTORED = "backup"
+    }
+}
 
 /**
  * On-device assistant memory (Albert-style "recall on demand", not a prompt blob).
@@ -28,15 +41,35 @@ class AssistantMemoryStore(private val file: File, private val clock: () -> Long
     fun find(id: String): MemoryFact? = all().singleOrNull { it.id == id || (id.length >= 6 && it.id.startsWith(id)) }
 
     /** Returns the stored fact, or null when it was refused (secret-like, empty, duplicate kept as-is). */
-    fun remember(text: String, category: String = "other"): MemoryFact? = synchronized(lock) {
+    fun remember(text: String, category: String = "other", source: String = MemoryFact.SOURCE_CHAT): MemoryFact? = synchronized(lock) {
         val clean = sanitize(text) ?: return@synchronized null
         val facts = read().toMutableList()
         facts.firstOrNull { normalize(it.text) == normalize(clean) }?.let { return@synchronized it }
-        val fact = MemoryFact(UUID.randomUUID().toString(), clean, category.takeIf { it in CATEGORIES } ?: "other", clock())
+        val fact = MemoryFact(UUID.randomUUID().toString(), clean, category.takeIf { it in CATEGORIES } ?: "other", clock(), source)
         facts += fact
         // Bounded: the oldest facts are dropped first so the file and recall stay small.
         write(facts.sortedBy { it.createdAt }.takeLast(MAX_FACTS))
         read().singleOrNull { it.id == fact.id }
+    }
+
+    /** Owner edit from the memory screen; same secret filter, read back before reporting success. */
+    fun update(id: String, text: String, category: String): MemoryFact? = synchronized(lock) {
+        val clean = sanitize(text) ?: return@synchronized null
+        val facts = read()
+        val old = facts.singleOrNull { it.id == id } ?: return@synchronized null
+        if (facts.any { it.id != id && normalize(it.text) == normalize(clean) }) return@synchronized null
+        val next = old.copy(text = clean, category = category.takeIf { it in CATEGORIES } ?: old.category,
+            source = MemoryFact.SOURCE_MANUAL, confidence = 1.0, updatedAt = clock())
+        write(facts.map { if (it.id == id) next else it })
+        read().singleOrNull { it.id == id }?.takeIf { it == next }
+    }
+
+    /** Backup restore: facts are re-filtered (a crafted backup cannot plant secrets) and replace the file. */
+    fun replaceAll(incoming: List<MemoryFact>): Boolean = synchronized(lock) {
+        val clean = incoming.mapNotNull { f -> sanitize(f.text)?.let { f.copy(text = it, category = f.category.takeIf { c -> c in CATEGORIES } ?: "other") } }
+            .distinctBy { normalize(it.text) }.sortedBy { it.createdAt }.takeLast(MAX_FACTS)
+            .let { decode(encode(it)) }.distinctBy { it.id } // exactly what the file keeps (bounded id, valid confidence)
+        write(clean); read() == clean
     }
 
     fun forget(id: String): Boolean = synchronized(lock) {
@@ -64,26 +97,30 @@ class AssistantMemoryStore(private val file: File, private val clock: () -> Long
 
     private fun readFile(): List<MemoryFact> = runCatching {
         if (!file.isFile) return emptyList()
-        val array = JSONObject(file.readText()).optJSONArray("facts") ?: JSONArray()
-        (0 until array.length()).mapNotNull { i ->
-            val o = array.optJSONObject(i) ?: return@mapNotNull null
-            val text = o.optString("text"); val id = o.optString("id")
-            if (id.isBlank() || text.isBlank()) null else MemoryFact(id, text, o.optString("category", "other"), o.optLong("createdAt"))
-        }
+        decode(JSONObject(file.readText()).optJSONArray("facts"))
     }.getOrDefault(emptyList())
 
     private fun write(facts: List<MemoryFact>) {
         cache = null // Readback after every write comes from the file, not from memory.
         file.parentFile?.mkdirs()
-        val json = JSONObject().put("version", 1).put("facts", JSONArray().apply {
-            facts.forEach { put(JSONObject().put("id", it.id).put("text", it.text).put("category", it.category).put("createdAt", it.createdAt)) }
-        })
+        val json = JSONObject().put("version", 2).put("facts", encode(facts))
         val tmp = File(file.parentFile, file.name + ".tmp")
         tmp.writeText(json.toString())
         if (!tmp.renameTo(file)) { file.delete(); check(tmp.renameTo(file)) { "memory write failed" } }
     }
 
     companion object {
+        fun encode(facts: List<MemoryFact>): JSONArray = JSONArray().apply {
+            facts.forEach { put(JSONObject().put("id", it.id).put("text", it.text).put("category", it.category).put("createdAt", it.createdAt)
+                .put("source", it.source).put("confidence", it.confidence).put("updatedAt", it.updatedAt)) }
+        }
+        fun decode(array: JSONArray?, source: String? = null): List<MemoryFact> = (0 until (array?.length() ?: 0)).mapNotNull { i ->
+            val o = array?.optJSONObject(i) ?: return@mapNotNull null
+            val text = o.optString("text"); val id = o.optString("id")
+            if (id.isBlank() || text.isBlank()) null else MemoryFact(id.take(64), text, o.optString("category", "other"), o.optLong("createdAt"),
+                source ?: o.optString("source", MemoryFact.SOURCE_CHAT), o.optDouble("confidence", 1.0).takeIf { it in 0.0..1.0 } ?: 1.0,
+                o.optLong("updatedAt", o.optLong("createdAt")))
+        }
         const val MAX_FACTS = 100
         const val MAX_CHARS = 80
         val CATEGORIES = listOf("vehicle", "preference", "work", "finance", "other")

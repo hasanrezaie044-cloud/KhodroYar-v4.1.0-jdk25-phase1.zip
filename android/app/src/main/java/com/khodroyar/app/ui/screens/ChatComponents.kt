@@ -47,12 +47,9 @@ import kotlinx.coroutines.withContext
 internal fun ChatBrandIcon(brand: String, modifier: Modifier = Modifier.size(22.dp)) {
     val asset = when (brand.lowercase()) {
         "openrouter" -> R.drawable.ai_brand_openrouter
-        "gemini" -> R.drawable.ai_brand_gemini
         "google" -> R.drawable.ai_brand_google
         "groq" -> R.drawable.ai_brand_groq
-        "claude" -> R.drawable.ai_brand_claude
         "anthropic" -> R.drawable.ai_brand_anthropic
-        "fireworks" -> R.drawable.ai_brand_fireworks
         "gpt", "openai" -> R.drawable.ai_brand_openai
         "nvidia" -> R.drawable.ai_brand_nvidia
         "meta" -> R.drawable.ai_brand_meta
@@ -171,7 +168,7 @@ internal fun ChatModelSheet(mode: AiMode, models: AIModelState, selectedId: Stri
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun ChatOptionsSheet(taskCount: Int, enabled: Boolean, onNew: () -> Unit, onHistory: () -> Unit,
-    onClear: () -> Unit, onTasks: () -> Unit, onSettings: () -> Unit, onDismiss: () -> Unit) {
+    onClear: () -> Unit, onTasks: () -> Unit, onSettings: () -> Unit, onDismiss: () -> Unit, onMemory: () -> Unit = {}) {
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
         containerColor = MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(topStart = 30.dp, topEnd = 30.dp)) {
         Column(Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, bottom = 28.dp).testTag("ai-options-menu"),
@@ -182,6 +179,7 @@ internal fun ChatOptionsSheet(taskCount: Int, enabled: Boolean, onNew: () -> Uni
             ChatOption("تاریخچه", Icons.Outlined.History, enabled, onHistory)
             ChatOption("پاک‌سازی گفتگوها", Icons.Outlined.DeleteSweep, enabled, onClear, destructive = true)
             ChatOption("کارهای خودکار", Icons.Outlined.AutoAwesome, enabled, onTasks, count = taskCount)
+            ChatOption("حافظه و کارهای دستیار", Icons.Outlined.Psychology, enabled, onMemory)
             HorizontalDivider(Modifier.padding(horizontal = 14.dp, vertical = 8.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f))
             ChatOption("تنظیمات هوش مصنوعی و مدل‌ها", Icons.Outlined.Tune, enabled, onSettings)
         }

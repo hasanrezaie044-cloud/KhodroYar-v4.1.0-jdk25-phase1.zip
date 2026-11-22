@@ -36,21 +36,24 @@ class AiAssistantViewModel @JvmOverloads constructor(
     private val requestRuntime = AIRequestRuntime(http, { settingsStore.load().usage }, { settingsStore.load().modelAccountScope }, usageStore)
     private fun keyStore(mode: AiMode = settingsStore.load().mode) = ProviderApiKeyStore(getApplication(), mode)
     private val openRouter = OpenRouterClient(settingsStore::load, OpenRouterApiKeyStore(app), http, runtime = requestRuntime)
+    // Exactly two network providers, each only when explicitly selected; LOCAL never reaches an adapter.
     private val selectedAdapter = SelectedAIModelAdapter({ settingsStore.load().mode }, mapOf(
         AiMode.OPENROUTER to OpenRouterModelAdapter(openRouter),
-        *listOf(AiMode.GEMINI, AiMode.GROQ).map { mode ->
-            mode to DirectModelAdapter(mode, settingsStore::load, ProviderApiKeyStore(app, mode), requestRuntime)
-        }.toTypedArray(),
-        *listOf(AiMode.CLAUDE, AiMode.FIREWORKS, AiMode.GPT).map { mode ->
-            mode to AccountModelAdapter(mode, settingsStore::load, ProviderApiKeyStore(app, mode), requestRuntime)
-        }.toTypedArray()))
+        AiMode.GROQ to DirectModelAdapter(AiMode.GROQ, settingsStore::load, ProviderApiKeyStore(app, AiMode.GROQ), requestRuntime),
+    ))
+
+    init {
+        RetiredAiCredentials.purge(app) { ids -> ProviderApiKeyStore(app, AiMode.GROQ).removeRetired(ids) }
+    }
     private val managedModels = ManagedAIProvider(selectedAdapter, {
         settingsStore.load().let { s -> AISelectionSettings(s.enabled && s.mode != AiMode.LOCAL, s.consented,
             s.modelAccountScope, s.modelSelectionMode, AIModelKey(AIProviderRegistry.get(s.mode).id, s.modelFor()),
             s.allowModelFallback && s.mode == AiMode.OPENROUTER, s.effectiveUsage()) }
     }, AndroidModelEvaluationStore(app))
     private val memory = AssistantAgentTools.memoryFor(app)
-    private val agent = PersianToolAgent(managedModels, tools, { settingsStore.load().effectiveUsage() }, { memory.count() })
+    private val taskStore = AssistantAgentTools.tasksFor(app)
+    private val agent = PersianToolAgent(managedModels, tools, { settingsStore.load().effectiveUsage() }, { memory.count() },
+        taskStore, { conversationId })
     private val local = LocalAssistant(tools, dialogue = LocalDialogueEngine(rules = { automationStore.rules.value }))
 
     var localContext by mutableStateOf(LocalDialogueContext())
@@ -304,7 +307,7 @@ class AiAssistantViewModel @JvmOverloads constructor(
     fun saveSettings(new: AiSettings, forceNewConsent: Boolean = false) {
         if (executingAction) return
         if (new.mode != AiMode.LOCAL && new.mode !in AIProviderRegistry.providers.map { it.mode }) return
-        val newAccount = new.mode != settings.mode || forceNewConsent || new.cloudflareAccountId != settings.cloudflareAccountId
+        val newAccount = new.mode != settings.mode || forceNewConsent
         val changed = newAccount || new.modelFor() != settings.modelFor() || new.modelSelectionMode != settings.modelSelectionMode || new.usage != settings.usage
         if (!new.usage.saveHistory) historySave?.cancel()
         if (newAccount || changed || !new.enabled) { stop(); pending = null; local.dialogue.reset(); localContext = local.dialogue.context }
@@ -410,7 +413,8 @@ class AiAssistantViewModel @JvmOverloads constructor(
     }
     private suspend fun toolResult(name: String, out: ToolOutcome) {
         streamingText = ""
-        add(ChatRole.RESULT, "ابزار $name · ${if (out.ok) "تأیید شد" else "ناموفق"}\n${out.text}")
+        add(ChatRole.RESULT, "ابزار $name · ${if (out.ok) "تأیید شد" else "ناموفق"}" +
+            (out.operationId?.let { " · عملیات ${it.take(8)}" } ?: "") + "\n${out.text}")
         if (out.ok && out.section != null) navigation = out.section
     }
     private fun applyStep(step: AgentStep) {
@@ -587,13 +591,72 @@ class AiAssistantViewModel @JvmOverloads constructor(
         }
     }
 
+    // ---------------------------------------------------------------- memory & agent tasks (owner-inspectable)
+
+    var memoryFacts by mutableStateOf<List<MemoryFact>>(emptyList())
+        private set
+    var agentTasks by mutableStateOf<List<AgentTask>>(emptyList())
+        private set
+    var memoryMessage by mutableStateOf<String?>(null)
+        private set
+
+    fun loadMemory() {
+        viewModelScope.launch {
+            val (facts, tasks) = withContext(Dispatchers.IO) { memory.all().sortedByDescending { it.updatedAt } to taskStore.all().sortedByDescending { it.updatedAt } }
+            memoryFacts = facts; agentTasks = tasks
+        }
+    }
+
+    /** Owner edits never go through the model; the store refuses secrets and reads the fact back. */
+    fun saveMemory(id: String?, text: String, category: String) {
+        viewModelScope.launch {
+            val saved = withContext(Dispatchers.IO) {
+                if (id == null) memory.remember(text, category, MemoryFact.SOURCE_MANUAL) else memory.update(id, text, category)
+            }
+            memoryMessage = if (saved != null) "در حافظه ذخیره و بازخوانی شد." else "ذخیره نشد: متن خالی، تکراری یا شبیه رمز/کارت/کلید است."
+            loadMemory()
+        }
+    }
+
+    fun deleteMemory(id: String) {
+        viewModelScope.launch {
+            val ok = withContext(Dispatchers.IO) { memory.forget(id) }
+            memoryMessage = if (ok) "نکته حذف شد." else "حذف تأیید نشد."
+            loadMemory()
+        }
+    }
+
+    /** Cancels a persisted task. The open in-memory plan is cancelled too when it is the same task. */
+    fun cancelTask(id: String) {
+        if (executingAction) return
+        viewModelScope.launch {
+            if (agent.scratchpad.taskId == id) { stop(); agent.cancelTask() }
+            else withContext(Dispatchers.IO) {
+                taskStore.all().firstOrNull { it.id == id && it.status.open }?.let { taskStore.upsert(it.copy(status = AgentTaskStatus.CANCELLED, updatedAt = System.currentTimeMillis())) }
+            }
+            val task = withContext(Dispatchers.IO) { taskStore.all().firstOrNull { it.id == id } }
+            memoryMessage = task?.let { "کار «${it.goal}» لغو شد؛ ${it.operations.count { o -> o.ok }} عملیات تأییدشدهٔ قبلی باقی می‌ماند و خودکار برگردانده نمی‌شود." }
+            loadMemory()
+        }
+    }
+
+    fun deleteTask(id: String) {
+        if (executingAction) return
+        viewModelScope.launch {
+            if (agent.scratchpad.taskId == id) agent.clearPlan()
+            withContext(Dispatchers.IO) { taskStore.delete(id) }
+            loadMemory()
+        }
+    }
+    fun dismissMemoryMessage() { memoryMessage = null }
+
     /** Wipes chat history only; never financial/vehicle records. */
     fun clearAllHistory() {
         if (executingAction) return
         newChat()
         viewModelScope.launch {
             storageLock.withLock { conversations.clearAll(); history = emptyList() }
-            withContext(Dispatchers.IO) { memory.clear() } // Assistant memory is chat data too, never financial records.
+            withContext(Dispatchers.IO) { memory.clear(); taskStore.clear() } // Assistant memory and task log are chat data too, never financial records.
             pruneImages()
         }
     }

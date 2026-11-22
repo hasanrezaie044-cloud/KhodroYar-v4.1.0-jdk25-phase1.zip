@@ -5,17 +5,19 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.io.IOException
 import java.net.SocketTimeoutException
-import java.math.BigDecimal
 import java.security.MessageDigest
 
-/** Fixed official endpoints, user-selected provider only. No proxies, redirects, SDK retry or paid fallback. */
+/**
+ * Groq (OpenAI-compatible) adapter: fixed official endpoint, user-selected provider only.
+ * No proxies, redirects, SDK retry or paid fallback. OpenRouter has its own adapter.
+ */
 class DirectModelAdapter(
     private val mode: AiMode, private val configuration: () -> AiSettings, private val credentials: AiApiKeyReader,
     private val runtime: AIRequestRuntime, private val clock: () -> Long = System::currentTimeMillis,
 ) : AIModelAdapter {
+    init { require(mode == AiMode.GROQ) { "Only Groq uses the direct adapter" } }
     override val providerId = AIProviderRegistry.get(mode).id
     private var scope = ""; private var cached = emptyList<AIModel>(); private var checked = 0L
-    private var geminiAliases = emptyMap<String, Set<String>>()
     private class Rejected(val failure: AiResult.Failure) : Exception("Provider rejected")
     private fun account(): Pair<AiSettings, String> {
         val s = configuration()
@@ -30,8 +32,7 @@ class DirectModelAdapter(
     }
     private suspend fun request(s: AiSettings, key: String, url: String, body: JSONObject? = null, onEvent: ((String) -> Unit)? = null): AiHttpResponse {
         unchanged(s)
-        val headers = mapOf("Content-Type" to "application/json", "Accept" to "application/json, text/event-stream") +
-            if (mode == AiMode.GEMINI) mapOf("x-goog-api-key" to key) else mapOf("Authorization" to "Bearer $key")
+        val headers = mapOf("Content-Type" to "application/json", "Accept" to "application/json, text/event-stream", "Authorization" to "Bearer $key")
         val req = AiHttpRequest(url, if (body == null) "GET" else "POST", headers, body?.toString())
         require(AIProviderRegistry.permittedEndpoint(req))
         val response = runtime.send(providerId, req, onEvent)
@@ -47,59 +48,29 @@ class DirectModelAdapter(
         is IOException -> AiResult.Failure(AiErrorKind.OFFLINE, "اتصال امن برقرار نشد؛ امکانات آفلاین برقرارند.")
         else -> AiResult.Failure(AiErrorKind.BAD_REQUEST, "فراداده یا پاسخ سرویس ناقص/ناسازگار بود؛ ابزاری از آن اجرا نمی‌شود.")
     }
-    private fun base(s: AiSettings) = when (mode) {
-        AiMode.GROQ -> "https://api.groq.com/openai/v1"
-        AiMode.GEMINI -> "https://generativelanguage.googleapis.com/v1beta"
-        AiMode.CLOUDFLARE -> "https://api.cloudflare.com/client/v4/accounts/${s.cloudflareAccountId}/ai"
-        else -> error("Provider has no verified free adapter")
-    }
+    private val base = "https://api.groq.com/openai/v1"
     override suspend fun discover(force: Boolean): AIModelDiscovery = try {
         val (s, key) = account()
         if (scope != s.modelAccountScope) invalidate()
         if (!force && AIRequestPolicy.fresh(checked, clock(), AIRequestPolicy.METADATA_TTL_MS)) AIModelDiscovery.Found(cached, checked)
         else {
-            if (mode == AiMode.CLOUDFLARE) {
-                val subscriptions = NativeJson.objectValue(request(s, key, "https://api.cloudflare.com/client/v4/accounts/${s.cloudflareAccountId}/subscriptions").body, 128 * 1024)
-                require(subscriptions.optBoolean("success", false))
-                val rows = subscriptions.getJSONArray("result")
-                require(rows.length() <= 200)
-                val records = (0 until rows.length()).map { rows.getJSONObject(it) }
-                val plans = records.map { it.getJSONObject("rate_plan").getString("public_name") }
-                val free = records.any { row -> row.getJSONObject("rate_plan").getString("public_name") == "Workers Free" &&
-                    row.optString("state") == "Provisioned" && (row.opt("price") as? Number)?.let { BigDecimal(it.toString()).signum() == 0 } == true }
-                if (!free || plans.any { it.contains("workers", ignoreCase = true) && it != "Workers Free" })
-                    throw Rejected(AiResult.Failure(AiErrorKind.NOT_CONFIGURED, "طرح Workers Free از پاسخ رسمی حساب اثبات نشد یا طرح پولی وجود دارد؛ inference مسدود است."))
-            }
-            val path = if (mode == AiMode.CLOUDFLARE) "/models/search" else "/models"
-            val root = NativeJson.objectValue(request(s, key, base(s) + path).body, 4 * 1024 * 1024)
-            if (mode == AiMode.CLOUDFLARE) require(root.optBoolean("success", false))
-            val data = root.getJSONArray(if (mode == AiMode.GEMINI) "models" else if (mode == AiMode.CLOUDFLARE) "result" else "data")
+            val root = NativeJson.objectValue(request(s, key, "$base/models").body, 4 * 1024 * 1024)
+            val data = root.getJSONArray("data")
             require(data.length() <= 2000)
-            val aliases = mutableMapOf<String, Set<String>>()
-            val allow = when (mode) { AiMode.GROQ -> AIProviderRegistry.groqModels; AiMode.GEMINI -> AIProviderRegistry.geminiModels; else -> AIProviderRegistry.cloudflareModels }
+            val allow = AIProviderRegistry.groqModels
             val now = clock()
             val models = (0 until data.length()).mapNotNull { i ->
                 val row = data.getJSONObject(i)
-                val id = when (mode) {
-                    AiMode.GEMINI -> row.getString("name").removePrefix("models/")
-                    AiMode.CLOUDFLARE -> row.getString("name") // API `id` is an opaque model UUID, not the inference name.
-                    else -> row.getString("id")
-                }
+                val id = row.getString("id")
                 if (id !in allow || row.optBoolean("active", true).not()) return@mapNotNull null
-                if (mode == AiMode.GEMINI) {
-                    val methods = row.optJSONArray("supportedGenerationMethods") ?: return@mapNotNull null
-                    if ((0 until methods.length()).none { methods.getString(it) == "generateContent" }) return@mapNotNull null
-                    val version = row.optString("version").takeIf { Regex("[A-Za-z0-9._-]{1,40}").matches(it) }
-                    aliases[id] = setOfNotNull(id, version?.let { "$id-$it" })
-                }
-                val context = if (mode == AiMode.GEMINI) row.optInt("inputTokenLimit", 0) else if (mode == AiMode.CLOUDFLARE) 24000 else row.optInt("context_window", 0)
+                val context = row.optInt("context_window", 0)
                 val fp = MessageDigest.getInstance("SHA-256").digest("$providerId|$id|$context|${AIProviderRegistry.VERIFIED_ON}".toByteArray()).joinToString("") { "%02x".format(it) }
                 AIModel(AIModelKey(providerId, id), row.optString("displayName", id), AIProviderRegistry.get(mode).title, row.optString("owned_by", providerId),
-                    AIModelPricing(null, null, false), AIModelCapability(true, context, imageInput = mode == AiMode.GEMINI || mode == AiMode.GROQ && id in AIProviderRegistry.groqVisionModels), AIModelAuthorization.AUTHORIZED, now, fp,
+                    AIModelPricing(null, null, false), AIModelCapability(true, context, imageInput = id in AIProviderRegistry.groqVisionModels), AIModelAuthorization.AUTHORIZED, now, fp,
                     costEvidence = AICostEvidence.FREE_QUOTA, freeQuotaEligible = true)
             }
             require(models.map { it.key }.distinct().size == models.size)
-            unchanged(s); cached = models; checked = now; scope = s.modelAccountScope; geminiAliases = aliases
+            unchanged(s); cached = models; checked = now; scope = s.modelAccountScope
             AIModelDiscovery.Found(models, now)
         }
     } catch (e: CancellationException) { throw e }
@@ -121,31 +92,22 @@ class DirectModelAdapter(
         if (request.messages.any { it.images.isNotEmpty() } && !selected.capability.imageInput)
             throw Rejected(AiResult.Failure(AiErrorKind.MODEL_INVALID, "مدل انتخابی تصویر نمی‌پذیرد؛ یک مدل تصویری انتخاب کنید."))
         require(request.messages.none { key in it.content || AiTextSafety.containsCredential(it.content) || it.calls.any { c -> key in c.arguments || AiTextSafety.containsCredential(c.arguments) } })
-        if (mode == AiMode.GEMINI) {
-            // Free Gemini may train on data. Never allow database tools or send tool results from real chats here.
-            val evaluation = request.messages.firstOrNull()?.let { it.role == "system" && it.content.contains(SafePersianModelEvaluator.MARKER) } == true
-            require(evaluation || (request.tools.isEmpty() && request.messages.none { it.role == "tool" || it.calls.isNotEmpty() }))
-            val decoder = GeminiTextStream(model.id, geminiAliases[model.id].orEmpty(), onText)
-            val body = GeminiWire.request(request)
-            val url = base(s) + "/models/${model.id}:" + if (request.stream) "streamGenerateContent?alt=sse" else "generateContent"
-            val response = request(s, key, url, body, if (request.stream) ({ event -> unchanged(s); decoder.accept(event) }) else null)
-            if (request.stream && response.body.isBlank()) decoder.result() else GeminiWire.completion(response.body, model.id, geminiAliases[model.id].orEmpty())
-        } else {
+        run {
             val body = JSONObject().put("model", model.id).put("messages", JSONArray().apply { request.messages.forEach { put(OpenRouterWire.messageJson(it)) } })
                 .put("max_tokens", request.maxOutputTokens).put("stream", request.stream)
             if (request.tools.isNotEmpty()) body.put("tools", OpenRouterToolSchemas.tools(request.tools, compact = true)).put("tool_choice", "auto")
-            if (mode == AiMode.GROQ) { body.remove("max_tokens"); body.put("max_completion_tokens", request.maxOutputTokens) }
+            body.remove("max_tokens"); body.put("max_completion_tokens", request.maxOutputTokens)
             // Documented instruct mode: no hidden reasoning tokens are billed or leaked into the Persian reply.
-            if (mode == AiMode.GROQ && model.id == "qwen/qwen3.8-27b") body.put("reasoning_effort", "none")
+            if (model.id == "qwen/qwen3.8-27b") body.put("reasoning_effort", "none")
             if (request.stream) body.put("stream_options", JSONObject().put("include_usage", true))
             val decoder = OpenRouterStream(model.id, emptyList(), { text -> unchanged(s); onText(text) }, setOf(model.id))
-            val url = base(s) + if (mode == AiMode.CLOUDFLARE) "/v1/chat/completions" else "/chat/completions"
+            val url = "$base/chat/completions"
             val response = request(s, key, url, body, if (request.stream) ({ event -> unchanged(s); decoder.accept(event) }) else null)
             if (request.stream && response.body.isBlank()) decoder.result() else OpenRouterWire.completion(response.body, selected.key.id, emptyList(), setOf(model.id))
         }
     } catch (e: CancellationException) { onText(""); throw e }
     catch (e: Exception) { onText(""); val f = failure(e); runtime.annotateFailure(providerId, f.kind); FunctionResult.Failed(f) }
-    override fun invalidate() { scope = ""; checked = 0; cached = emptyList(); geminiAliases = emptyMap() }
+    override fun invalidate() { scope = ""; checked = 0; cached = emptyList() }
 }
 
 /** Exactly one explicitly selected adapter. A failure can never route to another provider. */

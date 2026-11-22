@@ -28,6 +28,7 @@ import com.khodroyar.app.R
 import com.khodroyar.app.core.holidays.IranHolidays
 import com.khodroyar.app.core.jalali.Jalali
 import com.khodroyar.app.data.backup.AutoBackup
+import com.khodroyar.app.data.backup.AssistantBackup
 import com.khodroyar.app.data.backup.BackupAttachmentCodec
 import com.khodroyar.app.data.backup.BackupFiles
 import com.khodroyar.app.data.legacy.LegacyBackup
@@ -608,13 +609,19 @@ fun SettingsScreen(repository: AppRepository, settings: AppSettings, onToggleThe
                         InfoRow("تعطیلات دستی", preview.counts.holidays.toString())
                         InfoRow("بیمه‌نامه‌ها", preview.counts.insurance.toString())
                         InfoRow("سال‌های نرخ", preview.counts.rateYears.toString())
+                        InfoRow("اقساط وام", preview.counts.loanInstallments.toString())
+                        InfoRow("پیوست‌های رکورد", preview.counts.recordAttachments.toString())
+                        InfoRow("گفتگوهای دستیار", preview.counts.conversations.toString())
+                        InfoRow("حافظهٔ دستیار", preview.counts.memoryFacts.toString())
+                        InfoRow("کارهای دستیار", preview.counts.agentTasks.toString())
+                        InfoRow("قوانین خودکار", preview.counts.automations.toString())
                         preview.versionWarning?.let {
                             Spacer(Modifier.height(8.dp))
                             Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
                         }
                         Spacer(Modifier.height(8.dp))
                         Text(
-                            "داده‌های فعلی با محتوای این فایل جایگزین می‌شوند. این عملیات بازگشت‌پذیر نیست.",
+                            "داده‌های فعلی با محتوای این فایل جایگزین می‌شوند. این عملیات بازگشت‌پذیر نیست. کلیدهای API در پشتیبان نیستند و قوانین خودکار متوقف بازگردانده می‌شوند.",
                             style = MaterialTheme.typography.bodyMedium,
                         )
                     }
@@ -635,9 +642,15 @@ fun SettingsScreen(repository: AppRepository, settings: AppSettings, onToggleThe
                                 AutoServiceScheduler.sync(context)
                                 AutoBackupScheduler.sync(context)
                                 healthToken++
+                                val restored = result.getOrNull()
                                 toast.show(
-                                    if (result.isSuccess) "بازگردانی با موفقیت انجام شد"
-                                    else "بازگردانی انجام نشد؛ داده‌های فعلی دست‌نخورده است"
+                                    when {
+                                        restored == null -> "بازگردانی انجام نشد؛ داده‌های فعلی دست‌نخورده است" +
+                                            (result.exceptionOrNull()?.message?.let { " ($it)" } ?: "")
+                                        restored.skipped.isNotEmpty() -> "سوابق بازگردانی شد، اما این بخش‌ها بازگردانی نشدند: " +
+                                            restored.skipped.joinToString("، ") + ". " + AssistantBackup.keyStatusMessage(context)
+                                        else -> "بازگردانی با موفقیت انجام شد. " + AssistantBackup.keyStatusMessage(context)
+                                    }
                                 )
                                 restoreJson = null
                             }

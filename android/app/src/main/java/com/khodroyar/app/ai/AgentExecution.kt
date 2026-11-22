@@ -10,7 +10,9 @@ interface AgentToolRunner {
 }
 
 /** Real application data/state, never a model's claim that an operation succeeded. */
-data class ToolOutcome(val ok: Boolean, val text: String, val section: AgentSection? = null)
+data class ToolOutcome(val ok: Boolean, val text: String, val section: AgentSection? = null,
+    /** Set by the agent for an approved write; shown to the owner and kept in the task log. */
+    val operationId: String? = null)
 
 /** An operation waiting for the user's explicit approval. */
 class PendingAction(

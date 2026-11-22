@@ -8,7 +8,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
-/** Small, device-local rules, excluded from transfer/backup. All writers AND workers share the gate. */
+/** Small, device-local rules. The full backup carries them, but a restore always brings them back paused. All writers AND workers share the gate. */
 class AutomationStore private constructor(context: Context) {
     private val prefs = context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
     private val gate = Mutex()

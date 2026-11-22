@@ -180,10 +180,6 @@ jobs:
 
 
 
-      - name: Test AI backend (mock provider, no API key)
-        working-directory: backend
-        run: npm test
-
       - name: Static checks and unit tests
         working-directory: android
         run: |
@@ -291,10 +287,13 @@ jobs:
           from pathlib import Path
           path = Path('android/app/build/outputs/apk/release/verification.json')
           proof = json.loads(path.read_text())
+          import re as _re
+          room = int(_re.search(r'APP_DATABASE_SCHEMA_VERSION\s*=\s*(\d+)', Path('android/app/src/main/java/com/khodroyar/app/data/db/AppDatabase.kt').read_text()).group(1))
+          assert room == 7, f'Unexpected Room schema version {room}'
           proof.update(package='com.khodroyar.app', version_name='${{ steps.version.outputs.version_name }}',
               version_code=int('${{ steps.version.outputs.version_code }}'), head_sha=subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip(),
               certificate_sha256='03bfbc3575667403c3259fae345f3eb1ad3045373cb62123be376ef4898caaf0',
-              debuggable=False, zipalign_16kb='passed', room_version=6,
+              debuggable=False, zipalign_16kb='passed', room_version=room,
               baseline='797d7061c5f669cf4fa3e7361c0b3c2dca10490c')
           path.write_text(json.dumps(proof, indent=2) + '\n')
           PY

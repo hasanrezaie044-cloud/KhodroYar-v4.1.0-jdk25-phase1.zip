@@ -1,6 +1,10 @@
 package com.khodroyar.app.ui.screens
 
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.ui.Modifier
+import com.khodroyar.app.data.repo.AppRepository
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Edit
@@ -21,6 +25,7 @@ import com.khodroyar.app.ui.components.tr
 @Composable
 internal fun FuelDetailDialog(
     fuel: FuelEntity,
+    repository: AppRepository,
     onDismiss: () -> Unit,
     onEdit: () -> Unit,
     onDelete: () -> Unit,
@@ -29,13 +34,16 @@ internal fun FuelDetailDialog(
         onDismissRequest = onDismiss,
         title = { Text(tr("جزئیات سوخت‌گیری", "Fuel entry details")) },
         text = {
-            Column {
+            Column(Modifier.verticalScroll(rememberScrollState())) {
                 InfoRow(tr("تاریخ", "Date"), fuel.date)
                 InfoRow(tr("نوع سوخت", "Fuel type"), FuelType.fromWire(fuel.type).label)
                 InfoRow(tr("خودرو", "Vehicle"), CarType.fromWire(fuel.carType).label)
                 InfoRow(tr("مقدار", "Volume"), "${money(fuel.liters)} ${tr("لیتر", "L")}")
                 if (fuel.liters > 0.0) InfoRow(tr("نرخ ثبت‌شده", "Saved unit price"), "${money(fuel.total / fuel.liters)} ${tr("تومان/لیتر", "Toman/L")}")
                 InfoRow(tr("هزینهٔ کل", "Total cost"), "${amount(fuel.total)} ${tr("تومان", "Toman")}", emphasis = true, valueColor = MaterialTheme.colorScheme.primary)
+                if (fuel.km > 0) InfoRow(tr("کیلومترشمار", "Odometer"), "${money(fuel.km)} ${tr("کیلومتر", "km")}")
+                if (fuel.station.isNotBlank()) InfoRow(tr("جایگاه", "Station"), fuel.station)
+                RecordAttachmentsPanel(repository, "fuel", fuel.id)
             }
         },
         confirmButton = {

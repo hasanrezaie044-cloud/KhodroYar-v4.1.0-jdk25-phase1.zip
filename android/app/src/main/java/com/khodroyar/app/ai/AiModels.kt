@@ -4,7 +4,24 @@ package com.khodroyar.app.ai
 data class AiMessage(val role: String, val content: String)
 
 /** Local is an explicit command assistant, not a downloaded/generative language model. */
-enum class AiMode { LOCAL, ONLINE, GAPGPT_DIRECT, OPENROUTER, GEMINI, GROQ, CLOUDFLARE, CEREBRAS, HUGGING_FACE, AVALAI, CLAUDE, FIREWORKS, GPT }
+/**
+ * Exactly three assistant systems. Values written by older versions for retired connections
+ * (ONLINE, GAPGPT_DIRECT, GEMINI, CLAUDE, ...) are read back as [LOCAL]: the offline assistant
+ * never sends anything, so a retired connection can never silently become a different network
+ * provider.
+ */
+enum class AiMode {
+    LOCAL, OPENROUTER, GROQ;
+
+    companion object {
+        val RETIRED = setOf("ONLINE", "GAPGPT_DIRECT", "GEMINI", "CLOUDFLARE", "CEREBRAS", "HUGGING_FACE", "AVALAI", "CLAUDE", "FIREWORKS", "GPT")
+        fun fromStored(raw: String?, absent: AiMode): AiMode = when {
+            raw.isNullOrBlank() -> absent
+            raw in RETIRED -> LOCAL
+            else -> entries.firstOrNull { it.name == raw } ?: LOCAL
+        }
+    }
+}
 
 enum class AiErrorKind {
     OFFLINE, TIMEOUT, NOT_CONFIGURED, DISABLED, BAD_REQUEST, UNAUTHORIZED,
@@ -59,7 +76,7 @@ data class Conversation(
     val createdAt: Long,
     val updatedAt: Long,
     val messages: List<ChatEntry>,
-    val mode: AiMode = AiMode.ONLINE,
+    val mode: AiMode = AiMode.LOCAL,
     /** Legacy histories without a scope are view-only, never silently reused with a new key. */
     val accountScope: String = "",
     /** Earlier visible messages belong to a different connection/key and are never sent implicitly. */

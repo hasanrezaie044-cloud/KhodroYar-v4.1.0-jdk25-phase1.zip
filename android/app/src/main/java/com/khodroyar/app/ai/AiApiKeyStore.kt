@@ -1,37 +1,23 @@
 package com.khodroyar.app.ai
 
 import android.content.Context
-import androidx.security.crypto.EncryptedSharedPreferences
-import androidx.security.crypto.MasterKey
 
 fun interface AiApiKeyReader {
     fun read(): String?
 }
 
 /**
- * Optional, user-entered personal GapGPT key only. Android Keystore-backed encryption, in a
- * separate private preference file. Never in AiSettings, BuildConfig, Room, exports or backups.
- * Failure is propagated to the UI; there is deliberately no plaintext fallback.
+ * Removes encrypted credential files of retired connections (custom backend / GapGPT direct
+ * key). Their keys are never read, migrated or exported; deleting the file is the only safe
+ * handling of a secret the app no longer uses. OpenRouter and Groq keys are untouched.
  */
-class AiApiKeyStore(context: Context) : AiApiKeyReader {
-    private val appContext = context.applicationContext
-    private val prefs by lazy {
-        val master = MasterKey.Builder(appContext).setKeyScheme(MasterKey.KeyScheme.AES256_GCM).build()
-        EncryptedSharedPreferences.create(
-            appContext, "khodroyar_gapgpt_credentials", master,
-            EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
-            EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM,
-        )
-    }
+object RetiredAiCredentials {
+    private const val GAPGPT_FILE = "khodroyar_gapgpt_credentials"
+    private val retiredProviderIds = listOf("gemini", "claude", "fireworks", "gpt", "cloudflare", "cerebras", "huggingface", "avalai")
 
-    override fun read(): String? = prefs.getString("api_key", null)
-
-    fun save(raw: String) {
-        val key = requireNotNull(GapGptDirectContract.normalizeApiKey(raw)) { "Invalid API key" }
-        check(prefs.edit().putString("api_key", key).commit()) { "Could not persist encrypted key" }
-    }
-
-    fun clear() {
-        check(prefs.edit().remove("api_key").commit()) { "Could not remove encrypted key" }
+    fun purge(context: Context, providerKeys: (List<String>) -> Unit = {}) {
+        val app = context.applicationContext
+        runCatching { app.deleteSharedPreferences(GAPGPT_FILE) }
+        runCatching { providerKeys(retiredProviderIds) }
     }
 }

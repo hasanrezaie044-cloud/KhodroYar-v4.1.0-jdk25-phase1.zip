@@ -20,6 +20,13 @@ class ProviderApiKeyStore(context: Context, private val mode: AiMode) : AiApiKey
         else check(prefs.edit().putString(AIProviderRegistry.get(mode).id, value).commit()) { "Encrypted persistence failed" }
     }
     fun clear() { if (mode == AiMode.OPENROUTER) original.clear() else check(prefs.edit().remove(AIProviderRegistry.get(mode).id).commit()) }
+
+    /** Deletes stored keys of retired providers (same encrypted file, other namespaces). */
+    fun removeRetired(ids: List<String>) {
+        val editor = prefs.edit()
+        ids.forEach { editor.remove(it) }
+        editor.commit()
+    }
 }
 
 /** Payload-free usage accounting, never an install-wide usage gate. */

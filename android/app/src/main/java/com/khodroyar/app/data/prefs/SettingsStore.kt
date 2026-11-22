@@ -362,6 +362,7 @@ class SettingsStore private constructor(context: Context) {
             "\"themeMode\":\"" + s.themeMode + "\"," +
             "\"themeColor\":\"" + s.themeColor + "\"," +
             "\"language\":\"" + s.language + "\"," +
+            "\"trafficLastLevels\":" + q(s.trafficLastLevels) + "," +
             "\"userFirstName\":" + q(s.userFirstName) + "," +
             "\"userLastName\":" + q(s.userLastName) + "," +
             "\"vehicleCurrentKm\":" + s.vehicleCurrentKm + "," +
@@ -415,6 +416,12 @@ class SettingsStore private constructor(context: Context) {
         userFirstName: String? = null, userLastName: String? = null,
         oilCurrentKm: Double?, oilNextKm: Double?, privacyMode: Boolean?,
         monthlyIncomeGoal: Double?,
+        vehicleCurrentKm: Double? = null, isRental: Boolean? = null,
+        beltCurrentKm: Double? = null, beltNextKm: Double? = null,
+        sparkCurrentKm: Double? = null, sparkNextKm: Double? = null,
+        brakeCurrentKm: Double? = null, brakeNextKm: Double? = null,
+        filterCurrentKm: Double? = null, filterNextKm: Double? = null,
+        trafficNotifyEnabled: Boolean? = null, trafficLastLevels: String? = null,
         remindDailySummary: Boolean?, remindWeeklySummary: Boolean?, remindMonthlySummary: Boolean?,
         remindInstallments: Boolean?, remindOilChange: Boolean?, remindBodyInsurance: Boolean?,
         remindVehicleInsurance: Boolean?, remindInspection: Boolean?, remindBackup: Boolean?,
@@ -429,12 +436,6 @@ class SettingsStore private constructor(context: Context) {
         autoServiceTollCount: Int? = null,
         servicePresetsJson: String? = null,
         autoBackupEnabled: Boolean? = null,
-        vehicleCurrentKm: Double? = null, isRental: Boolean? = null,
-        beltCurrentKm: Double? = null, beltNextKm: Double? = null,
-        sparkCurrentKm: Double? = null, sparkNextKm: Double? = null,
-        brakeCurrentKm: Double? = null, brakeNextKm: Double? = null,
-        filterCurrentKm: Double? = null, filterNextKm: Double? = null,
-        trafficNotifyEnabled: Boolean? = null,
     ) = update { c ->
         c.copy(
             themeMode = themeMode ?: c.themeMode,
@@ -454,6 +455,8 @@ class SettingsStore private constructor(context: Context) {
             brakeNextKm = brakeNextKm ?: c.brakeNextKm,
             filterCurrentKm = filterCurrentKm ?: c.filterCurrentKm,
             filterNextKm = filterNextKm ?: c.filterNextKm,
+            trafficNotifyEnabled = trafficNotifyEnabled ?: c.trafficNotifyEnabled,
+            trafficLastLevels = trafficLastLevels ?: c.trafficLastLevels,
             privacyMode = privacyMode ?: c.privacyMode,
             monthlyIncomeGoal = monthlyIncomeGoal ?: c.monthlyIncomeGoal,
             remindDailySummary = remindDailySummary ?: c.remindDailySummary,
@@ -483,7 +486,6 @@ class SettingsStore private constructor(context: Context) {
             autoServiceTollCount = autoServiceTollCount ?: c.autoServiceTollCount,
             servicePresetsJson = servicePresetsJson ?: c.servicePresetsJson,
             autoBackupEnabled = autoBackupEnabled ?: c.autoBackupEnabled,
-            trafficNotifyEnabled = trafficNotifyEnabled ?: c.trafficNotifyEnabled,
         )
     }
 

@@ -5,7 +5,7 @@ import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
 
-const val APP_DATABASE_SCHEMA_VERSION = 6
+const val APP_DATABASE_SCHEMA_VERSION = 7
 
 @Database(
     entities = [
@@ -13,6 +13,7 @@ const val APP_DATABASE_SCHEMA_VERSION = 6
         LoanEntity::class, PersonalExpenseEntity::class, PersonalIncomeEntity::class,
         PersonnelEntity::class, HolidayEntity::class, RatesEntity::class,
         SuggestionEntity::class, InsuranceEntity::class,
+        RecordAttachmentEntity::class, LoanInstallmentEntity::class,
     ],
     version = APP_DATABASE_SCHEMA_VERSION,
     exportSchema = false,
@@ -30,6 +31,8 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun rates(): RatesDao
     abstract fun suggestions(): SuggestionDao
     abstract fun insurance(): InsuranceDao
+    abstract fun attachments(): RecordAttachmentDao
+    abstract fun loanInstallments(): LoanInstallmentDao
 
     companion object {
         private const val NAME = "car_management.db"
@@ -39,7 +42,7 @@ abstract class AppDatabase : RoomDatabase() {
         fun get(context: Context): AppDatabase = instance ?: synchronized(this) {
             instance ?: Room.databaseBuilder(context.applicationContext, AppDatabase::class.java, NAME)
                 .setJournalMode(JournalMode.WRITE_AHEAD_LOGGING)
-                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7)
                 .build()
                 .also { instance = it }
         }

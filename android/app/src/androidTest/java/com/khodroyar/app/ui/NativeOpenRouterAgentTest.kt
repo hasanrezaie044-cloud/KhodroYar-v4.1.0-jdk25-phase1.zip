@@ -397,10 +397,11 @@ class NativeOpenRouterAgentTest {
                 .put("separate_cost_confirmation_shown", true).toString().toByteArray())
     }
     @Test fun providerKeysAndInstallWideUsagePersistEncryptedOrBoundedWithoutTouchingRecords(): Unit = runBlocking {
-        val values = mapOf(AiMode.GEMINI to ("AIza" + "x".repeat(35)), AiMode.GROQ to ("gsk_" + "y".repeat(48)), AiMode.CLOUDFLARE to "z".repeat(40))
+        val values = mapOf(AiMode.OPENROUTER to ("sk-or-v1-" + "a".repeat(64)), AiMode.GROQ to ("gsk_" + "y".repeat(48)))
         values.forEach { (mode, key) -> ProviderApiKeyStore(context, mode).save(key) }
-        val file = File(context.applicationInfo.dataDir, "shared_prefs/khodroyar_provider_credentials.xml").readText()
-        values.forEach { (mode, key) -> assertEquals(key, ProviderApiKeyStore(context, mode).read()); assertFalse(file.contains(key)) }
+        val prefsDir = File(context.applicationInfo.dataDir, "shared_prefs")
+        val stored = prefsDir.listFiles().orEmpty().filter { it.name.endsWith(".xml") }.joinToString("\n") { it.readText() }
+        values.forEach { (mode, key) -> assertEquals(key, ProviderApiKeyStore(context, mode).read()); assertFalse(stored.contains(key)) }
         val ledger = AIUsageLedger(day = 20000, requests = 7, reservedTokens = 0, metadataRequests = 2, actualTokens = 3210)
         AndroidAIUsageStore(context).write(ledger)
         val legacyUsage = context.getSharedPreferences("khodroyar_ai_usage", Context.MODE_PRIVATE)
@@ -411,7 +412,7 @@ class NativeOpenRouterAgentTest {
         ConversationRepository(context).clearAll()
         assertEquals(ledger, AndroidAIUsageStore(context).read())
         ProviderApiKeyStore(context, AiMode.GROQ).clear(); assertNull(ProviderApiKeyStore(context, AiMode.GROQ).read())
-        assertEquals(values[AiMode.GEMINI], ProviderApiKeyStore(context, AiMode.GEMINI).read())
+        assertEquals(values[AiMode.OPENROUTER], ProviderApiKeyStore(context, AiMode.OPENROUTER).read())
         assertTrue(db.services().allOnce().isEmpty())
         values.keys.forEach { ProviderApiKeyStore(context, it).clear() }
     }
@@ -717,7 +718,7 @@ class NativeOpenRouterAgentTest {
         return android.net.Uri.fromFile(source)
     }
 
-    @Test fun modernOptionsContainExactlyFiveActionsARealTaskCountAndPhysicalComposerPositions(): Unit = runBlocking {
+    @Test fun modernOptionsContainExactlySixActionsARealTaskCountAndPhysicalComposerPositions(): Unit = runBlocking {
         val automation = com.khodroyar.app.automation.AutomationStore.get(context)
         automation.change { (1..3).map { n -> com.khodroyar.app.automation.AutomationRule(java.util.UUID.randomUUID().toString(),
             com.khodroyar.app.automation.RuleKind.TRAFFIC, "ساختگی $n",
@@ -728,7 +729,7 @@ class NativeOpenRouterAgentTest {
         val voice = compose.onNodeWithTag("ai-voice").fetchSemanticsNode().boundsInRoot
         assertTrue(add.center.x < voice.center.x)
         compose.onNodeWithTag("ai-options").performClick()
-        for (title in listOf("گفتگوی نو", "تاریخچه", "پاک‌سازی گفتگوها", "کارهای خودکار", "تنظیمات هوش مصنوعی و مدل‌ها"))
+        for (title in listOf("گفتگوی نو", "تاریخچه", "پاک‌سازی گفتگوها", "کارهای خودکار", "حافظه و کارهای دستیار", "تنظیمات هوش مصنوعی و مدل‌ها"))
             compose.onNodeWithText(title).assertIsDisplayed()
         compose.onNodeWithTag("ai-task-count", useUnmergedTree = true).assertTextEquals("3")
         compose.onNodeWithText("بخش‌های برنامه").assertDoesNotExist()
@@ -866,21 +867,23 @@ class NativeOpenRouterAgentTest {
     }
 
     @Test fun changingProviderAndKeyKeepsTranscriptAndDraftButNeverSendsOldContextToTheNewAccount(): Unit = runBlocking {
+        val groqModel = "openai/gpt-oss-20b"
         val posts = java.util.Collections.synchronizedList(mutableListOf<AiHttpRequest>())
         val http = AiHttpTransport { q ->
-            if (q.method == "GET") AiHttpResponse(200, if (q.url.contains("api.openai.com")) """{"data":[{"id":"gpt-4.1","owned_by":"openai"}]}""" else catalog())
-            else { posts += q; AiHttpResponse(200, if (q.url.contains("api.openai.com")) JSONObject(completion("پاسخ تازه")).put("model", "gpt-4.1").toString() else completion("پاسخ قبلی")) }
+            val groq = q.url.startsWith("https://api.groq.com/")
+            if (q.method == "GET") AiHttpResponse(200, if (groq) """{"data":[{"id":"$groqModel","active":true,"context_window":131072}]}""" else catalog())
+            else { posts += q; AiHttpResponse(200, if (groq) JSONObject(completion("پاسخ تازه")).put("model", groqModel).toString() else completion("پاسخ قبلی")) }
         }
         val vm = renderChat(http, consented = true)
         send("PRIVATE PREVIOUS CONTEXT")
         compose.waitUntil(10000) { !vm.busy && vm.messages.size == 2 }
         val before = vm.messages.toList()
-        compose.runOnIdle { vm.editDraft("PRIVATE NEW ACCOUNT DRAFT"); vm.selectChatProvider(AiMode.GPT) }
-        compose.waitUntil(10000) { !vm.savingSettings && vm.settings.mode == AiMode.GPT }
+        compose.runOnIdle { vm.editDraft("PRIVATE NEW ACCOUNT DRAFT"); vm.selectChatProvider(AiMode.GROQ) }
+        compose.waitUntil(10000) { !vm.savingSettings && vm.settings.mode == AiMode.GROQ }
         assertEquals(before, vm.messages.toList()); assertEquals("PRIVATE NEW ACCOUNT DRAFT", vm.draftText)
         val scope = vm.settings.modelAccountScope
-        compose.runOnIdle { vm.configure(vm.settings.withModel(AiMode.GPT, "gpt-4.1").copy(useRegion = AIUseRegion.SUPPORTED_ELSEWHERE,
-            accountTermsConfirmed = setOf("gpt"), modelSelectionMode = AISelectionMode.MANUAL), "sk-proj-" + "q".repeat(45), false) { } }
+        compose.runOnIdle { vm.configure(vm.settings.withModel(AiMode.GROQ, groqModel).copy(useRegion = AIUseRegion.SUPPORTED_ELSEWHERE,
+            freeAccountConfirmed = setOf("groq"), modelSelectionMode = AISelectionMode.MANUAL), "gsk_" + "q".repeat(48), false) { } }
         compose.waitUntil(10000) { !vm.savingSettings && vm.hasOpenRouterKey && vm.settings.modelAccountScope != scope }
         assertFalse(vm.settings.consented); assertEquals(before, vm.messages.toList()); assertEquals("PRIVATE NEW ACCOUNT DRAFT", vm.draftText)
         assertEquals(1, posts.size)
@@ -889,9 +892,10 @@ class NativeOpenRouterAgentTest {
         compose.onNodeWithText("موافقم و ادامه").performClick()
         compose.waitUntil(10000) { !vm.busy && vm.messages.size == 4 }
         assertNull(vm.failure); assertEquals(2, posts.size)
+        assertTrue(posts.last().url.startsWith("https://api.groq.com/"))
         assertTrue(posts.last().body.orEmpty().contains("PRIVATE NEW ACCOUNT DRAFT")); assertFalse(posts.last().body.orEmpty().contains("PRIVATE PREVIOUS CONTEXT"))
         assertEquals(before, vm.messages.take(2))
-        compose.waitUntil(10000) { runBlocking { ConversationRepository(context).load().any { it.mode == AiMode.GPT && it.contextStart == 2 && it.messages.size == 4 } } }
+        compose.waitUntil(10000) { runBlocking { ConversationRepository(context).load().any { it.mode == AiMode.GROQ && it.contextStart == 2 && it.messages.size == 4 } } }
     }
 
     @Test fun serviceSuggestionLongPressDeletesOnlyThatPersistedSuggestionNotAnySourceRecord(): Unit = runBlocking {
