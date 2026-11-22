@@ -333,7 +333,11 @@ class AiAssistantViewModel @JvmOverloads constructor(
         queuedText = null
         queuedTest = false
         queuedManualTest = false
-        if (test) testConnection() else if (manual) testModels() else { refreshStatus(); if (text != null && submit(text) && draftText.trim() == text) draftText = "" }
+        if (test) testConnection() else if (manual) testModels() else { refreshStatus(); if (text != null) {
+            val saved = draftText; val owned = saved.trim() == text
+            if (owned) draftText = ""
+            if (!submit(text) && owned && draftText.isEmpty()) draftText = saved
+        } }
     }
 
     fun declineConsent() {
@@ -352,7 +356,16 @@ class AiAssistantViewModel @JvmOverloads constructor(
     }
 
     fun send(raw: String) { submit(raw) }
-    fun sendDraft() { if (submit(draftText)) draftText = "" }
+    /**
+     * The draft is cleared BEFORE submitting. A local failure (e.g. a missing image file) may complete
+     * synchronously on Main.immediate when its IO block finishes before the caller suspends; restoring
+     * the draft inside applyStep must then see a blank composer, not be overwritten afterwards.
+     */
+    fun sendDraft() {
+        val text = draftText
+        draftText = ""
+        if (!submit(text) && draftText.isEmpty()) draftText = text
+    }
     private fun submit(raw: String): Boolean {
         val text = raw.trim()
         if ((text.isEmpty() && draftImage == null) || networkBusy || !settings.enabled) return false

@@ -241,7 +241,8 @@ class NativeOpenRouterAgentTest {
     @Test fun keystoreEncryptionMigrationFreshConsentAndKeyDeletionDoNotTouchRecords(): Unit = runBlocking {
         val prefs = context.getSharedPreferences("khodroyar_ai", Context.MODE_PRIVATE)
         prefs.edit().putString("mode", "GAPGPT_DIRECT").putBoolean("consented", true).putBoolean("openrouter_consented_v1", true).commit()
-        assertEquals(AiMode.OPENROUTER, AiSettingsStore(context).load().mode); assertFalse(AiSettingsStore(context).load().consented)
+        // 5.8.0: a retired provider (GapGPT, Gemini, ...) falls back to the offline assistant, never to a network provider.
+        assertEquals(AiMode.LOCAL, AiSettingsStore(context).load().mode); assertFalse(AiSettingsStore(context).load().consented)
         prefs.edit().putString("mode", "LOCAL").commit(); assertEquals(AiMode.LOCAL, AiSettingsStore(context).load().mode)
         val aiSettings = AiSettingsStore(context)
         aiSettings.save(AiSettings(consented = true)); assertTrue(aiSettings.load().consented)
