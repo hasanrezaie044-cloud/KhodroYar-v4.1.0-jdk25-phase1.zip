@@ -88,9 +88,10 @@ fun RecordDetailsPage(
     var deleting by remember(key) { mutableStateOf(false) }
 
     // A row that vanished (deleted here, by the assistant, or by a restore) closes the page.
+    val goneText = tr("این رکورد دیگر وجود ندارد", "This record no longer exists")
     LaunchedEffect(state) {
         if ((state as? DetailState.Loaded)?.detail == null && state is DetailState.Loaded && !deleting) {
-            toast.show(tr("این رکورد دیگر وجود ندارد", "This record no longer exists"))
+            toast.show(goneText)
             onDismiss()
         }
     }
@@ -145,6 +146,9 @@ fun RecordDetailsPage(
     }
 
     val current = (state as? DetailState.Loaded)?.detail
+    val resetText = tr("قسط بازنشانی شد", "Installment reset")
+    val deletedText = tr("رکورد حذف شد", "Record deleted")
+    val notDeletedText = tr("حذف تأیید نشد؛ رکورد دست‌نخورده باقی ماند", "Delete was not confirmed; nothing changed")
     if (confirmDelete && current != null) {
         ConfirmDialog(
             title = current.deleteTitle,
@@ -159,11 +163,11 @@ fun RecordDetailsPage(
                         .onFailure { if (it is kotlinx.coroutines.CancellationException) throw it }
                         .getOrDefault(false)
                     if (ok) {
-                        toast.show(if (key.kind == RecordKind.INSTALLMENT) tr("قسط بازنشانی شد", "Installment reset") else tr("رکورد حذف شد", "Record deleted"))
+                        toast.show(if (key.kind == RecordKind.INSTALLMENT) resetText else deletedText)
                         if (key.kind == RecordKind.INSTALLMENT) deleting = false else onDismiss()
                     } else {
                         deleting = false
-                        toast.show(tr("حذف تأیید نشد؛ رکورد دست‌نخورده باقی ماند", "Delete was not confirmed; nothing changed"))
+                        toast.show(notDeletedText)
                     }
                 }
             },

@@ -1045,7 +1045,7 @@ class AppRepository(context: Context) {
             val assistant = AssistantBackup.parse(appContext, assistantSection(json))
             if (assistant == null) preview else {
                 val (conversations, memory, tasks, automations) = assistant.counts.toList()
-                preview.copy(counts = preview.counts.copy(conversations = conversations, memoryFacts = memory, agentTasks = tasks, automations = automations))
+                preview.copy(counts = preview.counts.copy(conversations = conversations, memoryFacts = memory, agentTasks = tasks, automations = automations, chatImages = assistant.images.size))
             }
         } catch (e: Exception) {
             preview.copy(valid = false, error = e.message ?: "اعتبارسنجی فایل پشتیبان ناموفق بود")
@@ -1070,11 +1070,16 @@ class AppRepository(context: Context) {
             val decoded = LegacyBackup.parse(prepared.json)
                 ?: throw IllegalArgumentException("ساختار فایل نامعتبر است")
             val restoredIds = decoded.services.map { it.id }.toSet() + decoded.maintenances.map { it.id } +
-                decoded.fuels.map { it.id } + decoded.loans.map { it.id } + decoded.personalExpenses.map { it.id } + decoded.personalIncomes.map { it.id }
+                decoded.fuels.map { it.id } + decoded.loans.map { it.id } + decoded.personalExpenses.map { it.id } + decoded.personalIncomes.map { it.id } +
+                (if (decoded.insuranceFieldPresent) decoded.insurance.map { it.id } else emptyList())
             val loanIds = decoded.loans.map { it.id }.toSet()
+            // 5.9.0: insurance rows own attachments. A backup without an insurance section keeps the
+            // current insurance rows, so their attachments are carried over instead of being cleared.
+            val keptInsuranceAttachments = if (decoded.insuranceFieldPresent) emptyList()
+                else db.attachments().allOnce().filter { it.recordType == "insurance" }
             val payload = decoded.copy(
-                attachments = decoded.attachments
-                    .filter { it.recordId in restoredIds && RecordAttachmentFiles.isOwned(appContext, it.filePath) }
+                attachments = (decoded.attachments
+                    .filter { it.recordId in restoredIds && RecordAttachmentFiles.isOwned(appContext, it.filePath) } + keptInsuranceAttachments)
                     .distinctBy { it.id },
                 loanInstallments = decoded.loanInstallments.filter { it.loanId in loanIds }
                     .distinctBy { it.loanId to it.number },
@@ -1133,7 +1138,7 @@ class AppRepository(context: Context) {
             }
             Result.success(if (applied == null) payload.counts else payload.counts.copy(
                 conversations = applied.conversations, memoryFacts = applied.memory, agentTasks = applied.tasks,
-                automations = applied.automations, skipped = applied.failures))
+                automations = applied.automations, chatImages = applied.images, skipped = applied.failures))
         } catch (e: CancellationException) {
             prepared.close()
             throw e

@@ -106,7 +106,7 @@ fun SettingsScreen(repository: AppRepository, settings: AppSettings, onToggleThe
                     val omitted = pendingBackupOmittedCount
                     toast.show(
                         if (omitted == 0) "فایل پشتیبان با موفقیت ذخیره شد"
-                        else "فایل پشتیبان ذخیره شد؛ $omitted پیوستِ پیدا نشده از آن کنار گذاشته شد. آن پیوست‌ها را دوباره اضافه کنید."
+                        else "فایل پشتیبان ذخیره شد؛ $omitted پیوست یا تصویر گفتگو که پیدا نشد یا از سقف حجم بیشتر بود در آن نیست. آن موارد را جداگانه نگه دارید."
                     )
                 } else {
                     toast.show("ذخیره در این مکان انجام نشد؛ فضای خالی یا دسترسی پوشه را بررسی و مکان دیگری انتخاب کنید")
@@ -483,7 +483,8 @@ fun SettingsScreen(repository: AppRepository, settings: AppSettings, onToggleThe
                         val json = repository.exportBackupJson()
                         val fileName = BackupFiles.suggestedFileName()
                         val (file, omittedCount) = withContext(Dispatchers.IO) {
-                            val skipped = BackupAttachmentCodec.omittedAttachmentCount(json)
+                            // Record attachments AND chat images that could not be included are both reported.
+                            val skipped = BackupAttachmentCodec.omittedAttachmentCount(json) + AssistantBackup.missingImageCount(json)
                             BackupFiles.writeExportFile(context, json, fileName) to skipped
                         }
                         exportFile = file
@@ -612,6 +613,7 @@ fun SettingsScreen(repository: AppRepository, settings: AppSettings, onToggleThe
                         InfoRow("اقساط وام", preview.counts.loanInstallments.toString())
                         InfoRow("پیوست‌های رکورد", preview.counts.recordAttachments.toString())
                         InfoRow("گفتگوهای دستیار", preview.counts.conversations.toString())
+                        InfoRow("تصاویر گفتگو", preview.counts.chatImages.toString())
                         InfoRow("حافظهٔ دستیار", preview.counts.memoryFacts.toString())
                         InfoRow("کارهای دستیار", preview.counts.agentTasks.toString())
                         InfoRow("قوانین خودکار", preview.counts.automations.toString())

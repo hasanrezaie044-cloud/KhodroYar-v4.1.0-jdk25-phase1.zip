@@ -2,6 +2,7 @@ package com.khodroyar.app.ui.screens
 
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyColumn
@@ -23,6 +24,8 @@ import com.khodroyar.app.core.analytics.Analytics
 import com.khodroyar.app.core.holidays.IranHolidays
 import com.khodroyar.app.core.holidays.WorkCalendar
 import com.khodroyar.app.core.jalali.Jalali
+import com.khodroyar.app.core.records.RecordKey
+import com.khodroyar.app.core.records.RecordKind
 import com.khodroyar.app.core.rates.CarType
 import com.khodroyar.app.core.rates.FuelType
 import com.khodroyar.app.core.rates.ServiceType
@@ -32,7 +35,6 @@ import com.khodroyar.app.data.repo.AppRepository
 import com.khodroyar.app.ui.components.*
 import com.khodroyar.app.ui.theme.AppDimens
 import com.khodroyar.app.ui.theme.heroBrush
-import kotlinx.coroutines.launch
 
 /**
  * Real interactive Jalali calendar.
@@ -57,16 +59,13 @@ fun CalendarScreen(
     onQuickExpense: (String) -> Unit,
     onEditService: (ServiceEntity) -> Unit,
 ) {
-    val scope = rememberCoroutineScope()
-    val toast = LocalToast.current
     val today = remember { Jalali.todayString() }
     val start = remember { Jalali.today() }
 
     var selectedDate by remember { mutableStateOf(today) }
-    // Tapping a service opens its full detail sheet; editing and deleting are actions
-    // inside that sheet, never the result of the tap itself.
-    var detail by remember { mutableStateOf<ServiceEntity?>(null) }
-    var pendingDelete by remember { mutableStateOf<ServiceEntity?>(null) }
+    // A tap never edits: every record of the day opens the shared details page (5.9.0),
+    // where edit and delete are explicit actions (delete behind a confirmation).
+    var detailKey by remember { mutableStateOf<RecordKey?>(null) }
     var viewYear by remember { mutableStateOf(start.year) }
     var viewMonth by remember { mutableStateOf(start.month) }
 
@@ -147,13 +146,16 @@ fun CalendarScreen(
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                         )
-                        if (monthIncome > 0) Text(
-                            "${amount(monthIncome)} تومان",
-                            style = MaterialTheme.typography.labelLarge,
-                            color = MaterialTheme.colorScheme.primary,
-                            maxLines = 1,
-                            modifier = Modifier.semantics { contentDescription = "درآمد این ماه: ${amount(monthIncome)} تومان" },
-                        )
+                        if (monthIncome > 0) {
+                            val monthIncomeText = "${amount(monthIncome)} تومان"
+                            Text(
+                                monthIncomeText,
+                                style = MaterialTheme.typography.labelLarge,
+                                color = MaterialTheme.colorScheme.primary,
+                                maxLines = 1,
+                                modifier = Modifier.semantics { contentDescription = "درآمد این ماه: $monthIncomeText" },
+                            )
+                        }
                     }
                     Spacer(Modifier.height(6.dp))
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -281,6 +283,7 @@ fun CalendarScreen(
                                 date = fuel.date,
                                 amountText = amount(fuel.total),
                                 description = "${money(fuel.liters)} لیتر",
+                                onClick = { detailKey = RecordKey(RecordKind.FUEL, fuel.id) },
                             )
                         }
                         dayMaintenance.forEach { item ->
@@ -293,6 +296,7 @@ fun CalendarScreen(
                                     item.km.takeIf { it > 0 }?.let { "کیلومتر ${money(it)}" },
                                     item.description.ifBlank { null },
                                 ).joinToString(" · "),
+                                onClick = { detailKey = RecordKey(RecordKind.MAINTENANCE, item.id) },
                             )
                         }
                         dayExpenses.forEach { expense ->
@@ -302,12 +306,8 @@ fun CalendarScreen(
                                 date = expense.date,
                                 amountText = amount(expense.amount),
                                 description = expense.title,
-                                onDelete = {
-                                    scope.launch {
-                                        repository.deletePersonalExpense(expense.id)
-                                        toast.show("هزینه شخصی حذف شد")
-                                    }
-                                },
+                                // Delete lives on the details page, behind a confirmation, like every other record.
+                                onClick = { detailKey = RecordKey(RecordKind.EXPENSE, expense.id) },
                             )
                         }
                         HorizontalDivider(
@@ -336,181 +336,21 @@ fun CalendarScreen(
             }
         } else {
             items(dayServices, key = { it.id }) { service ->
-                ServiceRow(service, detailed = true, onClick = { detail = service })
+                ServiceRow(service, detailed = true, onClick = { detailKey = RecordKey(RecordKind.SERVICE, service.id) })
             }
         }
     }
 
-    // Keep the sheet bound to the freshest copy of the record, so an edit made from
-    // inside it is reflected the moment the list re-emits.
-    val detailService = detail?.let { current -> monthServices.firstOrNull { it.id == current.id } ?: current }
-    if (detailService != null) {
-        ServiceDetailSheet(
-            service = detailService,
-            onDismiss = { detail = null },
-            onEdit = {
-                detail = null
-                onEditService(detailService)
-            },
-            onDelete = { pendingDelete = detailService },
+    detailKey?.let { key ->
+        RecordDetailsPage(
+            repository = repository,
+            key = key,
+            onDismiss = { detailKey = null },
+            // Services edit in the calendar's own form; other kinds are edited from their module.
+            onEdit = if (key.kind == RecordKind.SERVICE) { _ ->
+                monthServices.firstOrNull { it.id == key.id }?.let { detailKey = null; onEditService(it) }
+            } else null,
         )
-    }
-
-    pendingDelete?.let { service ->
-        ConfirmDialog(
-            title = "حذف سرویس",
-            message = "سرویس ${service.date} با مبلغ ${money(service.income)} تومان حذف شود؟",
-            confirmLabel = "حذف",
-            destructive = true,
-            onConfirm = {
-                scope.launch {
-                    repository.deleteService(service.id)
-                    toast.show("سرویس حذف شد")
-                    pendingDelete = null
-                    detail = null
-                }
-            },
-            onDismiss = { pendingDelete = null },
-        )
-    }
-}
-
-/**
- * Everything stored about one service, plus the two actions that used to happen by
- * accident: a tap on a calendar row jumped straight into the edit form, so there was no
- * way to simply *look* at a service. Now the tap shows the record and the edit / delete
- * buttons live at the bottom of it.
- */
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun ServiceDetailSheet(
-    service: ServiceEntity,
-    onDismiss: () -> Unit,
-    onEdit: () -> Unit,
-    onDelete: () -> Unit,
-) {
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    val weekday = Jalali.parse(service.date)
-        ?.let { Jalali.weekdayName(it.year, it.month, it.day) } ?: ""
-
-    ModalBottomSheet(
-        onDismissRequest = onDismiss,
-        sheetState = sheetState,
-        containerColor = MaterialTheme.colorScheme.surface,
-    ) {
-        Column(
-            Modifier
-                .fillMaxWidth()
-                .verticalScroll(rememberScrollState())
-                .padding(horizontal = AppDimens.screenPadding)
-                .padding(bottom = 24.dp),
-            verticalArrangement = Arrangement.spacedBy(AppDimens.gutter),
-        ) {
-            GradientCard(brush = heroBrush()) {
-                Text(
-                    "جزئیات سرویس",
-                    color = Color.White.copy(alpha = 0.8f),
-                    style = MaterialTheme.typography.labelMedium,
-                )
-                Text(
-                    "${service.date}  ·  $weekday",
-                    color = Color.White,
-                    style = MaterialTheme.typography.titleLarge,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                Spacer(Modifier.height(10.dp))
-                Text(
-                    "${amount(service.income)} تومان",
-                    color = Color.White,
-                    style = MaterialTheme.typography.displayMedium,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
-
-            SurfaceCard {
-                InfoRow("نوع سرویس", ServiceType.fromWire(service.type).label)
-                InfoRow("خودرو", CarType.fromWire(service.carType).label)
-                InfoRow("تاریخ", "${service.date}  ·  $weekday")
-                InfoRow(
-                    "ساعت شروع تا پایان",
-                    if (service.startTime.isBlank() && service.endTime.isBlank()) "—"
-                    else "${service.startTime.ifBlank { "--:--" }} تا ${service.endTime.ifBlank { "--:--" }}",
-                )
-                InfoRow("ساعت کارکرد", "${Analytics.formatHours(service.hours)} ساعت")
-                InfoRow("کیلومتر", "${money(service.km)} کیلومتر")
-            }
-
-            SurfaceCard {
-                InfoRow("مبدأ", service.origin.ifBlank { "—" })
-                InfoRow("مقصد", service.destination.ifBlank { "—" })
-                InfoRow("سرنشین / نام", service.passengers.ifBlank { "—" })
-                InfoRow("شماره درخواست", service.requestNumber.ifBlank { "—" })
-                InfoRow("تعداد عوارضی", service.tollCount.toString())
-            }
-
-            if (service.missionFood > 0 || service.missionToll > 0 || service.missionFine > 0) {
-                SurfaceCard {
-                    Text("اقلام مأموریت", style = MaterialTheme.typography.titleMedium)
-                    Spacer(Modifier.height(6.dp))
-                    InfoRow("هزینه غذا", "${amount(service.missionFood)} تومان")
-                    InfoRow("عوارضی مأموریت", "${amount(service.missionToll)} تومان")
-                    InfoRow("جریمه مأموریت", "${amount(service.missionFine)} تومان")
-                }
-            }
-
-            SurfaceCard {
-                InfoRow(
-                    "درآمد این سرویس",
-                    "${amount(service.income)} تومان",
-                    emphasis = true,
-                    valueColor = MaterialTheme.colorScheme.primary,
-                )
-                if (service.km > 0) {
-                    InfoRow("درآمد هر کیلومتر", "${amount(service.income / service.km)} تومان")
-                }
-                if (service.hours > 0) {
-                    InfoRow("درآمد هر ساعت", "${amount(service.income / service.hours)} تومان")
-                }
-            }
-
-            if (service.attachmentPath.isNotBlank()) {
-                val toast = LocalToast.current
-                SurfaceCard {
-                    Text("پیوست عکس", style = MaterialTheme.typography.titleMedium)
-                    Spacer(Modifier.height(8.dp))
-                    AttachmentPreviewOpenable(
-                        service.attachmentPath,
-                        onOpenFailed = { toast.show("نمایش عکس ممکن نشد") },
-                    )
-                }
-            }
-
-            Row(horizontalArrangement = Arrangement.spacedBy(AppDimens.gap)) {
-                Button(
-                    onClick = onEdit,
-                    modifier = Modifier.weight(1f).heightIn(min = AppDimens.buttonHeight),
-                    shape = FieldShape,
-                ) {
-                    Icon(Icons.Outlined.Edit, null)
-                    Spacer(Modifier.width(8.dp))
-                    Text(tr("ویرایش", "Edit"))
-                }
-                OutlinedButton(
-                    onClick = onDelete,
-                    modifier = Modifier.weight(1f).heightIn(min = AppDimens.buttonHeight),
-                    shape = FieldShape,
-                ) {
-                    Icon(Icons.Outlined.Delete, null, tint = MaterialTheme.colorScheme.error)
-                    Spacer(Modifier.width(8.dp))
-                    Text(tr("حذف", "Delete"), color = MaterialTheme.colorScheme.error)
-                }
-            }
-            TextButton(onClick = onDismiss, modifier = Modifier.fillMaxWidth()) {
-                Text(tr("بستن", "Close"))
-            }
-        }
     }
 }
 
@@ -522,8 +362,12 @@ private fun ExpenseLine(
     amountText: String,
     description: String,
     onDelete: (() -> Unit)? = null,
+    onClick: (() -> Unit)? = null,
 ) {
-    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+    val rowModifier = Modifier.fillMaxWidth().clip(FieldShape)
+        .let { if (onClick != null) it.clickable(onClickLabel = "جزئیات", onClick = onClick) else it }
+        .padding(vertical = 4.dp)
+    Row(rowModifier, verticalAlignment = Alignment.CenterVertically) {
         Icon(icon, null, tint = MaterialTheme.colorScheme.secondary, modifier = Modifier.size(19.dp))
         Column(Modifier.weight(1f).padding(horizontal = 10.dp)) {
             Text(type, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)

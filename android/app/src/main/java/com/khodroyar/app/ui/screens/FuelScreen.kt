@@ -179,6 +179,7 @@ fun FuelScreen(
     }
 
     details?.let { key ->
+        val goneText = tr("این رکورد دیگر وجود ندارد", "This record no longer exists")
         RecordDetailsPage(
             repository = repository,
             key = key,
@@ -187,7 +188,7 @@ fun FuelScreen(
                 scope.launch {
                     // Edit always loads the stored row by id, so the form updates that row.
                     val row = repository.fuelById(key.id)
-                    if (row == null) toast.show(tr("این رکورد دیگر وجود ندارد", "This record no longer exists"))
+                    if (row == null) toast.show(goneText)
                     else { details = null; editingFuel = row }
                 }
             },

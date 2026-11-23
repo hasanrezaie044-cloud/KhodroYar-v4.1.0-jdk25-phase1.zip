@@ -87,6 +87,22 @@ class ChatImageStore(context: Context) {
         AIImage("image/jpeg", Base64.encodeToString(f.readBytes(), Base64.NO_WRAP))
     }
     fun discard(ref: ChatImageRef) { file(ref).delete() }
+
+    /**
+     * Restores verified backup images (temp file + rename) and reads each one back.
+     * Returns the names that could not be written or did not verify.
+     */
+    fun restoreVerified(images: List<com.khodroyar.app.data.backup.ChatImageBackup.Image>): List<String> = images.mapNotNull { image ->
+        val ok = runCatching {
+            val target = File(root, ChatImageRef(image.fileName).fileName)
+            val tmp = File(root, image.fileName + ".restore")
+            tmp.writeBytes(image.bytes)
+            if (target.exists()) target.delete()
+            check(tmp.renameTo(target)) { "rename failed" }
+            com.khodroyar.app.data.backup.ChatImageBackup.sha256(target.readBytes()) == image.sha256
+        }.getOrDefault(false)
+        image.fileName.takeUnless { ok }
+    }
     fun prune(retained: Set<ChatImageRef>) {
         val names = retained.map { it.fileName }.toSet()
         root.listFiles()?.filter { it.isFile && it.name.endsWith(".jpg") && it.name !in names }?.forEach { it.delete() }

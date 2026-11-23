@@ -233,6 +233,7 @@ fun MaintenanceScreen(
     }
 
     details?.let { key ->
+        val goneText = tr("این رکورد دیگر وجود ندارد", "This record no longer exists")
         RecordDetailsPage(
             repository = repository,
             key = key,
@@ -240,7 +241,7 @@ fun MaintenanceScreen(
             onEdit = {
                 scope.launch {
                     val row = repository.maintenanceById(key.id)
-                    if (row == null) toast.show(tr("این رکورد دیگر وجود ندارد", "This record no longer exists"))
+                    if (row == null) toast.show(goneText)
                     else { details = null; editing = row }
                 }
             },

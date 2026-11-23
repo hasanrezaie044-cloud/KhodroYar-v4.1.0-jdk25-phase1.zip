@@ -141,12 +141,12 @@ private fun SeriesChart(
     val measurer = rememberTextMeasurer()
     val axisStyle = MaterialTheme.typography.labelSmall
     val axisUnits = listOf(tr("هزار", "K"), tr("میلیون", "M"), tr("میلیارد", "B"))
-    val axisLabels = remember(scale, axisStyle, axisUnits, measurer) {
+    val tickLayouts = remember(scale, axisStyle, axisUnits, measurer) {
         scale.ticks.map { measurer.measure(compactAxis(it, axisUnits), axisStyle, maxLines = 1) }
     }
     // Units are on each tick, not a permanent explanatory paragraph below the plot.
     // The same measured gutter is used by drawing and hit-testing, including large fonts.
-    val axisGutter = with(LocalDensity.current) { (axisLabels.maxOf { it.size.width }).toDp() + 12.dp }.coerceIn(40.dp, 96.dp)
+    val axisGutter = with(LocalDensity.current) { (tickLayouts.maxOf { it.size.width }).toDp() + 12.dp }.coerceIn(40.dp, 96.dp)
     val reveal = remember { Animatable(0f) }
     LaunchedEffect(data) { reveal.snapTo(0f); reveal.animateTo(1f, tween(360)) }
     val xLabels = axisLabels?.takeIf { it.size == data.size } ?: labels
@@ -203,7 +203,7 @@ private fun SeriesChart(
             fun px(i: Int) = left + barInset + ChartGeometry.xFraction(i, data.size, rtl) * (plotW - 2 * barInset).coerceAtLeast(1f)
             fun py(v: Double) = bottom - scale.fraction(v) * plotH
             val zeroY = py(0.0)
-            scale.ticks.zip(axisLabels).forEach { (tick, text) ->
+            scale.ticks.zip(tickLayouts).forEach { (tick, text) ->
                 val y = py(tick)
                 drawLine(grid.copy(alpha = if (abs(tick) < scale.step * 0.01) 0.95f else 0.6f), Offset(left, y), Offset(right, y),
                     strokeWidth = 1.dp.toPx(), pathEffect = if (tick == 0.0) null else PathEffect.dashPathEffect(floatArrayOf(3.dp.toPx(), 5.dp.toPx())))

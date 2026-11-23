@@ -46,15 +46,22 @@ class ConversationRepository(context: Context) {
     }
 
     /**
-     * Full-backup form: texts are redacted again and image references are dropped, because chat
-     * images live outside the backup and would otherwise point at files that do not exist.
+     * Full-backup form: texts are redacted again. An image reference is kept only when that image
+     * is embedded in the same backup ([keepImages]); otherwise it would point at a missing file.
      */
-    fun exportForBackup(): JSONArray = synchronized(lock) {
-        encode(readAll().map { c -> c.copy(title = AiTextSafety.redact(c.title), messages = c.messages.map { it.copy(text = AiTextSafety.redact(it.text), image = null) }) })
+    fun exportForBackup(keepImages: Set<String> = emptySet()): JSONArray = synchronized(lock) {
+        encode(readAll().map { c -> c.copy(title = AiTextSafety.redact(c.title), messages = c.messages.map {
+            it.copy(text = AiTextSafety.redact(it.text), image = it.image?.takeIf { ref -> ref.fileName in keepImages })
+        }) })
+    }
+
+    /** Image file names referenced by saved chats, most recently updated conversation first. */
+    fun imageRefsForBackup(): List<String> = synchronized(lock) {
+        readAll().sortedByDescending { it.updatedAt }.flatMap { c -> c.messages.asReversed().mapNotNull { it.image?.fileName } }.distinct()
     }
 
     /** Parses a backup array without touching the stored file; malformed entries are rejected, not guessed. */
-    fun parseBackup(array: JSONArray): List<Conversation> {
+    fun parseBackup(array: JSONArray, allowedImages: Set<String> = emptySet()): List<Conversation> {
         require(array.length() <= MAX_BACKUP_CONVERSATIONS) { "تعداد گفتگوهای پشتیبان بیش از حد مجاز است." }
         return (0 until array.length()).map { i ->
             val o = array.optJSONObject(i)
@@ -62,7 +69,7 @@ class ConversationRepository(context: Context) {
             val shaped = o != null && (o.opt("id") as? String)?.let { it.isNotBlank() && it.length <= 64 } == true && o.optJSONArray("messages") != null
             requireNotNull(o?.takeIf { shaped }?.let(::parse)) { "گفتگوی شمارهٔ ${i + 1} در پشتیبان معتبر نیست." }
         }
-            .map { c -> c.copy(messages = c.messages.map { it.copy(image = null) }) }.distinctBy { it.id }
+            .map { c -> c.copy(messages = c.messages.map { it.copy(image = it.image?.takeIf { ref -> ref.fileName in allowedImages }) }) }.distinctBy { it.id }
     }
 
     /** Replaces the whole history (restore never duplicates conversations) and reads it back. */

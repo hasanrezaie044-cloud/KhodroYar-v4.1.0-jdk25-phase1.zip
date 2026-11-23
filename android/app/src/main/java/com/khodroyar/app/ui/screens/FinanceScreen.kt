@@ -476,6 +476,7 @@ private fun LoansSection(repository: AppRepository) {
         )
     }
     details?.let { key ->
+        val goneText = tr("این رکورد دیگر وجود ندارد", "This record no longer exists")
         RecordDetailsPage(
             repository = repository,
             key = key,
@@ -486,7 +487,7 @@ private fun LoansSection(repository: AppRepository) {
                         RecordKind.LOAN -> repository.loanById(key.id)?.let { details = null; editing = it; showForm = true }
                         // The installment dialog opens above the details page, which refreshes after save.
                         else -> repository.installmentById(key.id)?.let { installmentEditing = it }
-                    } ?: toast.show(tr("این رکورد دیگر وجود ندارد", "This record no longer exists"))
+                    } ?: toast.show(goneText)
                 }
             },
         )
@@ -922,6 +923,7 @@ private fun PurchasesSection(
         ) { Icon(Icons.Outlined.Add, null); Spacer(Modifier.width(8.dp)); Text(tr("ثبت خرید شخصی", "Add Personal Purchase")) }
     }
     details?.let { key ->
+        val goneText = tr("این رکورد دیگر وجود ندارد", "This record no longer exists")
         RecordDetailsPage(
             repository = repository,
             key = key,
@@ -929,7 +931,7 @@ private fun PurchasesSection(
             onEdit = {
                 scope.launch {
                     val row = repository.expenseById(key.id)
-                    if (row == null) toast.show(tr("این رکورد دیگر وجود ندارد", "This record no longer exists"))
+                    if (row == null) toast.show(goneText)
                     else { details = null; editing = row }
                 }
             },
@@ -1031,6 +1033,7 @@ private fun IncomesSection(repository: AppRepository, year: Int) {
         ) { Icon(Icons.Outlined.Add, null); Spacer(Modifier.width(8.dp)); Text(tr("ثبت درآمد شخصی", "Add Personal Income")) }
     }
     details?.let { key ->
+        val goneText = tr("این رکورد دیگر وجود ندارد", "This record no longer exists")
         RecordDetailsPage(
             repository = repository,
             key = key,
@@ -1038,7 +1041,7 @@ private fun IncomesSection(repository: AppRepository, year: Int) {
             onEdit = {
                 scope.launch {
                     val row = repository.incomeById(key.id)
-                    if (row == null) toast.show(tr("این رکورد دیگر وجود ندارد", "This record no longer exists"))
+                    if (row == null) toast.show(goneText)
                     else { details = null; editing = row }
                 }
             },

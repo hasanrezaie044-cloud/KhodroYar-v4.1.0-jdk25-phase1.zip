@@ -36,6 +36,8 @@ object LegacyBackup {
         val loanInstallments: Int = 0, val recordAttachments: Int = 0,
         /** Assistant data (conversations, long-term memory, agent tasks, automation rules); 0 when absent. */
         val conversations: Int = 0, val memoryFacts: Int = 0, val agentTasks: Int = 0, val automations: Int = 0,
+        /** Verified AI chat images carried with the conversations (assistant section v2). */
+        val chatImages: Int = 0,
         /** Parts that could not be restored and were therefore NOT claimed as restored. */
         val skipped: List<String> = emptyList(),
     ) {
