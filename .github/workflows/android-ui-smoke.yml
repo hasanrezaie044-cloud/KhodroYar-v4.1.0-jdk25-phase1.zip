@@ -156,8 +156,9 @@ jobs:
           assert path.is_file() and path.stat().st_size <= 16384, 'Missing actual native JPEG upload/history/privacy evidence'
           data = json.loads(path.read_text())
           assert data == dict(environment='Synthetic JPEG and HTTP; actual Compose, private files and history; NOT live provider', passed=True,
-              image_posts=1, jpeg_decoded=True, exif_removed=True, history_lifetime_verified=True), 'Actual image wire/history lifetime assertions did not all pass'
-          print('::notice title=Actual image upload and private history lifetime (mock provider)::' + json.dumps(data))
+              image_posts=1, jpeg_decoded=True, exif_removed=True, history_lifetime_verified=True,
+              backup_restore_image_verified=True), 'Actual image wire/history lifetime/backup-restore assertions did not all pass'
+          print('::notice title=Actual image upload, private history lifetime and backup restore (mock provider)::' + json.dumps(data))
           PY
       - name: Publish bounded synthetic previews for visual review
         if: always() && github.event_name == 'workflow_dispatch'
