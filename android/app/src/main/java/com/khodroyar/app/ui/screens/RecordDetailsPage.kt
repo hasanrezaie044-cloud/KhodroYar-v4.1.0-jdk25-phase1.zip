@@ -131,10 +131,11 @@ fun RecordDetailsPage(
                             Text(detail.notes, style = MaterialTheme.typography.bodyMedium)
                         }
                         if (detail.legacyAttachmentPath.isNotBlank()) SurfaceCard(contentPadding = 14.dp) {
+                            val openFailedText = tr("باز کردن عکس ممکن نشد", "Could not open the photo")
                             Text(tr("عکس ثبت‌شده با رکورد", "Photo saved with the record"), style = MaterialTheme.typography.titleSmall)
                             Spacer(Modifier.height(8.dp))
                             AttachmentPreviewOpenable(detail.legacyAttachmentPath,
-                                onOpenFailed = { toast.show(tr("باز کردن عکس ممکن نشد", "Could not open the photo")) })
+                                onOpenFailed = { toast.show(openFailedText) })
                         }
                         key.kind.attachmentType?.let { type -> RecordAttachmentsPanel(repository, type, key.id) }
                     }
