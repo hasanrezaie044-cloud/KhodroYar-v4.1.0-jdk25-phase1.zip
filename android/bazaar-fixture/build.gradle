@@ -6,7 +6,7 @@ android {
     defaultConfig {
         applicationId 'com.farsitel.bazaar'
         minSdk 24
-        targetSdk 35
+        targetSdk 36
         versionCode 2400700
         versionName '0.0-synthetic-ipc-fixture'
     }

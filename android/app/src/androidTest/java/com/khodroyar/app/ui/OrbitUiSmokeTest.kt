@@ -88,6 +88,8 @@ class OrbitUiSmokeTest {
         runBlocking { ConversationRepository(context).clearAll() }
         // First-use navigation must stay free of automatic tutorial dialogs.
         context.getSharedPreferences("car_manager_onboarding", Context.MODE_PRIVATE).edit().clear().commit()
+        // View-only UI state (e.g. the 5.9.1 collapsible maintenance section) starts from its default.
+        context.getSharedPreferences(PersistedUiState.FILE, Context.MODE_PRIVATE).edit().clear().commit()
         runBlocking {
             withContext(Dispatchers.IO) { AppDatabase.get(context).clearAllTables() }
             val db = AppDatabase.get(context)
@@ -675,6 +677,9 @@ class OrbitUiSmokeTest {
         }
         repository.updateSettings { it.copy(vehicleCurrentKm = 100000.0, oilCurrentKm = 95000.0, oilNextKm = 105000.0) }
         render { MaintenanceScreen(repository) }
+        // 5.9.1: the periodic section starts collapsed; the user opens it explicitly.
+        compose.waitUntil(15_000) { compose.onAllNodesWithTag("maintenance-periodic-toggle").fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithTag("maintenance-periodic-toggle").performClick()
         compose.waitUntil(15_000) { compose.onAllNodesWithTag("maintenance-eta-oil-change").fetchSemanticsNodes().isNotEmpty() }
         compose.onNodeWithTag("maintenance-eta-oil-change").assertIsDisplayed()
         shot("29-maintenance-forecast")
@@ -845,7 +850,7 @@ class OrbitUiSmokeTest {
         compose.waitUntil(30_000) { compose.onAllNodesWithText("33,000").fetchSemanticsNodes().isNotEmpty() }
         val renderMs = android.os.SystemClock.elapsedRealtime()-renderStarted
         shot("33-home-12000-records")
-        writeTextArtifact("performance-12000.json", """{"environment":"API35 x86_64 debug emulator; not a phone benchmark","records":12000,"aggregateQueryMs":$queryMs,"homeFirstDataMs":$renderMs,"mileageRows":${daily.size}}""")
+        writeTextArtifact("performance-12000.json", """{"environment":"API36 x86_64 debug emulator; not a phone benchmark","records":12000,"aggregateQueryMs":$queryMs,"homeFirstDataMs":$renderMs,"mileageRows":${daily.size}}""")
     }
 
     private fun pressSystemBack() {

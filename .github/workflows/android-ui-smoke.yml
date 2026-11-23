@@ -16,7 +16,7 @@ concurrency:
 
 jobs:
   ui-smoke:
-    name: Compose UI · API 35 emulator
+    name: Compose UI · API 36 emulator
     runs-on: ubuntu-latest
     timeout-minutes: 35
     permissions:
@@ -63,7 +63,7 @@ jobs:
       - name: Run native UI tests on disposable emulator
         uses: reactivecircus/android-emulator-runner@v2
         with:
-          api-level: 35
+          api-level: 36
           arch: x86_64
           target: google_apis
           profile: pixel_2
@@ -83,6 +83,19 @@ jobs:
                   text = json.dumps(json.loads(path.read_text()), ensure_ascii=False)[:3800]
                   text = text.replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
                   print('::notice title=Actual software keyboard ' + path.stem + '::' + text)
+          PY
+      - name: Publish API 36 runtime evidence
+        if: always()
+        run: |
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          path = Path(os.environ['RUNNER_TEMP']) / 'orbit-ui-screenshots' / 'api36.json'
+          assert path.is_file() and path.stat().st_size <= 4096, 'Missing API 36 runtime evidence'
+          data = json.loads(path.read_text())
+          assert set(data) == {'sdk_int', 'target_sdk', 'release', 'passed'}, data
+          assert data['passed'] is True and data['sdk_int'] >= 36 and data['target_sdk'] == 36, data
+          print('::notice title=API 36 emulator and targetSdk 36 (instrumented)::' + json.dumps(data))
           PY
       - name: Publish legacy Neshan compatibility evidence (mocked HTTP, no personal key)
         if: always()
@@ -204,6 +217,30 @@ jobs:
       - name: Compact report table preview
         if: always() && github.event_name == 'workflow_dispatch'
         run: '"$RUNNER_TEMP/ui-preview-env/bin/python" tools/ui-previews.py "$RUNNER_TEMP/orbit-ui-screenshots" 23-report-table-320-large-text'
+      - name: 5.9.1 purchases scrolled preview
+        if: always() && github.event_name == 'workflow_dispatch'
+        run: '"$RUNNER_TEMP/ui-preview-env/bin/python" tools/ui-previews.py "$RUNNER_TEMP/orbit-ui-screenshots" 591-finance-purchases-scrolled'
+      - name: 5.9.1 purchases top preview
+        if: always() && github.event_name == 'workflow_dispatch'
+        run: '"$RUNNER_TEMP/ui-preview-env/bin/python" tools/ui-previews.py "$RUNNER_TEMP/orbit-ui-screenshots" 591-finance-purchases-top'
+      - name: 5.9.1 maintenance collapsed preview
+        if: always() && github.event_name == 'workflow_dispatch'
+        run: '"$RUNNER_TEMP/ui-preview-env/bin/python" tools/ui-previews.py "$RUNNER_TEMP/orbit-ui-screenshots" 591-maintenance-periodic-collapsed'
+      - name: 5.9.1 fuel notebook preview
+        if: always() && github.event_name == 'workflow_dispatch'
+        run: '"$RUNNER_TEMP/ui-preview-env/bin/python" tools/ui-previews.py "$RUNNER_TEMP/orbit-ui-screenshots" 591-fuel-green-notebook'
+      - name: 5.9.1 maintenance notebook preview
+        if: always() && github.event_name == 'workflow_dispatch'
+        run: '"$RUNNER_TEMP/ui-preview-env/bin/python" tools/ui-previews.py "$RUNNER_TEMP/orbit-ui-screenshots" 591-maintenance-green-notebook'
+      - name: 5.9.1 insurance booklets preview
+        if: always() && github.event_name == 'workflow_dispatch'
+        run: '"$RUNNER_TEMP/ui-preview-env/bin/python" tools/ui-previews.py "$RUNNER_TEMP/orbit-ui-screenshots" 591-insurance-green-booklets'
+      - name: 5.9.1 calendar grid preview
+        if: always() && github.event_name == 'workflow_dispatch'
+        run: '"$RUNNER_TEMP/ui-preview-env/bin/python" tools/ui-previews.py "$RUNNER_TEMP/orbit-ui-screenshots" 591-calendar-service-grid-delivered'
+      - name: 5.9.1 delivery details preview
+        if: always() && github.event_name == 'workflow_dispatch'
+        run: '"$RUNNER_TEMP/ui-preview-env/bin/python" tools/ui-previews.py "$RUNNER_TEMP/orbit-ui-screenshots" 591-service-delivery-details'
       - name: Upload native screenshots and test reports
         if: always()
         uses: actions/upload-artifact@v4

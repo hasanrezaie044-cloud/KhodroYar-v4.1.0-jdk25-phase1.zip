@@ -865,26 +865,20 @@ private fun PurchasesSection(
     }
 
     Column(Modifier.fillMaxSize()) {
-        Column(Modifier.padding(horizontal = AppDimens.screenPadding, vertical = 8.dp)) {
-            ScreenHeader("خریدهای شخصی", "سال $selectedYear · ${amount(total)} تومان")
-            Spacer(Modifier.height(AppDimens.gap))
-            Row(
-                Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                IconButton(onClick = { selectedYear -= 1 }) { Icon(Icons.Outlined.ChevronRight, "سال قبل") }
-                Text("سال $selectedYear", style = MaterialTheme.typography.titleMedium)
-                IconButton(onClick = { selectedYear += 1 }) { Icon(Icons.Outlined.ChevronLeft, "سال بعد") }
-            }
-        }
-        // 5.9.0: month booklet; per-module search removed (global search still covers purchases).
+        // 5.9.1: the section title and the year switcher are the first items of the one
+        // scrolling list. They used to sit above it in a fixed Column, so they stayed frozen
+        // on screen while the booklet scrolled beneath them.
         LazyColumn(
-            Modifier.weight(1f),
+            Modifier.weight(1f).testTag("purchases-list"),
             contentPadding = PaddingValues(horizontal = AppDimens.screenPadding, vertical = 8.dp),
             verticalArrangement = Arrangement.spacedBy(AppDimens.gap),
         ) {
-            item {
+            item(key = "purchases-header") {
+                LedgerYearHeader("خریدهای شخصی", "سال $selectedYear · ${amount(total)} تومان", selectedYear,
+                    onYear = { selectedYear = it }, tag = "purchases")
+            }
+            // 5.9.0: month booklet; per-module search removed (global search still covers purchases).
+            item(key = "purchases-book") {
                 MonthBookBrowser(
                     kind = RecordKind.EXPENSE,
                     year = selectedYear,
@@ -981,28 +975,20 @@ private fun IncomesSection(repository: AppRepository, year: Int) {
     }
 
     Column(Modifier.fillMaxSize()) {
-        Column(Modifier.padding(horizontal = AppDimens.screenPadding, vertical = 8.dp)) {
-            ScreenHeader("درآمدهای شخصی", "سال $selectedYear · ${amount(total)} تومان")
-            Spacer(Modifier.height(AppDimens.gap))
-            Row(
-                Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                IconButton(onClick = { selectedYear -= 1 }) { Icon(Icons.Outlined.ChevronRight, "سال قبل") }
-                Text("سال $selectedYear", style = MaterialTheme.typography.titleMedium)
-                IconButton(onClick = { selectedYear += 1 }) { Icon(Icons.Outlined.ChevronLeft, "سال بعد") }
+        // Same structure as purchases: header and year switcher scroll with the list.
+        LazyColumn(
+            Modifier.weight(1f).testTag("incomes-list"),
+            contentPadding = PaddingValues(horizontal = AppDimens.screenPadding, vertical = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(AppDimens.gap),
+        ) {
+            item(key = "incomes-header") {
+                LedgerYearHeader("درآمدهای شخصی", "سال $selectedYear · ${amount(total)} تومان", selectedYear,
+                    onYear = { selectedYear = it }, tag = "incomes")
             }
-        }
-        if (incomes.isEmpty()) {
-            EmptyState("درآمدی ثبت نشده", "", Icons.Outlined.Payments, Modifier.weight(1f))
-        } else {
-            LazyColumn(
-                Modifier.weight(1f),
-                contentPadding = PaddingValues(AppDimens.screenPadding),
-                verticalArrangement = Arrangement.spacedBy(AppDimens.gap),
-            ) {
-                item {
+            if (incomes.isEmpty()) {
+                item(key = "incomes-empty") { EmptyState("درآمدی ثبت نشده", "", Icons.Outlined.Payments) }
+            } else {
+                item(key = "incomes-book") {
                     Collapsible(
                         title = tr("درآمدهای ثبت‌شده", "Recorded income"),
                         summary = "${incomes.size} رکورد · ${amount(total)} تومان",
@@ -1061,6 +1047,24 @@ private fun IncomesSection(repository: AppRepository, year: Int) {
             },
             onDismiss = { pendingDelete = null },
         )
+    }
+}
+
+/** Section title plus the year switcher, rendered as a normal (scrolling) list item. */
+@Composable
+private fun LedgerYearHeader(title: String, subtitle: String, year: Int, onYear: (Int) -> Unit, tag: String) {
+    Column(Modifier.fillMaxWidth().testTag("$tag-header")) {
+        ScreenHeader(title, subtitle)
+        Spacer(Modifier.height(AppDimens.gap))
+        Row(
+            Modifier.fillMaxWidth().testTag("$tag-year-row"),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            IconButton(onClick = { onYear(year - 1) }) { Icon(Icons.Outlined.ChevronRight, "سال قبل") }
+            Text("سال $year", style = MaterialTheme.typography.titleMedium)
+            IconButton(onClick = { onYear(year + 1) }) { Icon(Icons.Outlined.ChevronLeft, "سال بعد") }
+        }
     }
 }
 

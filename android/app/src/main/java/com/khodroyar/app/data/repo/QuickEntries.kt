@@ -63,7 +63,7 @@ data class QuickDraft(
         fun from(row: FuelEntity, date: String = Jalali.todayString()) = QuickDraft(QuickKind.FUEL, date, amount = row.total, liters = row.liters, fuelType = row.type, carType = row.carType)
         fun from(row: MaintenanceEntity, date: String = Jalali.todayString()) = QuickDraft(QuickKind.MAINTENANCE, date, row.typeText, row.cost, maintenanceType = row.type, km = row.km, carType = row.carType)
         fun from(row: ServiceEntity, date: String = Jalali.todayString()) = QuickDraft(QuickKind.SERVICE, date, carType = row.carType,
-            trip = row.copy(id = "", date = date, requestNumber = "", attachmentPath = "", timestamp = ""))
+            trip = row.copy(id = "", date = date, requestNumber = "", attachmentPath = "", timestamp = "", delivered = false))
     }
 }
 

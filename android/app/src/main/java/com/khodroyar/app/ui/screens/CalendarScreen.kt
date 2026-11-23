@@ -16,6 +16,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextOverflow
@@ -119,6 +122,7 @@ fun CalendarScreen(
     }
 
     LazyColumn(
+        modifier = Modifier.testTag("calendar-list"),
         contentPadding = PaddingValues(
             start = AppDimens.screenPadding,
             end = AppDimens.screenPadding,
@@ -325,19 +329,9 @@ fun CalendarScreen(
         }
 
         /* ------------------------------------------------ services of that day */
-        item { SectionTitle("سرویس‌های $selectedDate", "${dayServices.size} مورد", Icons.Outlined.Route) }
-        if (dayServices.isEmpty()) {
-            item {
-                EmptyState(
-                    "برای این روز سرویسی ثبت نشده",
-                    "",
-                    Icons.Outlined.Route,
-                )
-            }
-        } else {
-            items(dayServices, key = { it.id }) { service ->
-                ServiceRow(service, detailed = true, onClick = { detailKey = RecordKey(RecordKind.SERVICE, service.id) })
-            }
+        // 5.9.1: a green notebook page of square shortcuts; each opens that service's own details.
+        item(key = "calendar-day-services") {
+            DayServicesNotebook(selectedDate, dayServices) { service -> detailKey = RecordKey(RecordKind.SERVICE, service.id) }
         }
     }
 
@@ -351,6 +345,97 @@ fun CalendarScreen(
                 monthServices.firstOrNull { it.id == key.id }?.let { detailKey = null; onEditService(it) }
             } else null,
         )
+    }
+}
+
+/** Columns for the square service grid: as many ~104dp cells as fit (fewer at large font). */
+internal fun serviceGridColumns(widthDp: Float, fontScale: Float): Int {
+    val cell = if (fontScale > 1.3f) 136f else 104f
+    val gap = 8f
+    return ((widthDp + gap) / (cell + gap)).toInt().coerceIn(2, 6)
+}
+
+@Composable
+private fun DayServicesNotebook(date: String, services: List<ServiceEntity>, onOpen: (ServiceEntity) -> Unit) {
+    Column(Modifier.fillMaxWidth().testTag("calendar-services-notebook"), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        NotebookCover(contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Outlined.Route, null, Modifier.size(20.dp), tint = NotebookInk.accent)
+                Spacer(Modifier.width(8.dp))
+                Text("سرویس‌های $date", Modifier.weight(1f).semantics { heading() }, color = NotebookInk.primary,
+                    style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text("${services.size} مورد", color = NotebookInk.accent, style = MaterialTheme.typography.labelLarge, maxLines = 1)
+            }
+        }
+        if (services.isEmpty()) {
+            Surface(shape = RoundedCornerShape(16.dp), color = notebookPaper(), modifier = Modifier.fillMaxWidth()) {
+                Text("برای این روز سرویسی ثبت نشده", Modifier.padding(16.dp), color = MaterialTheme.colorScheme.onPrimaryContainer,
+                    style = MaterialTheme.typography.bodyMedium)
+            }
+        } else {
+            BoxWithConstraints(Modifier.fillMaxWidth().testTag("calendar-service-grid")) {
+                val fontScale = androidx.compose.ui.platform.LocalDensity.current.fontScale
+                val columns = serviceGridColumns(maxWidth.value, fontScale)
+                val cell = (maxWidth - 8.dp * (columns - 1)) / columns
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    services.chunked(columns).forEach { row ->
+                        Row(Modifier.height(IntrinsicSize.Min), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            row.forEach { service ->
+                                ServiceSquareCard(service, Modifier.weight(1f).fillMaxHeight().heightIn(min = cell)) { onOpen(service) }
+                            }
+                            repeat(columns - row.size) { Spacer(Modifier.weight(1f)) }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/** Square shortcut for one service. Delivered services keep a static green side accent and glow. */
+@Composable
+private fun ServiceSquareCard(service: ServiceEntity, modifier: Modifier, onClick: () -> Unit) {
+    val shape = RoundedCornerShape(16.dp)
+    val green = com.khodroyar.app.ui.theme.appAccents.positive
+    val type = ServiceType.fromWire(service.type).label
+    val time = if (service.startTime.isNotBlank() || service.endTime.isNotBlank())
+        "${service.startTime.ifBlank { "--:--" }}–${service.endTime.ifBlank { "--:--" }}" else ""
+    val route = listOf(service.origin, service.destination).filter { it.isNotBlank() }.joinToString(" ← ")
+    val incomeText = amount(service.income)
+    val toman = tr("تومان", "Toman")
+    val openLabel = tr("نمایش جزئیات", "Show details")
+    val state = if (service.delivered) "تحویل شده" else "تحویل نشده"
+    val description = listOf(type, time, route, "$incomeText $toman").filter { it.isNotBlank() }.joinToString("، ")
+    Surface(
+        shape = shape,
+        color = if (service.delivered) androidx.compose.ui.graphics.lerp(notebookPaper(), green, 0.10f) else notebookPaper(),
+        border = BorderStroke(if (service.delivered) 1.5.dp else 1.dp,
+            if (service.delivered) green.copy(alpha = 0.75f) else MaterialTheme.colorScheme.primary.copy(alpha = 0.22f)),
+        modifier = modifier
+            .deliveredGlow(service.delivered, shape, green)
+            .clip(shape)
+            .clickable(onClickLabel = openLabel, onClick = onClick)
+            .testTag("calendar-service-${service.id}")
+            .semantics(mergeDescendants = true) { contentDescription = description; stateDescription = state },
+    ) {
+        Row(Modifier.fillMaxSize()) {
+            if (service.delivered) DeliveredAccent(Modifier.testTag("calendar-service-delivered-${service.id}"))
+            Column(Modifier.weight(1f).padding(horizontal = 10.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    IconBadge(RecordKind.SERVICE.icon, size = 30.dp)
+                    Spacer(Modifier.weight(1f))
+                    if (service.delivered) Icon(Icons.Outlined.TaskAlt, null, Modifier.size(18.dp), tint = green)
+                }
+                Spacer(Modifier.height(4.dp))
+                Text(type, style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.onPrimaryContainer,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(time.ifBlank { route.ifBlank { "—" } }, style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Spacer(Modifier.weight(1f))
+                Text(incomeText, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+        }
     }
 }
 
@@ -396,14 +481,19 @@ fun ServiceRow(
     onClick: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
+    val green = com.khodroyar.app.ui.theme.appAccents.positive
     val base = modifier.fillMaxWidth().defaultMinSize(minHeight = AppDimens.rowMinHeight)
+        .deliveredGlow(service.delivered, FieldShape, green)
     Surface(
         shape = FieldShape,
         color = MaterialTheme.colorScheme.surfaceContainerLowest,
-        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+        border = androidx.compose.foundation.BorderStroke(if (service.delivered) 1.5.dp else 1.dp,
+            if (service.delivered) green.copy(alpha = 0.75f) else MaterialTheme.colorScheme.outlineVariant),
         modifier = if (onClick == null) base else base.clickable(onClick = onClick),
     ) {
-        Column(Modifier.padding(horizontal = 14.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+      Row(Modifier.height(IntrinsicSize.Min)) {
+        if (service.delivered) DeliveredAccent(Modifier.testTag("service-delivered-${service.id}"))
+        Column(Modifier.weight(1f).padding(horizontal = 14.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Column {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(service.date, Modifier.weight(1f), style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -458,6 +548,7 @@ fun ServiceRow(
                 maxLines = 1,
             )
         }
+      }
     }
 }
 

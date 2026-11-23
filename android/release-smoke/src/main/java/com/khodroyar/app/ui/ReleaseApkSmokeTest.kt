@@ -273,7 +273,7 @@ class ReleaseApkSmokeTest {
             screenshot.delete()
             passed = true
         } finally {
-            val trace = JSONObject().put("environment", "API35 emulator; exact originally signed non-debuggable R8 APK; synthetic text and simulated Bazaar; NOT live OCR/marketplace")
+            val trace = JSONObject().put("environment", "API36 emulator; exact originally signed non-debuggable R8 APK; synthetic text and simulated Bazaar; NOT live OCR/marketplace")
                 .put("passed", passed).put("stages", JSONArray(stages)).put("review", review).put("bazaar", bazaar)
                 .put("ocr_mode", "online-only").put("live_ocr_exercised", false).put("offline_review", offline)
                 .put("target_package", targetPackage).put("target_debuggable", false).put("instrumentation_package", context.packageName)

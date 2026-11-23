@@ -20,7 +20,7 @@ class Migration6To7IntegrationTest {
     private val context get() = InstrumentationRegistry.getInstrumentation().targetContext
     private val name = "migration-6-7-test.db"
     private fun build() = Room.databaseBuilder(context, AppDatabase::class.java, name)
-        .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7).build()
+        .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8).build()
 
     @After fun cleanup() { context.deleteDatabase(name) }
 
@@ -32,7 +32,9 @@ class Migration6To7IntegrationTest {
             db.execSQL("DROP TABLE record_attachments")
             db.execSQL("DROP TABLE loan_installments")
             listOf("maintenances" to "replacementParts", "maintenances" to "notes", "fuels" to "km", "fuels" to "station",
-                "loans" to "monthlyInstallment", "loans" to "notes", "personal_expenses" to "km", "personal_expenses" to "notes")
+                "loans" to "monthlyInstallment", "loans" to "notes", "personal_expenses" to "km", "personal_expenses" to "notes",
+                // 5.9.1 (version 8) column: a real version-6 file never had it either.
+                "services" to "delivered")
                 .forEach { (table, column) -> db.execSQL("ALTER TABLE $table DROP COLUMN $column") }
             db.execSQL("INSERT INTO fuels (id, date, type, liters, total, carType, timestamp) VALUES ('f6', '1403/12/01', 'gasoline', 30.0, 450000.0, 'soren', 't')")
             db.execSQL("INSERT INTO loans (id, title, totalAmount, interestPercent, date, installmentsCount, paidInstallments, timestamp) VALUES ('l6', 'وام قدیمی', 12000000.0, 0.0, '1403/01/01', 12, '1,2', 't')")
@@ -40,7 +42,7 @@ class Migration6To7IntegrationTest {
             db.version = 6
         }
 
-        // 2) Open with Room 7: migration + schema validation happen here.
+        // 2) Open with the current Room schema: 6→7→8 migrations + schema validation happen here.
         val migrated = build()
         try {
             val fuel = migrated.fuels().allOnce().single()
@@ -54,7 +56,7 @@ class Migration6To7IntegrationTest {
             migrated.attachments().insert(RecordAttachmentEntity("a1", "loan", "l6", "/data/none.jpg", "image/jpeg", 1L))
             assertEquals(1, migrated.loanInstallments().forLoanOnce("l6").size)
             assertEquals("loan", migrated.attachments().allOnce().single().recordType)
-            assertEquals(7, migrated.openHelper.readableDatabase.version)
+            assertEquals(APP_DATABASE_SCHEMA_VERSION, migrated.openHelper.readableDatabase.version)
         } finally { migrated.close() }
     }
 }

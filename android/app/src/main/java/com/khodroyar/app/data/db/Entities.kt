@@ -28,6 +28,8 @@ data class ServiceEntity(
     val timestamp: String,
     /** Absolute path to a local receipt/photo under app files; empty if none. */
     val attachmentPath: String = "",
+    /** Delivery status toggled from the service details page ("تحویل" / "تحویل شد"). */
+    val delivered: Boolean = false,
 )
 
 @Entity(tableName = "fuels", indices = [Index("date"), Index("type")])

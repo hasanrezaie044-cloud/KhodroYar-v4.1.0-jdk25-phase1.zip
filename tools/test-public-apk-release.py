@@ -26,7 +26,7 @@ class PublicationFixtures(unittest.TestCase):
         self.path = self.root / 'verification.json'
         self.proof = dict(bytes=self.apk.stat().st_size, sha256=publication.digest(self.apk), head_sha=HEAD,
             package='com.khodroyar.app', certificate_sha256=publication.CERTIFICATE, debuggable=False,
-            baseline=publication.BASELINE, room_version=7, version_name='5.5.8', version_code=75,
+            baseline=publication.BASELINE, room_version=8, version_name='5.5.8', version_code=75,
             zipalign_16kb='passed', zip_crc='passed', ocr_mode='online-only', offline_model_assets='absent (online-only)', offline_native_engine='absent',
             bundled_notices_fonts='all hashes verified', native_64_bit_16kb_alignment='passed', signed_runtime=dict(passed=True, target_debuggable=False,
                 target_package='com.khodroyar.app', instrumentation_package='com.khodroyar.app.releasesmoke',
@@ -79,7 +79,7 @@ class PublicationFixtures(unittest.TestCase):
         with patch.object(publication, 'audit_actual_apk'):
             publication.prepare(self.apk, self.path, output, HEAD)
         notes = (output / 'test-summary.md').read_text()
-        for term in ('دقیقاً سه سامانه', 'OpenRouter', 'Groq', 'دستیار آفلاین', 'کلید API هرگز در پشتیبان نیست', 'سیاست حریم خصوصی۷', 'Room 7', 'بازخوانی'):
+        for term in ('دقیقاً سه سامانه', 'OpenRouter', 'Groq', 'دستیار آفلاین', 'کلید API هرگز در پشتیبان نیست', 'سیاست حریم خصوصی۷', 'Room 8', 'بازخوانی'):
             self.assertIn(term, notes)
         self.assertNotIn('هفت اتصال', notes)
         self.assertTrue((output / 'KhodroYar-5.8.0-release-signed.apk').is_file())

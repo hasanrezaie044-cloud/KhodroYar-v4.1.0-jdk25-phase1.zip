@@ -30,7 +30,7 @@ fi
 # MediaStore Downloads survives UTP's automatic uninstall; app-specific files do not.
 python3 "$ROOT/tools/annotate-ocr-evidence.py" "$SCREENSHOTS/online-report.json" || RESULT=1
 COUNT=$(find "$SCREENSHOTS" -type f -name '*.png' ! -name 'fixture-*' | wc -l)
-echo "::notice title=Native UI screenshots::$COUNT PNGs captured from API 35 emulator"
+echo "::notice title=Native UI screenshots::$COUNT PNGs captured from API 36 emulator"
 if [ "$COUNT" -lt 33 ]; then
     echo "::error::Expected 33 native UI screenshots; found $COUNT"
     RESULT=1

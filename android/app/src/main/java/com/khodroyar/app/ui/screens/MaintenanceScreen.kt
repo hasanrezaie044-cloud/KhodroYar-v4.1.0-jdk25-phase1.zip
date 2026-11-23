@@ -21,6 +21,8 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -126,7 +128,7 @@ fun MaintenanceScreen(
 
     Column(Modifier.fillMaxSize()) {
         LazyColumn(
-            Modifier.weight(1f),
+            Modifier.weight(1f).testTag("maintenance-list"),
             contentPadding = PaddingValues(
                 start = AppDimens.screenPadding,
                 end = AppDimens.screenPadding,
@@ -154,14 +156,23 @@ fun MaintenanceScreen(
                 val overdueCount = trackedItems.count { it.second.isOverdue }
                 val summary = when {
                     overdueCount > 0 -> "$overdueCount مورد از موعد گذشته"
-                    else -> ""
+                    else -> "${trackedItems.size} مورد"
                 }
-                Collapsible(
-                    title = tr("وضعیت سرویس‌های دوره‌ای", "Periodic service status"),
-                    summary = summary,
-                    initiallyExpanded = true,
-                ) {
-                    Column(verticalArrangement = Arrangement.spacedBy(AppDimens.tightGap)) {
+                // 5.9.1: collapsed by default and the user's last choice is remembered, so the
+                // section never re-opens by itself on every visit. Content is unchanged.
+                val (periodicOpen, setPeriodicOpen) = rememberPersistedFlag(PersistedUiState.MAINTENANCE_PERIODIC_EXPANDED, false)
+                val periodicState = if (periodicOpen) tr("باز", "Expanded") else tr("بسته", "Collapsed")
+                Column(verticalArrangement = Arrangement.spacedBy(AppDimens.tightGap)) {
+                    CollapsibleSectionTitle(
+                        title = "وضعیت سرویس‌های دوره‌ای",
+                        englishTitle = "Periodic service status",
+                        action = summary,
+                        icon = Icons.Outlined.EventRepeat,
+                        expanded = periodicOpen,
+                        onToggle = { setPeriodicOpen(!periodicOpen) },
+                        modifier = Modifier.testTag("maintenance-periodic-toggle").semantics { stateDescription = periodicState },
+                    )
+                    if (periodicOpen) Column(Modifier.testTag("maintenance-periodic-content"), verticalArrangement = Arrangement.spacedBy(AppDimens.tightGap)) {
                         trackedItems.forEach { (itemType, due) ->
                             MaintenanceForecastCard(itemType, due, pace, today,
                                 configured = settings.nextKmFor(itemType.wire) > 0 || settings.currentKmFor(itemType.wire) > 0 || (due.lastKm ?: 0.0) > 0,

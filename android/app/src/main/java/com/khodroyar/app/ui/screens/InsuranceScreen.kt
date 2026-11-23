@@ -27,6 +27,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -135,52 +136,61 @@ fun InsuranceScreen(repository: AppRepository) {
 }
 
 /**
- * A document as a passport-style booklet cover: binding spine, category, emblem, title,
- * issuer, and an expiry band whose colour carries the status (expired = error colour).
+ * A document as a green notebook / passport cover (5.9.1): the shared green cover with its
+ * stitched spine, category, emblem, title, issuer and an expiry band. The whole cover is the
+ * tap target and opens the existing details page; there is no separate details button.
+ * Expired documents keep a strong error border and an error-coloured expiry band.
  */
 @Composable
 private fun DocumentBookletCover(item: InsuranceEntity, today: String, onOpen: () -> Unit) {
     val status = remember(item.expiryDate, today) { DocumentStatus.of(item.expiryDate, today) }
     val category = remember(item.type) { DocumentCategory.of(item.type) }
-    val tone = status.tone.color()
     val expired = status.kind == DocumentStatus.Kind.EXPIRED
-    val cover = if (expired) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.secondaryContainer
-    val onCover = if (expired) MaterialTheme.colorScheme.onErrorContainer else MaterialTheme.colorScheme.onSecondaryContainer
-    Surface(
+    val warning = status.tone == com.khodroyar.app.core.records.DetailTone.WARNING
+    val bandColor = when {
+        expired -> MaterialTheme.colorScheme.errorContainer
+        warning -> MaterialTheme.colorScheme.tertiaryContainer
+        else -> Color.White.copy(alpha = 0.12f)
+    }
+    val bandInk = when {
+        expired -> MaterialTheme.colorScheme.onErrorContainer
+        warning -> MaterialTheme.colorScheme.onTertiaryContainer
+        else -> NotebookInk.primary
+    }
+    val openLabel = tr("باز کردن مدرک", "Open document")
+    val description = "${item.type}، ${category.label}، ${status.label}"
+    val shape = RoundedCornerShape(topStart = 6.dp, bottomStart = 6.dp, topEnd = 18.dp, bottomEnd = 18.dp)
+    NotebookCover(
+        shape = shape,
+        border = if (expired) BorderStroke(2.dp, MaterialTheme.colorScheme.error) else null,
+        spine = 10.dp,
         onClick = onOpen,
-        shape = RoundedCornerShape(topStart = 6.dp, bottomStart = 6.dp, topEnd = 18.dp, bottomEnd = 18.dp),
-        color = cover,
-        border = BorderStroke(if (expired) 1.5.dp else 1.dp, tone.copy(alpha = if (expired) 0.9f else 0.35f)),
-        modifier = Modifier.fillMaxWidth().testTag("insurance-booklet-${item.id}")
-            .semantics(mergeDescendants = true) { contentDescription = "${item.type}، ${category.label}، ${status.label}" },
+        onClickLabel = openLabel,
+        contentPadding = PaddingValues(12.dp),
+        modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).testTag("insurance-booklet-${item.id}")
+            .semantics(mergeDescendants = true) { contentDescription = description },
     ) {
-        Row(Modifier.height(IntrinsicSize.Min)) {
-            Box(Modifier.width(10.dp).fillMaxHeight().background(onCover.copy(alpha = 0.12f)))
-            Column(Modifier.weight(1f).padding(horizontal = 12.dp, vertical = 12.dp)) {
-                Text(category.label, style = MaterialTheme.typography.labelSmall, color = onCover.copy(alpha = 0.75f), maxLines = 1)
-                Spacer(Modifier.height(8.dp))
-                Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-                    Surface(shape = CircleShape, color = onCover.copy(alpha = 0.08f), border = BorderStroke(1.dp, onCover.copy(alpha = 0.3f))) {
-                        Icon(if (category == DocumentCategory.INSURANCE) Icons.Outlined.Shield else Icons.Outlined.Description, null,
-                            Modifier.padding(10.dp).size(24.dp), tint = onCover)
-                    }
-                }
-                Spacer(Modifier.height(8.dp))
-                Text(item.type.ifBlank { "مدرک" }, style = MaterialTheme.typography.titleSmall, color = onCover, maxLines = 2,
-                    overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.Bold)
-                if (item.company.isNotBlank()) Text(item.company, style = MaterialTheme.typography.bodySmall, color = onCover.copy(alpha = 0.75f),
-                    maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Spacer(Modifier.height(10.dp))
-                // Expiry band: the most prominent line on the cover.
-                Surface(shape = RoundedCornerShape(10.dp), color = tone.copy(alpha = if (expired) 0.18f else 0.12f)) {
-                    Column(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp)) {
-                        Text(if (item.expiryDate.isBlank()) "بدون تاریخ انقضا" else "انقضا ${item.expiryDate}",
-                            style = MaterialTheme.typography.labelLarge, color = if (expired) MaterialTheme.colorScheme.error else onCover,
-                            fontWeight = FontWeight.Bold, maxLines = 1)
-                        Text(status.label, style = MaterialTheme.typography.labelSmall, color = tone, maxLines = 1,
-                            modifier = Modifier.testTag("insurance-status-${item.id}"))
-                    }
-                }
+        Text(category.label, style = MaterialTheme.typography.labelSmall, color = NotebookInk.accent, maxLines = 1)
+        Spacer(Modifier.height(8.dp))
+        Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+            Surface(shape = CircleShape, color = NotebookInk.accent.copy(alpha = 0.14f), border = BorderStroke(1.dp, NotebookInk.accent.copy(alpha = 0.6f))) {
+                Icon(if (category == DocumentCategory.INSURANCE) Icons.Outlined.Shield else Icons.Outlined.Description, null,
+                    Modifier.padding(10.dp).size(24.dp), tint = NotebookInk.accent)
+            }
+        }
+        Spacer(Modifier.height(8.dp))
+        Text(item.type.ifBlank { "مدرک" }, style = MaterialTheme.typography.titleSmall, color = NotebookInk.primary, maxLines = 2,
+            overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.Bold)
+        if (item.company.isNotBlank()) Text(item.company, style = MaterialTheme.typography.bodySmall, color = NotebookInk.secondary,
+            maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Spacer(Modifier.height(10.dp))
+        // Expiry band: the most prominent line on the cover; its colour carries the status.
+        Surface(shape = RoundedCornerShape(10.dp), color = bandColor) {
+            Column(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp)) {
+                Text(if (item.expiryDate.isBlank()) "بدون تاریخ انقضا" else "انقضا ${item.expiryDate}",
+                    style = MaterialTheme.typography.labelLarge, color = bandInk, fontWeight = FontWeight.Bold, maxLines = 1)
+                Text(status.label, style = MaterialTheme.typography.labelSmall, color = bandInk.copy(alpha = 0.85f), maxLines = 1,
+                    modifier = Modifier.testTag("insurance-status-${item.id}"))
             }
         }
     }

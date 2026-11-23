@@ -43,6 +43,9 @@ interface ServiceDao {
 
     @Query("SELECT * FROM services WHERE id = :id")
     suspend fun byId(id: String): ServiceEntity?
+    /** Delivery status of exactly one service, addressed by its primary key. Returns rows changed. */
+    @Query("UPDATE services SET delivered = :delivered WHERE id = :id")
+    suspend fun setDelivered(id: String, delivered: Boolean): Int
     @Query("SELECT * FROM services WHERE id LIKE :prefix || '%' LIMIT 2")
     suspend fun byIdPrefix(prefix: String): List<ServiceEntity>
 

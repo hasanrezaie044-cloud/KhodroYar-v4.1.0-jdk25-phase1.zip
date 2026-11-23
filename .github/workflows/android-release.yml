@@ -289,7 +289,7 @@ jobs:
           proof = json.loads(path.read_text())
           import re as _re
           room = int(_re.search(r'APP_DATABASE_SCHEMA_VERSION\s*=\s*(\d+)', Path('android/app/src/main/java/com/khodroyar/app/data/db/AppDatabase.kt').read_text()).group(1))
-          assert room == 7, f'Unexpected Room schema version {room}'
+          assert room == 8, f'Unexpected Room schema version {room}'
           proof.update(package='com.khodroyar.app', version_name='${{ steps.version.outputs.version_name }}',
               version_code=int('${{ steps.version.outputs.version_code }}'), head_sha=subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip(),
               certificate_sha256='03bfbc3575667403c3259fae345f3eb1ad3045373cb62123be376ef4898caaf0',
@@ -320,7 +320,7 @@ jobs:
           ANDROID_KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           ANDROID_KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         with:
-          api-level: 35
+          api-level: 36
           arch: x86_64
           target: google_apis
           profile: pixel_2

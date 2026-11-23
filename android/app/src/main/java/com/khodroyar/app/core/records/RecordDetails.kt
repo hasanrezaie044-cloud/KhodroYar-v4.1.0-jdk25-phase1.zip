@@ -86,6 +86,8 @@ data class RecordDetail(
     val deleteLabel: String = "حذف",
     /** A short honest note shown beside the delete button when "delete" has special semantics. */
     val deleteNote: String? = null,
+    /** Delivery status for services ("تحویل" toggle); null for every other record kind. */
+    val delivered: Boolean? = null,
 ) {
     val fields: List<DetailField> get() = sections.flatMap { it.fields }
 }
@@ -128,6 +130,9 @@ object RecordDetails {
                 money("غذا", e.missionFood), money("عوارض", e.missionToll), money("جریمه", e.missionFine)),
         ),
         legacyAttachmentPath = e.attachmentPath,
+        status = if (e.delivered) "تحویل شد" else null,
+        tone = if (e.delivered) DetailTone.GOOD else DetailTone.NEUTRAL,
+        delivered = e.delivered,
         deleteTitle = "حذف سرویس",
         deleteMessage = "سرویس ${e.date} (${ServiceType.fromWire(e.type).label}) حذف شود؟ پیوست‌ها و کیلومتر ثبت‌شده‌اش هم اصلاح می‌شود.",
     )

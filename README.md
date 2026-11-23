@@ -1,6 +1,13 @@
 # مدیریت خودرو — Native Android
 
-## Current source: 5.6.2 (versionCode 78), incrementally upgraded from 5.6.1 / 5.5.8
+## Current source: 5.9.1 (versionCode 84), targetSdk/compileSdk 36, Room 8
+
+5.9.1 adds a per-service delivery status (Room 7→8, default "not delivered", included in
+backups), green notebook styling for the fuel/maintenance/purchase books, insurance cards and
+the calendar's square service grid, a collapsible periodic-maintenance section, the purchases
+header scroll fix and two loan-installment edit fixes. See [CHANGELOG.md](CHANGELOG.md).
+
+### Earlier: 5.6.2 (versionCode 78), incrementally upgraded from 5.6.1 / 5.5.8
 
 Same `com.khodroyar.app`, Room 6, financial formulas and original signing identity:
 
@@ -97,7 +104,7 @@ five services stay **only in Reports**. Consent, units, approval/destructive con
 real errors remain; redundant tutorial copy does not return. See the [5.4.0 changes](CHANGES_5.4.0.md)
 and the [earlier 5.3.1 layout changes](CHANGES_5.3.1.md).
 
-Build/test evidence is commit-specific. API 35 emulator coverage includes a 12,000-record fixture,
+Build/test evidence is commit-specific. API 36 emulator coverage includes a 12,000-record fixture,
 not a physical S23 FE/weak-phone, battery, Doze or memory benchmark. A saved 5.3.1 checkpoint is
 retained before these edits. Install a signed update **over** the existing app; do not uninstall.
 
@@ -138,7 +145,7 @@ The current assistant has two **explicit** choices:
 The retired GapGPT/backend protocol classes and the `backend/` proxy were removed in 5.8.0;
 historical chats are kept and reopen with the offline assistant.
 Read [current agent setup and limits](docs/OPENROUTER-AGENT.fa.md) and
-[API-free local commands](docs/LOCAL-AGENT.md). Room is at schema version 7 (migration 6→7 adds record attachments and loan installments).
+[API-free local commands](docs/LOCAL-AGENT.md). Room is at schema version 8 (migration 6→7 adds record attachments and loan installments; 7→8 adds the per-service delivery status).
 Each create/edit/delete requires a fresh exact preview and approval; a recurring rule receives
 scoped permission once, then runs until paused/deleted/expired.
 Turning off chat or deleting history does not revoke approved rules; use the task manager.

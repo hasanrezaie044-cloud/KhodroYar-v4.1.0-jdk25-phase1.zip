@@ -310,10 +310,12 @@ class AppRepository(context: Context) {
     suspend fun updateService(entity: ServiceEntity, recomputeIncome: Boolean = true) = withContext(io) {
         RecordMutations.mutate(db, settingsStore, invalidateReceipt = true) {
         val previous = db.services().byId(entity.id)
-        val row = if (!recomputeIncome) entity else {
+        // Delivery is owned by the details page toggle; an edit form never resets it.
+        val kept = entity.copy(delivered = previous?.delivered ?: entity.delivered)
+        val row = if (!recomputeIncome) kept else {
             val year = Jalali.parse(entity.date)?.year ?: Jalali.currentYear()
             val rates = ratesFor(year)
-            entity.copy(
+            kept.copy(
                 income = IncomeCalculator.calculate(
                     ServiceType.fromWire(entity.type), entity.km, entity.hours, entity.tollCount,
                     entity.missionFood, entity.missionToll, entity.missionFine, rates,
@@ -333,6 +335,16 @@ class AppRepository(context: Context) {
             }
         }
 
+        }
+    }
+
+    /**
+     * Marks one service (by primary key) as delivered or not. Only that row changes, so two
+     * services on the same date stay independent; Room's invalidation updates every screen.
+     */
+    suspend fun setServiceDelivered(id: String, delivered: Boolean): Boolean = withContext(io) {
+        RecordMutations.mutate(db, settingsStore, invalidateReceipt = true) {
+            db.services().setDelivered(id, delivered) == 1
         }
     }
 
@@ -573,8 +585,13 @@ class AppRepository(context: Context) {
         db.loanInstallments().deleteAfter(loan.id, generated.size)
     }
 
-    suspend fun updateLoanInstallment(row: LoanInstallmentEntity) = withContext(io) {
-        require(row.number > 0 && row.amount >= 0 && row.dueDate.matches(Regex("^\\d{4}/\\d{1,2}/\\d{1,2}$")))
+    suspend fun updateLoanInstallment(input: LoanInstallmentEntity) = withContext(io) {
+        // 5.9.1 audit: real Jalali dates only, stored canonically (Latin digits, zero padded);
+        // a paid date is either blank (unpaid) or a real date — free text no longer marks it paid.
+        val dueDate = com.khodroyar.app.core.finance.InstallmentEditRules.canonicalDate(input.dueDate)
+        val paidDate = com.khodroyar.app.core.finance.InstallmentEditRules.paidDate(input.paidDate)
+        require(input.number > 0 && input.amount >= 0 && dueDate != null && paidDate != null) { "Invalid installment edit" }
+        val row = input.copy(dueDate = dueDate, paidDate = paidDate)
         db.withTransaction {
             val loan = db.loans().byId(row.loanId) ?: throw IllegalArgumentException("Loan not found")
             // A row shown before the schedule was stored has a display-only id; keep the stored row's id.
@@ -589,26 +606,50 @@ class AppRepository(context: Context) {
     }
 
     suspend fun toggleInstallment(loanId: String, index: Int) = withContext(io) {
-        val loan = db.loans().byId(loanId) ?: return@withContext
-        ensureLoanSchedule(loan)
-        val row = db.loanInstallments().forLoanOnce(loanId).firstOrNull { it.number == index } ?: return@withContext
-        val paidDate = if (row.paidDate.isBlank()) Jalali.todayString() else ""
-        db.loanInstallments().insert(row.copy(paidDate = paidDate))
-        val paid = parseInstallments(loan.paidInstallments).toMutableSet()
-        if (paidDate.isBlank()) paid.remove(index) else paid.add(index)
-        db.loans().update(loan.copy(paidInstallments = paid.sorted().joinToString(",")))
+        // One transaction: the row's paid date and the loan's paid list can never disagree.
+        db.withTransaction {
+            val loan = db.loans().byId(loanId) ?: return@withTransaction
+            ensureLoanSchedule(loan)
+            val row = db.loanInstallments().forLoanOnce(loanId).firstOrNull { it.number == index } ?: return@withTransaction
+            val paidDate = if (row.paidDate.isBlank()) Jalali.todayString() else ""
+            db.loanInstallments().insert(row.copy(paidDate = paidDate))
+            val paid = parseInstallments(loan.paidInstallments).toMutableSet()
+            if (paidDate.isBlank()) paid.remove(index) else paid.add(index)
+            db.loans().update(loan.copy(paidInstallments = paid.sorted().joinToString(",")))
+        }
     }
 
     suspend fun updateLoan(
         id: String, title: String, totalAmount: Double, interestPercent: Double,
         date: String, installmentsCount: Int, monthlyInstallment: Double = 0.0, notes: String = "",
     ) = withContext(io) {
-        val loan = db.loans().byId(id) ?: return@withContext
-        val updated = loan.copy(title = title, totalAmount = totalAmount, interestPercent = interestPercent,
-            date = date, installmentsCount = maxOf(1, installmentsCount), monthlyInstallment = monthlyInstallment, notes = notes)
-        db.loans().update(updated)
-        db.loanInstallments().clearForLoan(id)
-        ensureLoanSchedule(updated)
+        db.withTransaction {
+            val loan = db.loans().byId(id) ?: return@withTransaction
+            val updated = loan.copy(title = title, totalAmount = totalAmount, interestPercent = interestPercent,
+                date = date, installmentsCount = maxOf(1, installmentsCount), monthlyInstallment = monthlyInstallment, notes = notes)
+            db.loans().update(updated)
+            // 5.9.1 audit: editing only the title/notes used to wipe every per-installment edit
+            // (amount, due date, paid date, notes) and re-key all rows. Keep the schedule then.
+            val termsChanged = com.khodroyar.app.core.finance.InstallmentEditRules.scheduleTermsChanged(
+                loan.totalAmount, loan.interestPercent, loan.date, loan.installmentsCount, loan.monthlyInstallment,
+                updated.totalAmount, updated.interestPercent, updated.date, updated.installmentsCount, updated.monthlyInstallment)
+            if (!termsChanged) {
+                ensureLoanSchedule(updated)
+                return@withTransaction
+            }
+            // New terms regenerate amounts and due dates, but each surviving installment number keeps
+            // its stable id, its notes and its real paid date (when it is still paid).
+            val previous = db.loanInstallments().forLoanOnce(id).associateBy { it.number }
+            db.loanInstallments().clearForLoan(id)
+            ensureLoanSchedule(updated)
+            val regenerated = db.loanInstallments().forLoanOnce(id)
+            val kept = regenerated.mapNotNull { fresh ->
+                val old = previous[fresh.number] ?: return@mapNotNull null
+                fresh.copy(id = old.id, notes = old.notes,
+                    paidDate = if (fresh.paidDate.isNotBlank() && old.paidDate.isNotBlank()) old.paidDate else fresh.paidDate)
+            }
+            if (kept.isNotEmpty()) db.loanInstallments().insertAll(kept)
+        }
     }
 
     suspend fun deleteLoan(id: String) = withContext(io) {
@@ -1259,7 +1300,7 @@ private fun esc(s: String): String {
 private fun num(d: Double): String =
     if (d == Math.floor(d) && !d.isInfinite() && kotlin.math.abs(d) < 1e15) d.toLong().toString() else d.toString()
 
-internal fun ServiceEntity.toJson() = """{"id":"${esc(id)}","date":"${esc(date)}","type":"${esc(type)}","carType":"${esc(carType)}","km":${num(km)},"hours":${num(hours)},"workHours":${num(workHours)},"startTime":"${esc(startTime)}","endTime":"${esc(endTime)}","origin":"${esc(origin)}","destination":"${esc(destination)}","passengers":"${esc(passengers)}","requestNumber":"${esc(requestNumber)}","tollCount":$tollCount,"missionFood":${num(missionFood)},"missionToll":${num(missionToll)},"missionFine":${num(missionFine)},"income":$income,"timestamp":"${esc(timestamp)}","attachmentPath":"${esc(attachmentPath)}"}"""
+internal fun ServiceEntity.toJson() = """{"id":"${esc(id)}","date":"${esc(date)}","type":"${esc(type)}","carType":"${esc(carType)}","km":${num(km)},"hours":${num(hours)},"workHours":${num(workHours)},"startTime":"${esc(startTime)}","endTime":"${esc(endTime)}","origin":"${esc(origin)}","destination":"${esc(destination)}","passengers":"${esc(passengers)}","requestNumber":"${esc(requestNumber)}","tollCount":$tollCount,"missionFood":${num(missionFood)},"missionToll":${num(missionToll)},"missionFine":${num(missionFine)},"income":$income,"timestamp":"${esc(timestamp)}","attachmentPath":"${esc(attachmentPath)}","delivered":$delivered}"""
 
 internal fun FuelEntity.toJson() = """{"id":"${esc(id)}","date":"${esc(date)}","type":"${esc(type)}","liters":${num(liters)},"total":${num(total)},"carType":"${esc(carType)}","km":${num(km)},"station":"${esc(station)}","timestamp":"${esc(timestamp)}"}"""
 

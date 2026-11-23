@@ -179,6 +179,8 @@ object LegacyBackup {
                 income = o.lng("income"),
                 timestamp = o.str("timestamp").ifEmpty { nowIso() },
                 attachmentPath = o.str("attachmentPath"),
+                // Backups made before 5.9.1 have no delivery field: those services restore as not delivered.
+                delivered = o.boolOr("delivered", false),
             )
         }
 

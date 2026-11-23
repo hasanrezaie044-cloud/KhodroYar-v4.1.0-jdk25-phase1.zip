@@ -77,32 +77,34 @@ fun MonthBookBrowser(
 
 @Composable
 private fun YearCover(kind: RecordKind, year: Int, totals: MonthBook.YearTotals, totalLabel: String, showLiters: Boolean, tagPrefix: String) {
-    SurfaceCard(contentPadding = 14.dp, modifier = Modifier.testTag("$tagPrefix-year-cover")) {
+    // 5.9.1: the existing green notebook cover (hero gradient, stitched spine, gold ink).
+    NotebookCover(modifier = Modifier.fillMaxWidth().testTag("$tagPrefix-year-cover")) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            IconBadge(kind.icon, size = 34.dp)
+            IconBadge(kind.icon, size = 34.dp, tint = NotebookInk.accent)
             Column(Modifier.weight(1f).padding(horizontal = 10.dp)) {
                 Text(tr("دفتر ماهانهٔ $year", "Monthly book $year"), style = MaterialTheme.typography.titleMedium,
-                    modifier = Modifier.semantics { heading() })
+                    color = NotebookInk.primary, modifier = Modifier.semantics { heading() })
                 Text(tr("${totals.count} رکورد در ${totals.activeMonths} ماه", "${totals.count} records in ${totals.activeMonths} months"),
-                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    style = MaterialTheme.typography.bodySmall, color = NotebookInk.secondary)
             }
         }
         Spacer(Modifier.height(10.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            BookStat(totalLabel, "${amount(totals.total)}", Modifier.weight(1f))
-            BookStat(tr("میانگین ماه فعال", "Avg. active month"), amount(totals.monthlyAverage), Modifier.weight(1f))
-            if (showLiters) BookStat(tr("لیتر", "Litres"), money(totals.liters), Modifier.weight(1f))
+            NotebookStat(totalLabel, "${amount(totals.total)}", Modifier.weight(1f))
+            NotebookStat(tr("میانگین ماه فعال", "Avg. active month"), amount(totals.monthlyAverage), Modifier.weight(1f))
+            if (showLiters) NotebookStat(tr("لیتر", "Litres"), money(totals.liters), Modifier.weight(1f))
         }
     }
 }
 
 @Composable
 private fun BookStat(label: String, value: String, modifier: Modifier) {
-    Surface(shape = RoundedCornerShape(12.dp), color = MaterialTheme.colorScheme.surfaceContainerLow, modifier = modifier) {
+    Surface(shape = RoundedCornerShape(12.dp), color = notebookPaper(), modifier = modifier) {
         Column(Modifier.padding(horizontal = 10.dp, vertical = 8.dp).semantics(mergeDescendants = true) {}) {
             Text(label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1,
                 overflow = TextOverflow.Ellipsis)
-            Text(value, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(value, style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.onPrimaryContainer,
+                maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
     }
 }
@@ -128,9 +130,10 @@ private fun MonthPage(page: MonthBook.Page, showLiters: Boolean, modifier: Modif
     val description = if (page.isEmpty) "${page.name}: بدون رکورد" else "${page.name}: ${page.count} رکورد"
     Surface(
         shape = RoundedCornerShape(topStart = 6.dp, bottomStart = 6.dp, topEnd = 16.dp, bottomEnd = 16.dp),
-        color = if (page.isEmpty) MaterialTheme.colorScheme.surfaceContainerLow else MaterialTheme.colorScheme.surfaceContainerLowest,
+        // Green notebook page; empty months stay visible but quiet.
+        color = if (page.isEmpty) MaterialTheme.colorScheme.surfaceContainerLow else notebookPaper(),
         border = BorderStroke(if (current) 1.5.dp else 1.dp,
-            if (current) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.7f)),
+            if (current) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.primary.copy(alpha = 0.18f)),
         modifier = modifier
             .heightIn(min = 76.dp)
             .alpha(if (page.isEmpty) 0.62f else 1f)
@@ -142,10 +145,11 @@ private fun MonthPage(page: MonthBook.Page, showLiters: Boolean, modifier: Modif
             // Page binding edge.
             Box(Modifier.width(4.dp).fillMaxHeight().padding(vertical = 10.dp)) {
                 Surface(Modifier.fillMaxSize(), shape = RoundedCornerShape(2.dp),
-                    color = if (page.isEmpty) MaterialTheme.colorScheme.outlineVariant else MaterialTheme.colorScheme.primary.copy(alpha = 0.7f)) {}
+                    color = if (page.isEmpty) MaterialTheme.colorScheme.outlineVariant else notebookBinding()) {}
             }
             Column(Modifier.padding(horizontal = 8.dp, vertical = 8.dp)) {
                 Text(page.name, style = MaterialTheme.typography.titleSmall, fontWeight = if (current) FontWeight.Bold else FontWeight.Medium,
+                    color = if (page.isEmpty) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onPrimaryContainer,
                     maxLines = 1, overflow = TextOverflow.Ellipsis)
                 if (page.isEmpty) {
                     Text("—", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)

@@ -19,6 +19,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -86,6 +87,10 @@ fun RecordDetailsPage(
         .collectAsState(initial = DetailState.Loading)
     var confirmDelete by remember(key) { mutableStateOf(false) }
     var deleting by remember(key) { mutableStateOf(false) }
+    var deliveryBusy by remember(key) { mutableStateOf(false) }
+    val deliveredText = tr("سرویس تحویل شد", "Service marked as delivered")
+    val undeliveredText = tr("تحویل سرویس لغو شد", "Delivery undone")
+    val deliveryFailedText = tr("وضعیت تحویل ذخیره نشد", "Delivery status was not saved")
 
     // A row that vanished (deleted here, by the assistant, or by a restore) closes the page.
     val goneText = tr("این رکورد دیگر وجود ندارد", "This record no longer exists")
@@ -140,7 +145,18 @@ fun RecordDetailsPage(
                         key.kind.attachmentType?.let { type -> RecordAttachmentsPanel(repository, type, key.id) }
                     }
                     DetailActions(detail, editEnabled = onEdit != null && !deleting,
-                        onEdit = { onEdit?.invoke(key) }, onDelete = { confirmDelete = true })
+                        onEdit = { onEdit?.invoke(key) }, onDelete = { confirmDelete = true },
+                        deliveryBusy = deliveryBusy || deleting,
+                        onToggleDelivered = { target ->
+                            deliveryBusy = true
+                            scope.launch {
+                                val ok = runCatching { repository.setServiceDelivered(key.id, target) }
+                                    .onFailure { if (it is kotlinx.coroutines.CancellationException) throw it }
+                                    .getOrDefault(false)
+                                deliveryBusy = false
+                                toast.show(if (!ok) deliveryFailedText else if (target) deliveredText else undeliveredText)
+                            }
+                        })
                 }
             }
         }
@@ -249,9 +265,20 @@ fun detailValueText(value: DetailValue): String = when (value) {
 }
 
 @Composable
-private fun DetailActions(detail: RecordDetail, editEnabled: Boolean, onEdit: () -> Unit, onDelete: () -> Unit) {
+private fun DetailActions(
+    detail: RecordDetail,
+    editEnabled: Boolean,
+    onEdit: () -> Unit,
+    onDelete: () -> Unit,
+    deliveryBusy: Boolean = false,
+    onToggleDelivered: (Boolean) -> Unit = {},
+) {
     Surface(color = MaterialTheme.colorScheme.surfaceContainerLowest, shadowElevation = 8.dp) {
         Column(Modifier.fillMaxWidth().navigationBarsPadding().padding(horizontal = AppDimens.screenPadding, vertical = 10.dp)) {
+            detail.delivered?.let { delivered ->
+                DeliveryToggle(delivered, enabled = !deliveryBusy, onToggle = { onToggleDelivered(!delivered) })
+                Spacer(Modifier.height(8.dp))
+            }
             detail.deleteNote?.let {
                 Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Spacer(Modifier.height(8.dp))
@@ -269,6 +296,30 @@ private fun DetailActions(detail: RecordDetail, editEnabled: Boolean, onEdit: ()
                     Spacer(Modifier.width(8.dp)); Text(detail.deleteLabel, color = MaterialTheme.colorScheme.error)
                 }
             }
+        }
+    }
+}
+
+/**
+ * Service delivery switch (5.9.1). Not delivered: an outlined "تحویل" action. Delivered: a
+ * filled green "تحویل شد" state; tapping it again reverses the status. No animation.
+ */
+@Composable
+private fun DeliveryToggle(delivered: Boolean, enabled: Boolean, onToggle: () -> Unit) {
+    val green = appAccents.positive
+    val state = if (delivered) tr("تحویل شده", "Delivered") else tr("تحویل نشده", "Not delivered")
+    val modifier = Modifier.fillMaxWidth().heightIn(min = AppDimens.buttonHeight).testTag("record-details-deliver")
+        .semantics { stateDescription = state }
+    if (delivered) {
+        Button(onClick = onToggle, enabled = enabled, shape = FieldShape, modifier = modifier,
+            colors = ButtonDefaults.buttonColors(containerColor = green, contentColor = MaterialTheme.colorScheme.surface)) {
+            Icon(Icons.Outlined.TaskAlt, null); Spacer(Modifier.width(8.dp)); Text("تحویل شد", fontWeight = FontWeight.Bold)
+        }
+    } else {
+        OutlinedButton(onClick = onToggle, enabled = enabled, shape = FieldShape, modifier = modifier,
+            border = BorderStroke(1.5.dp, green.copy(alpha = 0.8f)),
+            colors = ButtonDefaults.outlinedButtonColors(contentColor = green)) {
+            Icon(Icons.Outlined.Inventory2, null); Spacer(Modifier.width(8.dp)); Text("تحویل", fontWeight = FontWeight.Bold)
         }
     }
 }
