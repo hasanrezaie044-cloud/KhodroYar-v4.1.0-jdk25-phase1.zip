@@ -217,30 +217,6 @@ jobs:
       - name: Compact report table preview
         if: always() && github.event_name == 'workflow_dispatch'
         run: '"$RUNNER_TEMP/ui-preview-env/bin/python" tools/ui-previews.py "$RUNNER_TEMP/orbit-ui-screenshots" 23-report-table-320-large-text'
-      - name: 5.9.1 purchases scrolled preview
-        if: always() && github.event_name == 'workflow_dispatch'
-        run: '"$RUNNER_TEMP/ui-preview-env/bin/python" tools/ui-previews.py "$RUNNER_TEMP/orbit-ui-screenshots" 591-finance-purchases-scrolled'
-      - name: 5.9.1 purchases top preview
-        if: always() && github.event_name == 'workflow_dispatch'
-        run: '"$RUNNER_TEMP/ui-preview-env/bin/python" tools/ui-previews.py "$RUNNER_TEMP/orbit-ui-screenshots" 591-finance-purchases-top'
-      - name: 5.9.1 maintenance collapsed preview
-        if: always() && github.event_name == 'workflow_dispatch'
-        run: '"$RUNNER_TEMP/ui-preview-env/bin/python" tools/ui-previews.py "$RUNNER_TEMP/orbit-ui-screenshots" 591-maintenance-periodic-collapsed'
-      - name: 5.9.1 fuel notebook preview
-        if: always() && github.event_name == 'workflow_dispatch'
-        run: '"$RUNNER_TEMP/ui-preview-env/bin/python" tools/ui-previews.py "$RUNNER_TEMP/orbit-ui-screenshots" 591-fuel-green-notebook'
-      - name: 5.9.1 maintenance notebook preview
-        if: always() && github.event_name == 'workflow_dispatch'
-        run: '"$RUNNER_TEMP/ui-preview-env/bin/python" tools/ui-previews.py "$RUNNER_TEMP/orbit-ui-screenshots" 591-maintenance-green-notebook'
-      - name: 5.9.1 insurance booklets preview
-        if: always() && github.event_name == 'workflow_dispatch'
-        run: '"$RUNNER_TEMP/ui-preview-env/bin/python" tools/ui-previews.py "$RUNNER_TEMP/orbit-ui-screenshots" 591-insurance-green-booklets'
-      - name: 5.9.1 calendar grid preview
-        if: always() && github.event_name == 'workflow_dispatch'
-        run: '"$RUNNER_TEMP/ui-preview-env/bin/python" tools/ui-previews.py "$RUNNER_TEMP/orbit-ui-screenshots" 591-calendar-service-grid-delivered'
-      - name: 5.9.1 delivery details preview
-        if: always() && github.event_name == 'workflow_dispatch'
-        run: '"$RUNNER_TEMP/ui-preview-env/bin/python" tools/ui-previews.py "$RUNNER_TEMP/orbit-ui-screenshots" 591-service-delivery-details'
       - name: Upload native screenshots and test reports
         if: always()
         uses: actions/upload-artifact@v4
@@ -323,3 +299,40 @@ jobs:
         run: '"$RUNNER_TEMP/model-preview-env/bin/python" tools/ui-previews.py "$RUNNER_TEMP/model-ui-review" 39-ai-fullscreen-320'
       - name: Approved-only manual model settings
         run: '"$RUNNER_TEMP/model-preview-env/bin/python" tools/ui-previews.py "$RUNNER_TEMP/model-ui-review" 40-model-management-320'
+  release-591-previews:
+    name: 5.9.1 screen previews
+    needs: ui-smoke
+    if: always() && github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: khodroyar-orbit-native-ui
+          path: ${{ runner.temp }}/release-591-review
+      - name: Set up bounded preview encoder
+        run: |
+          python3 -m venv "$RUNNER_TEMP/release-591-preview-env"
+          "$RUNNER_TEMP/release-591-preview-env/bin/pip" --disable-pip-version-check -q install Pillow==12.0.0
+      # Own job: the emulator job already uses GitHub's 50-annotation budget per job.
+      - name: 5.9.1 purchases scrolled
+        run: '"$RUNNER_TEMP/release-591-preview-env/bin/python" tools/ui-previews.py "$RUNNER_TEMP/release-591-review" 591-finance-purchases-scrolled'
+      - name: 5.9.1 purchases top
+        run: '"$RUNNER_TEMP/release-591-preview-env/bin/python" tools/ui-previews.py "$RUNNER_TEMP/release-591-review" 591-finance-purchases-top'
+      - name: 5.9.1 maintenance collapsed
+        run: '"$RUNNER_TEMP/release-591-preview-env/bin/python" tools/ui-previews.py "$RUNNER_TEMP/release-591-review" 591-maintenance-periodic-collapsed'
+      - name: 5.9.1 fuel notebook
+        run: '"$RUNNER_TEMP/release-591-preview-env/bin/python" tools/ui-previews.py "$RUNNER_TEMP/release-591-review" 591-fuel-green-notebook'
+      - name: 5.9.1 maintenance notebook
+        run: '"$RUNNER_TEMP/release-591-preview-env/bin/python" tools/ui-previews.py "$RUNNER_TEMP/release-591-review" 591-maintenance-green-notebook'
+      - name: 5.9.1 insurance booklets
+        run: '"$RUNNER_TEMP/release-591-preview-env/bin/python" tools/ui-previews.py "$RUNNER_TEMP/release-591-review" 591-insurance-green-booklets'
+      - name: 5.9.1 calendar grid
+        run: '"$RUNNER_TEMP/release-591-preview-env/bin/python" tools/ui-previews.py "$RUNNER_TEMP/release-591-review" 591-calendar-service-grid-delivered'
+      - name: 5.9.1 delivery details
+        run: '"$RUNNER_TEMP/release-591-preview-env/bin/python" tools/ui-previews.py "$RUNNER_TEMP/release-591-review" 591-service-delivery-details'
