@@ -1,5 +1,9 @@
 package com.khodroyar.app.ui.screens
 
+import com.khodroyar.app.core.records.RecordKey
+import com.khodroyar.app.core.records.RecordKind
+import com.khodroyar.app.core.records.RecordDetails
+import androidx.compose.ui.platform.testTag
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -44,7 +48,8 @@ fun FuelScreen(
     val scope = rememberCoroutineScope()
     val toast = LocalToast.current
     var year by remember { mutableStateOf(Jalali.currentYear()) }
-    val fuels by repository.fuels().collectAsState(initial = emptyList())
+    // Only the latest fill-ups are needed for the spike hint; history is browsed per month.
+    val fuels by remember { repository.recentFuels(7) }.collectAsState(initial = emptyList())
     val cost by repository.fuelCost("$year/").collectAsState(initial = 0.0)
     val liters by repository.fuelLiters("$year/").collectAsState(initial = 0.0)
     val yearTotals by repository.serviceTotals("$year/").collectAsState(initial = com.khodroyar.app.data.db.ServiceTotals())
@@ -62,18 +67,7 @@ fun FuelScreen(
     }
     var showForm by remember { mutableStateOf(quickDate != null) }
     var editingFuel by remember { mutableStateOf<FuelEntity?>(null) }
-    var details by remember { mutableStateOf<FuelEntity?>(null) }
-    var search by remember { mutableStateOf("") }
-    var sortMode by remember { mutableStateOf("date") }
-    val visibleFuels = remember(fuels, search, sortMode) {
-        val query = search.trim()
-        val matching = fuels.filter { fuel ->
-            query.isEmpty() || listOf(fuel.date, FuelType.fromWire(fuel.type).label, fuel.station, fuel.km.toLong().toString(), fuel.liters.toString(), fuel.total.toLong().toString())
-                .any { value -> value.contains(query, ignoreCase = true) }
-        }
-        when (sortMode) { "km" -> matching.sortedByDescending { it.km }; "cost" -> matching.sortedByDescending { it.total }; else -> matching.sortedByDescending { it.date } }
-    }
-    var pendingDelete by remember { mutableStateOf<FuelEntity?>(null) }
+    var details by remember { mutableStateOf<RecordKey?>(null) }
 
     if (showForm || editingFuel != null) {
         val existing = editingFuel
@@ -86,7 +80,15 @@ fun FuelScreen(
     }
 
     Column(Modifier.fillMaxSize()) {
-        Column(Modifier.padding(horizontal = AppDimens.screenPadding, vertical = 8.dp)) {
+        // 5.9.0: month-by-month booklet instead of one lifetime list (no per-module search;
+        // the global search still finds fuel records).
+        LazyColumn(
+            Modifier.weight(1f),
+            contentPadding = PaddingValues(horizontal = AppDimens.screenPadding, vertical = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(AppDimens.gap),
+        ) {
+            item {
+            Column {
             Row(
                 Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -135,37 +137,32 @@ fun FuelScreen(
                     )
                 }
             }
-            if (fuels.isNotEmpty()) OutlinedTextField(search, { search = it }, modifier = Modifier.fillMaxWidth(), singleLine = true, label = { Text(tr("جست‌وجوی سوخت (تاریخ، جایگاه، مبلغ)", "Search fuel (date, station, amount)")) })
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                listOf("date" to "تاریخ", "km" to "کیلومتر", "cost" to "هزینه").forEach { (key, label) ->
-                    FilterChip(modifier = Modifier.weight(1f), selected = sortMode == key, onClick = { sortMode = key }, label = { Text(label, maxLines = 1) })
-                }
             }
-        }
-        if (fuels.isEmpty()) {
-            EmptyState(
-                "سوختی ثبت نشده",
-                "",
-                Icons.Outlined.LocalGasStation,
-                Modifier.weight(1f),
-            )
-        } else {
-            LazyColumn(
-                Modifier.weight(1f),
-                contentPadding = PaddingValues(AppDimens.screenPadding),
-                verticalArrangement = Arrangement.spacedBy(AppDimens.gap),
-            ) {
-                // The saved records are the part worth folding away — not the entry form.
-                item {
-                    Collapsible(
-                        title = tr("سوخت‌های ثبت‌شده", "Recorded fuel"),
-                        summary = "${visibleFuels.size} رکورد · ${amount(visibleFuels.sumOf { it.total })} تومان",
-                    ) {
-                        Column(verticalArrangement = Arrangement.spacedBy(AppDimens.gap)) {
-                            if (visibleFuels.isEmpty()) Text(tr("موردی با این جست‌وجو پیدا نشد.", "No fuel entry matches this search."), color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            visibleFuels.forEach { fuel ->
-                                FuelRow(fuel, onDetails = { details = fuel }, onDelete = { pendingDelete = fuel })
-                            }
+            }
+            item {
+                MonthBookBrowser(
+                    kind = RecordKind.FUEL,
+                    year = year,
+                    onYearChange = { year = it },
+                    months = repository::fuelMonths,
+                    totalLabel = tr("هزینهٔ سوخت", "Fuel cost"),
+                    showLiters = true,
+                    tagPrefix = "fuel",
+                ) { prefix ->
+                    val monthFuels by remember(prefix) { repository.fuels(prefix) }.collectAsState(initial = null)
+                    val list = monthFuels
+                    when {
+                        list == null -> LinearProgressIndicator(Modifier.fillMaxWidth())
+                        list.isEmpty() -> MonthEmpty(tr("در این ماه سوختی ثبت نشده است.", "No fuel recorded this month."))
+                        else -> list.forEach { fuel ->
+                            RecordListRow(
+                                kind = RecordKind.FUEL,
+                                title = "${money(fuel.liters)} لیتر · ${FuelType.fromWire(fuel.type).label}",
+                                subtitle = listOf(RecordDetails.weekdayDate(fuel.date), fuel.station).filter { it.isNotBlank() }.joinToString(" · "),
+                                amountText = amount(fuel.total),
+                                onClick = { details = RecordKey(RecordKind.FUEL, fuel.id) },
+                                modifier = Modifier.testTag("fuel-row-${fuel.id}"),
+                            )
                         }
                     }
                 }
@@ -181,71 +178,20 @@ fun FuelScreen(
         ) { Icon(Icons.Outlined.Add, null); Spacer(Modifier.width(8.dp)); Text(tr("ثبت سوخت", "Add Fuel")) }
     }
 
-    details?.let { fuel ->
-        FuelDetailDialog(
-            fuel = fuel,
+    details?.let { key ->
+        RecordDetailsPage(
             repository = repository,
+            key = key,
             onDismiss = { details = null },
-            onEdit = { details = null; editingFuel = fuel },
-            onDelete = { details = null; pendingDelete = fuel },
-        )
-    }
-
-    pendingDelete?.let { fuel ->
-        ConfirmDialog(
-            title = "حذف سوخت",
-            message = "رکورد ${fuel.date} با ${money(fuel.liters)} لیتر حذف شود؟",
-            confirmLabel = "حذف",
-            destructive = true,
-            onConfirm = {
+            onEdit = {
                 scope.launch {
-                    repository.deleteFuel(fuel.id)
-                    toast.show("رکورد سوخت حذف شد")
-                    pendingDelete = null
+                    // Edit always loads the stored row by id, so the form updates that row.
+                    val row = repository.fuelById(key.id)
+                    if (row == null) toast.show(tr("این رکورد دیگر وجود ندارد", "This record no longer exists"))
+                    else { details = null; editingFuel = row }
                 }
             },
-            onDismiss = { pendingDelete = null },
         )
-    }
-}
-
-@Composable
-private fun FuelRow(fuel: FuelEntity, onDetails: () -> Unit, onDelete: () -> Unit) {
-    Surface(
-        shape = FieldShape,
-        color = MaterialTheme.colorScheme.surfaceContainerLowest,
-        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-        modifier = Modifier.fillMaxWidth().defaultMinSize(minHeight = AppDimens.rowMinHeight)
-            .clickable(onClick = onDetails),
-    ) {
-        Row(
-            Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Icon(Icons.Outlined.LocalGasStation, null, tint = MaterialTheme.colorScheme.secondary)
-            Column(Modifier.weight(1f).padding(horizontal = 12.dp)) {
-                Text(
-                    "${money(fuel.liters)} لیتر · ${FuelType.fromWire(fuel.type).label}",
-                    style = MaterialTheme.typography.titleMedium,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                Text(
-                    fuel.date,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    style = MaterialTheme.typography.bodySmall,
-                )
-            }
-            Text(
-                amount(fuel.total),
-                color = MaterialTheme.colorScheme.primary,
-                style = MaterialTheme.typography.titleMedium,
-                maxLines = 1,
-            )
-            IconButton(onClick = onDelete) {
-                Icon(Icons.Outlined.Delete, "حذف", tint = MaterialTheme.colorScheme.error)
-            }
-        }
     }
 }
 

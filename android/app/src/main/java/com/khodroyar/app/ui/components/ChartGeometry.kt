@@ -68,6 +68,21 @@ internal object ChartGeometry {
         return null
     }
 
+    /**
+     * X-axis labels that cannot overlap: a uniform stride counted back from the newest
+     * point, with room for 1.5 label widths per gap so the clamped edge labels never touch
+     * a neighbour. Works for any font scale because the caller passes measured widths.
+     */
+    fun fitLabels(count: Int, maxLabelWidth: Float, plotWidth: Float, gap: Float): Set<Int> {
+        if (count <= 0) return emptySet()
+        if (count == 1) return setOf(0)
+        val step = plotWidth / (count - 1)
+        if (!step.isFinite() || step <= 0f) return setOf(count - 1)
+        val need = (maxLabelWidth.coerceAtLeast(0f) * 1.5f + gap.coerceAtLeast(0f))
+        val stride = ceil(need / step).toInt().coerceIn(1, count)
+        return (count - 1 downTo 0 step stride).toSet()
+    }
+
     fun visibleLabels(count: Int, maxLabels: Int = 5): Set<Int> {
         if (count <= 0) return emptySet()
         if (count <= maxLabels) return (0 until count).toSet()

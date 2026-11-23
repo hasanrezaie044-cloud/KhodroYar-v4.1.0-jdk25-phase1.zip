@@ -1,6 +1,21 @@
 package com.khodroyar.app.ui.screens
 
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items as gridItems
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.font.FontWeight
+import com.khodroyar.app.core.records.DocumentCategory
+import com.khodroyar.app.core.records.DocumentStatus
+import com.khodroyar.app.core.records.RecordKey
+import com.khodroyar.app.core.records.RecordKind
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -39,7 +54,7 @@ fun InsuranceScreen(repository: AppRepository) {
     val insurance by repository.insurance.observeAll().collectAsState(initial = emptyList())
     var showForm by remember { mutableStateOf(false) }
     var editingId by remember { mutableStateOf<String?>(null) }
-    var pendingDelete by remember { mutableStateOf<InsuranceEntity?>(null) }
+    var details by remember { mutableStateOf<RecordKey?>(null) }
 
     if (showForm) {
         InsuranceForm(repository, editingId) { showForm = false; editingId = null }
@@ -79,55 +94,20 @@ fun InsuranceScreen(repository: AppRepository) {
                 Modifier.weight(1f),
             )
         } else {
-            LazyColumn(
-                Modifier.weight(1f),
+            // 5.9.0: booklet covers, most urgent first (expired, then soonest expiry, undated last).
+            val sorted = remember(insurance, today) {
+                insurance.sortedWith(compareBy<InsuranceEntity> { if (it.expiryDate.isBlank()) 1 else 0 }.thenBy { it.expiryDate })
+            }
+            val columns = if (LocalConfiguration.current.screenWidthDp < 340) 1 else 2
+            LazyVerticalGrid(
+                columns = GridCells.Fixed(columns),
+                modifier = Modifier.weight(1f).testTag("insurance-booklets"),
                 contentPadding = PaddingValues(AppDimens.screenPadding),
+                horizontalArrangement = Arrangement.spacedBy(AppDimens.gap),
                 verticalArrangement = Arrangement.spacedBy(AppDimens.gap),
             ) {
-                items(insurance, key = { it.id }) { item ->
-                    val isExpired = item.expiryDate.isNotBlank() && item.expiryDate < today
-                    Surface(
-                        onClick = { editingId = item.id; showForm = true },
-                        shape = FieldShape,
-                        color = MaterialTheme.colorScheme.surfaceContainerLowest,
-                        border = BorderStroke(
-                            1.dp,
-                            if (isExpired) MaterialTheme.colorScheme.error.copy(alpha = 0.5f)
-                            else MaterialTheme.colorScheme.outlineVariant,
-                        ),
-                        modifier = Modifier.fillMaxWidth().defaultMinSize(minHeight = AppDimens.rowMinHeight),
-                    ) {
-                        Row(Modifier.padding(horizontal = 12.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-                            Icon(
-                                Icons.Outlined.Shield, null,
-                                tint = if (isExpired) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.secondary,
-                            )
-                            Column(Modifier.weight(1f).padding(horizontal = 12.dp)) {
-                                Text(item.type, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                Text(
-                                    listOf(
-                                        if (item.expiryDate.isNotBlank()) (if (isExpired) "منقضی: " else "انقضا: ") + item.expiryDate else "",
-                                        item.company,
-                                    ).filter { it.isNotBlank() }.joinToString(" · "),
-                                    color = if (isExpired) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
-                                    style = MaterialTheme.typography.bodySmall,
-                                    maxLines = 2,
-                                    overflow = TextOverflow.Ellipsis,
-                                )
-                            }
-                            if (item.cost > 0) {
-                                Text(
-                                    amount(item.cost),
-                                    color = MaterialTheme.colorScheme.primary,
-                                    style = MaterialTheme.typography.titleMedium,
-                                    maxLines = 1,
-                                )
-                            }
-                            IconButton(onClick = { pendingDelete = item }) {
-                                Icon(Icons.Outlined.Delete, "حذف", tint = MaterialTheme.colorScheme.error)
-                            }
-                        }
-                    }
+                gridItems(sorted, key = { it.id }) { item ->
+                    DocumentBookletCover(item, today) { details = RecordKey(RecordKind.INSURANCE, item.id) }
                 }
             }
         }
@@ -144,21 +124,65 @@ fun InsuranceScreen(repository: AppRepository) {
         }
     }
 
-    pendingDelete?.let { item ->
-        ConfirmDialog(
-            title = "حذف رکورد",
-            message = "رکورد «${item.type}» حذف شود؟",
-            confirmLabel = "حذف",
-            destructive = true,
-            onConfirm = {
-                scope.launch {
-                    repository.insurance.deleteById(item.id)
-                    toast.show("رکورد حذف شد")
-                    pendingDelete = null
-                }
-            },
-            onDismiss = { pendingDelete = null },
+    details?.let { key ->
+        RecordDetailsPage(
+            repository = repository,
+            key = key,
+            onDismiss = { details = null },
+            onEdit = { details = null; editingId = key.id; showForm = true },
         )
+    }
+}
+
+/**
+ * A document as a passport-style booklet cover: binding spine, category, emblem, title,
+ * issuer, and an expiry band whose colour carries the status (expired = error colour).
+ */
+@Composable
+private fun DocumentBookletCover(item: InsuranceEntity, today: String, onOpen: () -> Unit) {
+    val status = remember(item.expiryDate, today) { DocumentStatus.of(item.expiryDate, today) }
+    val category = remember(item.type) { DocumentCategory.of(item.type) }
+    val tone = status.tone.color()
+    val expired = status.kind == DocumentStatus.Kind.EXPIRED
+    val cover = if (expired) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.secondaryContainer
+    val onCover = if (expired) MaterialTheme.colorScheme.onErrorContainer else MaterialTheme.colorScheme.onSecondaryContainer
+    Surface(
+        onClick = onOpen,
+        shape = RoundedCornerShape(topStart = 6.dp, bottomStart = 6.dp, topEnd = 18.dp, bottomEnd = 18.dp),
+        color = cover,
+        border = BorderStroke(if (expired) 1.5.dp else 1.dp, tone.copy(alpha = if (expired) 0.9f else 0.35f)),
+        modifier = Modifier.fillMaxWidth().testTag("insurance-booklet-${item.id}")
+            .semantics(mergeDescendants = true) { contentDescription = "${item.type}، ${category.label}، ${status.label}" },
+    ) {
+        Row(Modifier.height(IntrinsicSize.Min)) {
+            Box(Modifier.width(10.dp).fillMaxHeight().background(onCover.copy(alpha = 0.12f)))
+            Column(Modifier.weight(1f).padding(horizontal = 12.dp, vertical = 12.dp)) {
+                Text(category.label, style = MaterialTheme.typography.labelSmall, color = onCover.copy(alpha = 0.75f), maxLines = 1)
+                Spacer(Modifier.height(8.dp))
+                Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                    Surface(shape = CircleShape, color = onCover.copy(alpha = 0.08f), border = BorderStroke(1.dp, onCover.copy(alpha = 0.3f))) {
+                        Icon(if (category == DocumentCategory.INSURANCE) Icons.Outlined.Shield else Icons.Outlined.Description, null,
+                            Modifier.padding(10.dp).size(24.dp), tint = onCover)
+                    }
+                }
+                Spacer(Modifier.height(8.dp))
+                Text(item.type.ifBlank { "مدرک" }, style = MaterialTheme.typography.titleSmall, color = onCover, maxLines = 2,
+                    overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.Bold)
+                if (item.company.isNotBlank()) Text(item.company, style = MaterialTheme.typography.bodySmall, color = onCover.copy(alpha = 0.75f),
+                    maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Spacer(Modifier.height(10.dp))
+                // Expiry band: the most prominent line on the cover.
+                Surface(shape = RoundedCornerShape(10.dp), color = tone.copy(alpha = if (expired) 0.18f else 0.12f)) {
+                    Column(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp)) {
+                        Text(if (item.expiryDate.isBlank()) "بدون تاریخ انقضا" else "انقضا ${item.expiryDate}",
+                            style = MaterialTheme.typography.labelLarge, color = if (expired) MaterialTheme.colorScheme.error else onCover,
+                            fontWeight = FontWeight.Bold, maxLines = 1)
+                        Text(status.label, style = MaterialTheme.typography.labelSmall, color = tone, maxLines = 1,
+                            modifier = Modifier.testTag("insurance-status-${item.id}"))
+                    }
+                }
+            }
+        }
     }
 }
 

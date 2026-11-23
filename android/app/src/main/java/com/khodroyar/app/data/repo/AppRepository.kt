@@ -33,6 +33,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.runningFold
 
@@ -407,6 +408,7 @@ class AppRepository(context: Context) {
     // ------------------------------------------------------- fuels / upkeep
 
     fun fuels(): Flow<List<FuelEntity>> = db.fuels().observeAll()
+    fun recentFuels(limit: Int): Flow<List<FuelEntity>> = db.fuels().observeRecent(limit)
     fun fuels(prefix: String): Flow<List<FuelEntity>> = db.fuels().observeByDatePrefix(prefix)
     fun fuelCost(prefix: String): Flow<Double> = db.fuels().observeTotalCost(prefix)
     fun fuelLiters(prefix: String): Flow<Double> = db.fuels().observeTotalLiters(prefix)
@@ -514,7 +516,7 @@ class AppRepository(context: Context) {
         db.attachments().observeForRecord(recordType, recordId)
     suspend fun allAttachments(): List<RecordAttachmentEntity> = withContext(io) { db.attachments().allOnce() }
     suspend fun addAttachment(recordType: String, recordId: String, file: RecordAttachmentEntity) = withContext(io) {
-        require(recordType in setOf("service", "maintenance", "fuel", "expense", "loan"))
+        require(recordType in com.khodroyar.app.core.records.RecordKind.attachmentTypes)
         require(recordId.isNotBlank() && RecordAttachmentFiles.isOwned(appContext, file.filePath))
         db.attachments().insert(file.copy(recordType = recordType, recordId = recordId))
     }
@@ -614,6 +616,102 @@ class AppRepository(context: Context) {
         db.loanInstallments().clearForLoan(id)
         removeAttachmentsFor("loan", id)
     }
+
+    // ------------------------------------------------------- universal record details (5.9.0)
+
+    /**
+     * The one record behind a details page, re-read by its primary key whenever its table
+     * changes. Emits null once the row is gone (deleted here or elsewhere), so a page can
+     * never keep showing a stale copy or a different record.
+     */
+    fun recordDetail(key: com.khodroyar.app.core.records.RecordKey): Flow<com.khodroyar.app.core.records.RecordDetail?> {
+        val tables = when (key.kind) {
+            com.khodroyar.app.core.records.RecordKind.SERVICE -> arrayOf("services")
+            com.khodroyar.app.core.records.RecordKind.FUEL -> arrayOf("fuels")
+            com.khodroyar.app.core.records.RecordKind.MAINTENANCE -> arrayOf("maintenances")
+            com.khodroyar.app.core.records.RecordKind.EXPENSE -> arrayOf("personal_expenses")
+            com.khodroyar.app.core.records.RecordKind.INCOME -> arrayOf("personal_incomes")
+            com.khodroyar.app.core.records.RecordKind.LOAN, com.khodroyar.app.core.records.RecordKind.INSTALLMENT -> arrayOf("loans", "loan_installments")
+            com.khodroyar.app.core.records.RecordKind.INSURANCE -> arrayOf("insurance")
+        }
+        return db.invalidationTracker.createFlow(*tables, emitInitialState = true)
+            .map { loadRecordDetail(key) }
+            .flowOn(io)
+    }
+
+    suspend fun loadRecordDetail(key: com.khodroyar.app.core.records.RecordKey): com.khodroyar.app.core.records.RecordDetail? = withContext(io) {
+        val today = Jalali.todayString()
+        val d = com.khodroyar.app.core.records.RecordDetails
+        when (key.kind) {
+            com.khodroyar.app.core.records.RecordKind.SERVICE -> db.services().byId(key.id)?.let(d::service)
+            com.khodroyar.app.core.records.RecordKind.FUEL -> db.fuels().byId(key.id)?.let(d::fuel)
+            com.khodroyar.app.core.records.RecordKind.MAINTENANCE -> db.maintenances().byId(key.id)?.let(d::maintenance)
+            com.khodroyar.app.core.records.RecordKind.EXPENSE -> db.personalExpenses().byId(key.id)?.let(d::expense)
+            com.khodroyar.app.core.records.RecordKind.INCOME -> db.personalIncomes().byId(key.id)?.let(d::income)
+            com.khodroyar.app.core.records.RecordKind.LOAN -> db.loans().byId(key.id)?.let { d.loan(it, db.loanInstallments().forLoanOnce(it.id), today) }
+            com.khodroyar.app.core.records.RecordKind.INSTALLMENT -> db.loanInstallments().byId(key.id)?.let { d.installment(it, db.loans().byId(it.loanId), today) }
+            com.khodroyar.app.core.records.RecordKind.INSURANCE -> db.insurance().byId(key.id)?.let { d.insurance(it, today) }
+        }
+    }
+
+    /**
+     * Deletes exactly the record behind [key] through the module's own repository API, so
+     * dependent data (attachments, odometer, installment schedule) is handled the same way
+     * as everywhere else. Returns true only when a read-back confirms the row is gone
+     * (or, for an installment, reset to its scheduled values).
+     */
+    suspend fun deleteRecord(key: com.khodroyar.app.core.records.RecordKey): Boolean = withContext(io) {
+        when (key.kind) {
+            com.khodroyar.app.core.records.RecordKind.SERVICE -> deleteService(key.id)
+            com.khodroyar.app.core.records.RecordKind.FUEL -> deleteFuel(key.id)
+            com.khodroyar.app.core.records.RecordKind.MAINTENANCE -> deleteMaintenance(key.id)
+            com.khodroyar.app.core.records.RecordKind.EXPENSE -> deletePersonalExpense(key.id)
+            com.khodroyar.app.core.records.RecordKind.INCOME -> deletePersonalIncome(key.id)
+            com.khodroyar.app.core.records.RecordKind.LOAN -> deleteLoan(key.id)
+            com.khodroyar.app.core.records.RecordKind.INSTALLMENT -> return@withContext resetLoanInstallment(key.id)
+            com.khodroyar.app.core.records.RecordKind.INSURANCE -> deleteInsurance(key.id)
+        }
+        loadRecordDetail(key) == null
+    }
+
+    suspend fun deleteInsurance(id: String) = withContext(io) {
+        db.insurance().deleteById(id)
+        removeAttachmentsFor("insurance", id)
+    }
+
+    /**
+     * An installment is one row of a loan's generated schedule, so it cannot vanish on its
+     * own (the schedule would regenerate it). "Delete" therefore resets the row to the
+     * schedule: scheduled amount and due date, unpaid. The row keeps its number and loan.
+     */
+    suspend fun resetLoanInstallment(id: String): Boolean = withContext(io) {
+        val row = db.loanInstallments().byId(id) ?: return@withContext false
+        db.withTransaction {
+            val loan = db.loans().byId(row.loanId) ?: return@withTransaction
+            val paid = parseInstallments(loan.paidInstallments).toMutableSet().apply { remove(row.number) }
+            val cleaned = loan.copy(paidInstallments = paid.sorted().joinToString(","))
+            db.loans().update(cleaned)
+            db.loanInstallments().deleteById(id)
+            ensureLoanSchedule(cleaned)
+            // Keep the original id so open details pages and attachments stay bound to this row.
+            db.loanInstallments().forLoanOnce(row.loanId).firstOrNull { it.number == row.number }
+                ?.takeIf { it.id != id }?.let { fresh -> db.loanInstallments().insertAll(listOf(fresh.copy(id = id))) }
+        }
+        db.loanInstallments().byId(id)?.let { it.number == row.number && it.paidDate.isBlank() } == true
+    }
+
+    suspend fun insuranceById(id: String): InsuranceEntity? = withContext(io) { db.insurance().byId(id) }
+    suspend fun fuelById(id: String): FuelEntity? = withContext(io) { db.fuels().byId(id) }
+    suspend fun maintenanceById(id: String): MaintenanceEntity? = withContext(io) { db.maintenances().byId(id) }
+    suspend fun expenseById(id: String): PersonalExpenseEntity? = withContext(io) { db.personalExpenses().byId(id) }
+    suspend fun incomeById(id: String): PersonalIncomeEntity? = withContext(io) { db.personalIncomes().byId(id) }
+    suspend fun loanById(id: String): LoanEntity? = withContext(io) { db.loans().byId(id) }
+    suspend fun installmentById(id: String): LoanInstallmentEntity? = withContext(io) { db.loanInstallments().byId(id) }
+
+    // Month booklets: one aggregate row per month; month pages load with the existing prefix flows.
+    fun fuelMonths(year: Int): Flow<List<com.khodroyar.app.data.db.MonthAggregate>> = db.fuels().observeMonthly("$year/")
+    fun maintenanceMonths(year: Int): Flow<List<com.khodroyar.app.data.db.MonthAggregate>> = db.maintenances().observeMonthly("$year/")
+    fun expenseMonths(year: Int): Flow<List<com.khodroyar.app.data.db.MonthAggregate>> = db.personalExpenses().observeMonthly("$year/")
 
     // ------------------------------------------------- assistant (approved, verified writes)
 
@@ -752,7 +850,10 @@ class AppRepository(context: Context) {
             ))
         }
 
-    suspend fun deletePersonalIncome(id: String) = withContext(io) { db.personalIncomes().deleteById(id) }
+    suspend fun deletePersonalIncome(id: String) = withContext(io) {
+        db.personalIncomes().deleteById(id)
+        removeAttachmentsFor("income", id)
+    }
     suspend fun updatePersonalIncome(entity: com.khodroyar.app.data.db.PersonalIncomeEntity) = withContext(io) {
         db.personalIncomes().insert(entity)
     }

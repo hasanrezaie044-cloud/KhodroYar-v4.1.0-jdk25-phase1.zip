@@ -120,6 +120,11 @@ interface FuelDao {
     @Query("SELECT * FROM fuels WHERE date LIKE :prefix || '%' ORDER BY date")
     suspend fun byDatePrefixOnce(prefix: String): List<FuelEntity>
     @Query("SELECT * FROM fuels ORDER BY date") suspend fun allOnce(): List<FuelEntity>
+    @Query("SELECT * FROM fuels WHERE id = :id") suspend fun byId(id: String): FuelEntity?
+    @Query("SELECT * FROM fuels ORDER BY date DESC, timestamp DESC LIMIT :limit") fun observeRecent(limit: Int): Flow<List<FuelEntity>>
+    /** Month booklet overview: one aggregate row per Jalali month, never every record of the year. */
+    @Query("SELECT substr(date, 1, 7) AS month, COUNT(*) AS count, COALESCE(SUM(total), 0) AS total, COALESCE(SUM(liters), 0) AS liters FROM fuels WHERE date LIKE :yearPrefix || '%' GROUP BY substr(date, 1, 7) ORDER BY month")
+    fun observeMonthly(yearPrefix: String): Flow<List<MonthAggregate>>
     @Query("SELECT COALESCE(SUM(total),0) FROM fuels WHERE date LIKE :prefix || '%'")
     fun observeTotalCost(prefix: String): Flow<Double>
     @Query("SELECT COALESCE(SUM(liters),0) FROM fuels WHERE date LIKE :prefix || '%'")
@@ -139,6 +144,9 @@ interface MaintenanceDao {
     @Query("SELECT * FROM maintenances WHERE date LIKE :prefix || '%' ORDER BY date")
     suspend fun byDatePrefixOnce(prefix: String): List<MaintenanceEntity>
     @Query("SELECT * FROM maintenances ORDER BY date") suspend fun allOnce(): List<MaintenanceEntity>
+    @Query("SELECT * FROM maintenances WHERE id = :id") suspend fun byId(id: String): MaintenanceEntity?
+    @Query("SELECT substr(date, 1, 7) AS month, COUNT(*) AS count, COALESCE(SUM(cost), 0) AS total, 0.0 AS liters FROM maintenances WHERE date LIKE :yearPrefix || '%' GROUP BY substr(date, 1, 7) ORDER BY month")
+    fun observeMonthly(yearPrefix: String): Flow<List<MonthAggregate>>
     @Query("SELECT COALESCE(SUM(cost),0) FROM maintenances WHERE date LIKE :prefix || '%'")
     fun observeTotalCost(prefix: String): Flow<Double>
     @Query("SELECT * FROM maintenances WHERE type = :type ORDER BY km DESC LIMIT 1")
@@ -171,6 +179,8 @@ interface PersonalExpenseDao {
     @Query("SELECT COALESCE(SUM(amount),0) FROM personal_expenses WHERE date LIKE :prefix || '%'")
     fun observeTotal(prefix: String): Flow<Double>
     @Query("SELECT * FROM personal_expenses WHERE id = :id") suspend fun byId(id: String): PersonalExpenseEntity?
+    @Query("SELECT substr(date, 1, 7) AS month, COUNT(*) AS count, COALESCE(SUM(amount), 0) AS total, 0.0 AS liters FROM personal_expenses WHERE date LIKE :yearPrefix || '%' GROUP BY substr(date, 1, 7) ORDER BY month")
+    fun observeMonthly(yearPrefix: String): Flow<List<MonthAggregate>>
     @Insert(onConflict = OnConflictStrategy.IGNORE) suspend fun insertIfAbsent(item: PersonalExpenseEntity): Long
     @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun insert(item: PersonalExpenseEntity)
     @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun insertAll(items: List<PersonalExpenseEntity>)
@@ -293,6 +303,8 @@ interface LoanInstallmentDao {
     @Query("SELECT * FROM loan_installments WHERE loanId = :loanId ORDER BY number")
     suspend fun forLoanOnce(loanId: String): List<LoanInstallmentEntity>
     @Query("SELECT * FROM loan_installments ORDER BY loanId, number") suspend fun allOnce(): List<LoanInstallmentEntity>
+    @Query("SELECT * FROM loan_installments WHERE id = :id") suspend fun byId(id: String): LoanInstallmentEntity?
+    @Query("DELETE FROM loan_installments WHERE id = :id") suspend fun deleteById(id: String)
     @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun insert(item: LoanInstallmentEntity)
     @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun insertAll(items: List<LoanInstallmentEntity>)
     @Query("DELETE FROM loan_installments WHERE loanId = :loanId") suspend fun clearForLoan(loanId: String)

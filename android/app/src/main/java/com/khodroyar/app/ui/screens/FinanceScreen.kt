@@ -1,5 +1,8 @@
 package com.khodroyar.app.ui.screens
 
+import com.khodroyar.app.core.records.RecordKey
+import com.khodroyar.app.core.records.RecordKind
+import com.khodroyar.app.core.records.RecordDetails
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -22,6 +25,8 @@ import com.khodroyar.app.core.finance.LoanCalculator
 import com.khodroyar.app.core.finance.PersonalIncomeCategory
 import com.khodroyar.app.core.finance.PurchaseCategory
 import com.khodroyar.app.core.jalali.Jalali
+import com.khodroyar.app.core.finance.LoanChartLabels
+import androidx.compose.ui.platform.testTag
 import com.khodroyar.app.data.db.LoanEntity
 import com.khodroyar.app.data.db.ServiceTotals
 import com.khodroyar.app.data.repo.AppRepository
@@ -223,6 +228,7 @@ private fun LoansSection(repository: AppRepository) {
     var editing by remember { mutableStateOf<LoanEntity?>(null) }
     var pendingDelete by remember { mutableStateOf<LoanEntity?>(null) }
     var installmentEditing by remember { mutableStateOf<com.khodroyar.app.data.db.LoanInstallmentEntity?>(null) }
+    var details by remember { mutableStateOf<RecordKey?>(null) }
 
     val today = remember { Jalali.todayString() }
     val monthPrefix = remember(today) {
@@ -435,6 +441,8 @@ private fun LoansSection(repository: AppRepository) {
                         installments = savedInstallments,
                         onToggle = { index -> scope.launch { repository.toggleInstallment(loan.id, index) } },
                         onEditInstallment = { installmentEditing = it },
+                        onDetails = { details = RecordKey(RecordKind.LOAN, loan.id) },
+                        onInstallmentDetails = { details = RecordKey(RecordKind.INSTALLMENT, it.id) },
                         onEdit = { editing = loan; showForm = true },
                         onDelete = { pendingDelete = loan },
                     )
@@ -465,6 +473,22 @@ private fun LoansSection(repository: AppRepository) {
                 }
             },
             onDismiss = { pendingDelete = null },
+        )
+    }
+    details?.let { key ->
+        RecordDetailsPage(
+            repository = repository,
+            key = key,
+            onDismiss = { details = null },
+            onEdit = {
+                scope.launch {
+                    when (key.kind) {
+                        RecordKind.LOAN -> repository.loanById(key.id)?.let { details = null; editing = it; showForm = true }
+                        // The installment dialog opens above the details page, which refreshes after save.
+                        else -> repository.installmentById(key.id)?.let { installmentEditing = it }
+                    } ?: toast.show(tr("این رکورد دیگر وجود ندارد", "This record no longer exists"))
+                }
+            },
         )
     }
     installmentEditing?.let { row ->
@@ -499,6 +523,8 @@ private fun LoanCard(
     installments: List<com.khodroyar.app.data.db.LoanInstallmentEntity>,
     onToggle: (Int) -> Unit,
     onEditInstallment: (com.khodroyar.app.data.db.LoanInstallmentEntity) -> Unit,
+    onDetails: () -> Unit,
+    onInstallmentDetails: (com.khodroyar.app.data.db.LoanInstallmentEntity) -> Unit,
     onEdit: () -> Unit,
     onDelete: () -> Unit,
 ) {
@@ -545,8 +571,13 @@ private fun LoanCard(
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             style = MaterialTheme.typography.bodySmall,
         )
-        TextButton(onClick = { scheduleOpen = !scheduleOpen }) {
-            Text(if (scheduleOpen) "بستن جدول اقساط" else "نمایش جدول اقساط")
+        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            TextButton(onClick = { scheduleOpen = !scheduleOpen }) {
+                Text(if (scheduleOpen) "بستن جدول اقساط" else "نمایش جدول اقساط")
+            }
+            TextButton(onClick = onDetails, modifier = Modifier.testTag("loan-details-${loan.id}")) {
+                Icon(Icons.Outlined.Description, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text(tr("جزئیات کامل", "Full details"))
+            }
         }
         if (scheduleOpen) {
             val today = Jalali.todayString()
@@ -556,7 +587,10 @@ private fun LoanCard(
                     val overdue = !paid && installment.dueDate < today
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                         Checkbox(checked = paid, onCheckedChange = { onToggle(installment.number) })
-                        Column(Modifier.weight(1f)) {
+                        // Saved rows open their own details page; legacy (unsaved) rows have no id yet.
+                        val stored = !installment.id.startsWith("legacy-")
+                        Column(Modifier.weight(1f).then(if (stored) Modifier.clickable(onClickLabel = "جزئیات قسط") { onInstallmentDetails(installment) } else Modifier)
+                            .padding(vertical = 4.dp)) {
                             Text("قسط ${installment.number} · ${installment.dueDate}", style = MaterialTheme.typography.bodyMedium, maxLines = 1)
                             Text(when { paid -> "پرداخت‌شده · ${installment.paidDate}"; overdue -> "سررسید گذشته"; else -> "پرداخت‌نشده" },
                                 color = if (overdue) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
@@ -616,13 +650,10 @@ private fun LoanMonthlyChart(repository: AppRepository, loans: List<LoanEntity>)
         if (now == null) {
             emptyList()
         } else {
-            val anchor = Jalali.format(now.year, now.month, 1)
-            val currentPrefix = anchor.substring(0, 7)
+            val currentPrefix = Jalali.format(now.year, now.month, 1).substring(0, 7)
             val schedules = loans.map { loan -> loan to repository.loanSummary(loan).schedule }
-            (-3..8).map { offset ->
-                val monthDate = Jalali.addMonths(anchor, offset)
-                val prefix = monthDate.substring(0, 7)
-                val monthNumber = Jalali.parse(monthDate)?.month ?: 1
+            LoanChartLabels.window(today).map { prefix ->
+                val monthNumber = prefix.substringAfter('/').toIntOrNull() ?: 1
                 var due = 0.0
                 var count = 0
                 for ((_, schedule) in schedules) {
@@ -667,12 +698,17 @@ private fun LoanMonthlyChart(repository: AppRepository, loans: List<LoanEntity>)
             overflow = TextOverflow.Ellipsis,
         )
         Spacer(Modifier.height(AppDimens.gutter))
+        // Time always runs oldest→newest left to right (data order, never a mirrored RTL
+        // axis); captions are month names only and are thinned so they never overlap.
         SmoothLineChart(
             labels = points.map { "${it.label} ${it.prefix.take(4)}" },
+            axisLabels = points.map { LoanChartLabels.axis(it.prefix) },
             values = points.map { it.installmentAmount },
             markers = markers,
             masked = LocalPrivacyMode.current,
             valueText = { money(it) + " تومان" },
+            timelineDirection = androidx.compose.ui.unit.LayoutDirection.Ltr,
+            modifier = Modifier.testTag("loan-monthly-chart"),
         )
     }
 }
@@ -786,25 +822,11 @@ private fun PurchasesSection(
     val scope = rememberCoroutineScope()
     val toast = LocalToast.current
     var selectedYear by remember { mutableStateOf(year) }
-    var search by remember { mutableStateOf("") }
-    var sortMode by remember { mutableStateOf("date") }
     val yearPrefix = "$selectedYear/"
-    val expenses by repository.personalExpenses(yearPrefix).collectAsState(initial = emptyList())
     val total by repository.personalExpenseTotal(yearPrefix).collectAsState(initial = 0.0)
-    val visibleExpenses = remember(expenses, search, sortMode) {
-        val matching = expenses.filter { row -> search.isBlank() ||
-            listOf(row.title, row.category, row.date, row.notes, row.km.toString(), row.amount.toString())
-                .any { it.contains(search.trim(), ignoreCase = true) } }
-        when (sortMode) {
-            "km" -> matching.sortedByDescending { it.km }
-            "amount" -> matching.sortedByDescending { it.amount }
-            else -> matching.sortedByDescending { it.date }
-        }
-    }
     var showForm by remember { mutableStateOf(quickDate != null) }
     var editing by remember { mutableStateOf<com.khodroyar.app.data.db.PersonalExpenseEntity?>(null) }
-    var details by remember { mutableStateOf<com.khodroyar.app.data.db.PersonalExpenseEntity?>(null) }
-    var pendingDelete by remember { mutableStateOf<com.khodroyar.app.data.db.PersonalExpenseEntity?>(null) }
+    var details by remember { mutableStateOf<RecordKey?>(null) }
 
     if (showForm || editing != null) {
         val existing = editing
@@ -854,38 +876,37 @@ private fun PurchasesSection(
                 Text("سال $selectedYear", style = MaterialTheme.typography.titleMedium)
                 IconButton(onClick = { selectedYear += 1 }) { Icon(Icons.Outlined.ChevronLeft, "سال بعد") }
             }
-            if (expenses.isNotEmpty()) OutlinedTextField(search, { search = it }, modifier = Modifier.fillMaxWidth(), singleLine = true, label = { Text(tr("جست‌وجوی خرید (عنوان، دسته، یادداشت)", "Search purchases")) })
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                listOf("date" to "تاریخ", "km" to "کیلومتر", "amount" to "مبلغ").forEach { (key, label) ->
-                    FilterChip(modifier = Modifier.weight(1f), selected = sortMode == key, onClick = { sortMode = key }, label = { Text(label, maxLines = 1) })
-                }
-            }
         }
-        if (expenses.isEmpty()) {
-            EmptyState("خریدی ثبت نشده", "", Icons.Outlined.ShoppingBag, Modifier.weight(1f))
-        } else {
-            LazyColumn(
-                Modifier.weight(1f),
-                contentPadding = PaddingValues(AppDimens.screenPadding),
-                verticalArrangement = Arrangement.spacedBy(AppDimens.gap),
-            ) {
-                item {
-                    Collapsible(
-                        title = tr("هزینه‌های ثبت‌شده", "Recorded expenses"),
-                        summary = "${visibleExpenses.size} رکورد · ${amount(total)} تومان",
-                    ) {
-                        Column(verticalArrangement = Arrangement.spacedBy(AppDimens.gap)) {
-                            if (visibleExpenses.isEmpty()) Text(tr("موردی با این جست‌وجو پیدا نشد.", "No purchase matches this search."), color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            visibleExpenses.forEach { expense ->
-                                LedgerRow(
-                                    title = expense.title.ifBlank { PurchaseCategory.fromWire(expense.category).label },
-                                    subtitle = "${expense.date} · ${PurchaseCategory.fromWire(expense.category).label}" + if (expense.km > 0) " · ${expense.km.toLong()} کیلومتر" else "",
-                                    amountText = amount(expense.amount),
-                                    onClick = { details = expense },
-                                    onEdit = { details = null; editing = expense },
-                                    onDelete = { pendingDelete = expense },
-                                )
-                            }
+        // 5.9.0: month booklet; per-module search removed (global search still covers purchases).
+        LazyColumn(
+            Modifier.weight(1f),
+            contentPadding = PaddingValues(horizontal = AppDimens.screenPadding, vertical = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(AppDimens.gap),
+        ) {
+            item {
+                MonthBookBrowser(
+                    kind = RecordKind.EXPENSE,
+                    year = selectedYear,
+                    onYearChange = { selectedYear = it },
+                    months = repository::expenseMonths,
+                    totalLabel = tr("جمع خریدها", "Purchases"),
+                    tagPrefix = "purchases",
+                ) { prefix ->
+                    val monthRows by remember(prefix) { repository.personalExpenses(prefix) }.collectAsState(initial = null)
+                    val list = monthRows
+                    when {
+                        list == null -> LinearProgressIndicator(Modifier.fillMaxWidth())
+                        list.isEmpty() -> MonthEmpty(tr("در این ماه خریدی ثبت نشده است.", "No purchases this month."))
+                        else -> list.forEach { expense ->
+                            val category = PurchaseCategory.fromWire(expense.category).label
+                            RecordListRow(
+                                kind = RecordKind.EXPENSE,
+                                title = expense.title.ifBlank { category },
+                                subtitle = listOf(RecordDetails.weekdayDate(expense.date), category).joinToString(" · "),
+                                amountText = amount(expense.amount),
+                                onClick = { details = RecordKey(RecordKind.EXPENSE, expense.id) },
+                                modifier = Modifier.testTag("purchase-row-${expense.id}"),
+                            )
                         }
                     }
                 }
@@ -900,34 +921,18 @@ private fun PurchasesSection(
             shape = FieldShape,
         ) { Icon(Icons.Outlined.Add, null); Spacer(Modifier.width(8.dp)); Text(tr("ثبت خرید شخصی", "Add Personal Purchase")) }
     }
-    details?.let { expense ->
-        LedgerDetailDialog(
-            title = expense.title.ifBlank { PurchaseCategory.fromWire(expense.category).label },
-            date = expense.date,
-            category = PurchaseCategory.fromWire(expense.category).label,
-            value = expense.amount,
+    details?.let { key ->
+        RecordDetailsPage(
+            repository = repository,
+            key = key,
             onDismiss = { details = null },
-            onEdit = { details = null; editing = expense },
-            extra = {
-                if (expense.km > 0) InfoRow(tr("کیلومتر", "Odometer"), "${money(expense.km)} ${tr("کیلومتر", "km")}")
-                if (expense.notes.isNotBlank()) InfoRow(tr("یادداشت", "Notes"), expense.notes)
-                RecordAttachmentsPanel(repository, "expense", expense.id)
-            },
-        )
-    }
-    pendingDelete?.let { expense ->
-        ConfirmDialog(
-            title = tr("حذف خرید", "Delete purchase"),
-            message = "${expense.date} · ${expense.title.ifBlank { PurchaseCategory.fromWire(expense.category).label }} · ${amount(expense.amount)} تومان",
-            confirmLabel = tr("حذف", "Delete"), destructive = true,
-            onConfirm = {
+            onEdit = {
                 scope.launch {
-                    repository.deletePersonalExpense(expense.id)
-                    toast.show("خرید حذف شد")
-                    pendingDelete = null
+                    val row = repository.expenseById(key.id)
+                    if (row == null) toast.show(tr("این رکورد دیگر وجود ندارد", "This record no longer exists"))
+                    else { details = null; editing = row }
                 }
             },
-            onDismiss = { pendingDelete = null },
         )
     }
 }
@@ -942,7 +947,7 @@ private fun IncomesSection(repository: AppRepository, year: Int) {
     val total by repository.personalIncomeTotal(yearPrefix).collectAsState(initial = 0.0)
     var showForm by remember { mutableStateOf(false) }
     var editing by remember { mutableStateOf<com.khodroyar.app.data.db.PersonalIncomeEntity?>(null) }
-    var details by remember { mutableStateOf<com.khodroyar.app.data.db.PersonalIncomeEntity?>(null) }
+    var details by remember { mutableStateOf<RecordKey?>(null) }
     var pendingDelete by remember { mutableStateOf<com.khodroyar.app.data.db.PersonalIncomeEntity?>(null) }
 
     if (showForm || editing != null) {
@@ -1006,7 +1011,7 @@ private fun IncomesSection(repository: AppRepository, year: Int) {
                                     title = income.title.ifBlank { PersonalIncomeCategory.fromWire(income.category).label },
                                     subtitle = "${income.date} · ${PersonalIncomeCategory.fromWire(income.category).label}",
                                     amountText = amount(income.amount),
-                                    onClick = { details = income },
+                                    onClick = { details = RecordKey(RecordKind.INCOME, income.id) },
                                     onEdit = { details = null; editing = income },
                                     onDelete = { pendingDelete = income },
                                 )
@@ -1025,14 +1030,18 @@ private fun IncomesSection(repository: AppRepository, year: Int) {
             shape = FieldShape,
         ) { Icon(Icons.Outlined.Add, null); Spacer(Modifier.width(8.dp)); Text(tr("ثبت درآمد شخصی", "Add Personal Income")) }
     }
-    details?.let { income ->
-        LedgerDetailDialog(
-            title = income.title.ifBlank { PersonalIncomeCategory.fromWire(income.category).label },
-            date = income.date,
-            category = PersonalIncomeCategory.fromWire(income.category).label,
-            value = income.amount,
+    details?.let { key ->
+        RecordDetailsPage(
+            repository = repository,
+            key = key,
             onDismiss = { details = null },
-            onEdit = { details = null; editing = income },
+            onEdit = {
+                scope.launch {
+                    val row = repository.incomeById(key.id)
+                    if (row == null) toast.show(tr("این رکورد دیگر وجود ندارد", "This record no longer exists"))
+                    else { details = null; editing = row }
+                }
+            },
         )
     }
     pendingDelete?.let { income ->
@@ -1050,34 +1059,6 @@ private fun IncomesSection(repository: AppRepository, year: Int) {
             onDismiss = { pendingDelete = null },
         )
     }
-}
-
-@Composable
-private fun LedgerDetailDialog(
-    title: String,
-    date: String,
-    category: String,
-    value: Double,
-    onDismiss: () -> Unit,
-    onEdit: () -> Unit,
-    extra: @Composable () -> Unit = {},
-) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("جزئیات رکورد") },
-        text = {
-            Column(Modifier.verticalScroll(rememberScrollState())) {
-                Text(title, style = MaterialTheme.typography.titleMedium)
-                Spacer(Modifier.height(8.dp))
-                InfoRow("تاریخ", date)
-                InfoRow("دسته‌بندی", category)
-                InfoRow("مبلغ", "${amount(value)} تومان", emphasis = true, valueColor = MaterialTheme.colorScheme.primary)
-                extra()
-            }
-        },
-        confirmButton = { TextButton(onClick = onEdit) { Text("ویرایش") } },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("بستن") } },
-    )
 }
 
 @Composable

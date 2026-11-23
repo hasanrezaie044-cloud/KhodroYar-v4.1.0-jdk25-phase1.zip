@@ -1,5 +1,8 @@
 package com.khodroyar.app.ui.screens
 
+import com.khodroyar.app.core.records.RecordKey
+import com.khodroyar.app.core.records.RecordKind
+import com.khodroyar.app.core.records.RecordDetails
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -45,7 +48,6 @@ fun MaintenanceScreen(
     val toast = LocalToast.current
     val year = remember { Jalali.currentYear() }
     val records by repository.maintenances().collectAsState(initial = emptyList())
-    val cost by repository.maintenanceCost("$year/").collectAsState(initial = 0.0)
     val settings by repository.settings.collectAsState(initial = repository.settingsNow)
     val ratesByYear by repository.ratesByYear.collectAsState(initial = RatesByYear.empty())
     val serviceRevision by remember { repository.maintenanceInputsChanged() }.collectAsState(initial = 0)
@@ -81,28 +83,15 @@ fun MaintenanceScreen(
     }
 
     var selectedYear by remember { mutableStateOf(year) }
-    var search by remember { mutableStateOf("") }
-    var sortMode by remember { mutableStateOf("date") }
-    val yearPrefix = "$selectedYear/"
-    val yearRecords = remember(records, yearPrefix, search, sortMode) {
-        val matching = records.filter { it.date.startsWith(yearPrefix) &&
-            (search.isBlank() || listOf(it.typeText, it.description, it.replacementParts, it.notes, it.date, it.km.toString(), it.cost.toString())
-                .any { value -> value.contains(search.trim(), ignoreCase = true) }) }
-        when (sortMode) {
-            "km" -> matching.sortedByDescending { it.km }
-            "cost" -> matching.sortedByDescending { it.cost }
-            else -> matching.sortedByDescending { it.date }
-        }
-    }
-    val yearCost = remember(yearRecords) { yearRecords.sumOf { it.cost } }
+    // 5.9.0: no per-module search; history is a month booklet (global search still finds records).
+    val yearCost by remember(selectedYear) { repository.maintenanceCost("$selectedYear/") }.collectAsState(initial = 0.0)
 
     val today = remember { Jalali.todayString() }
     val pace by remember(today) { repository.drivingPace(today) }.collectAsState(initial = null)
     var recordingType by remember { mutableStateOf<MaintenanceType?>(null) }
     var showForm by remember { mutableStateOf(quickDate != null) }
     var editing by remember { mutableStateOf<MaintenanceEntity?>(null) }
-    var details by remember { mutableStateOf<MaintenanceEntity?>(null) }
-    var pendingDelete by remember { mutableStateOf<MaintenanceEntity?>(null) }
+    var details by remember { mutableStateOf<RecordKey?>(null) }
     var editingTracked by remember { mutableStateOf<MaintenanceType?>(null) }
 
     if (showForm) {
@@ -194,41 +183,31 @@ fun MaintenanceScreen(
                 }
             }
             item {
-                OutlinedTextField(
-                    value = search, onValueChange = { search = it },
-                    modifier = Modifier.fillMaxWidth(), singleLine = true,
-                    label = { Text("جست‌وجوی نوع، توضیح، قطعه یا مقدار") },
-                )
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    listOf("date" to "تاریخ", "km" to "کیلومتر", "cost" to "هزینه").forEach { (key, label) ->
-                        FilterChip(modifier = Modifier.weight(1f), selected = sortMode == key, onClick = { sortMode = key }, label = { Text(label, maxLines = 1) })
-                    }
-                }
-            }
-            if (yearRecords.isEmpty()) {
-                item {
-                    EmptyState(
-                        "سابقه‌ای در سال $selectedYear نیست",
-                        "",
-                        Icons.Outlined.Build,
-                    )
-                }
-            } else {
-                item {
-                    Collapsible(
-                        title = tr("سوابق تعمیرات", "Maintenance records"),
-                        summary = "${yearRecords.size} رکورد · ${amount(yearCost)} تومان",
-                        initiallyExpanded = true,
-                    ) {
-                        Column(verticalArrangement = Arrangement.spacedBy(AppDimens.gap)) {
-                            yearRecords.forEach { item ->
-                                MaintenanceRow(
-                                    item,
-                                    onDetails = { details = item },
-                                    onEdit = { editing = item },
-                                    onDelete = { pendingDelete = item },
-                                )
-                            }
+                MonthBookBrowser(
+                    kind = RecordKind.MAINTENANCE,
+                    year = selectedYear,
+                    onYearChange = { selectedYear = it },
+                    months = repository::maintenanceMonths,
+                    totalLabel = tr("هزینهٔ تعمیرات", "Maintenance cost"),
+                    tagPrefix = "maintenance",
+                ) { prefix ->
+                    val monthRecords by remember(prefix) { repository.maintenances(prefix) }.collectAsState(initial = null)
+                    val list = monthRecords
+                    when {
+                        list == null -> LinearProgressIndicator(Modifier.fillMaxWidth())
+                        list.isEmpty() -> MonthEmpty(tr("در این ماه تعمیری ثبت نشده است.", "No maintenance this month."))
+                        else -> list.forEach { item ->
+                            RecordListRow(
+                                kind = RecordKind.MAINTENANCE,
+                                title = MaintenanceType.fromWire(item.type).label.let {
+                                    if (item.typeText.isNotBlank() && item.type == MaintenanceType.OTHER.wire) item.typeText else it
+                                },
+                                subtitle = listOf(RecordDetails.weekdayDate(item.date), if (item.km > 0) "کیلومتر ${money(item.km)}" else "")
+                                    .filter { it.isNotBlank() }.joinToString(" · "),
+                                amountText = amount(item.cost),
+                                onClick = { details = RecordKey(RecordKind.MAINTENANCE, item.id) },
+                                modifier = Modifier.testTag("maintenance-row-${item.id}"),
+                            )
                         }
                     }
                 }
@@ -253,21 +232,18 @@ fun MaintenanceScreen(
         }
     }
 
-    details?.let { item ->
-        MaintenanceDetailDialog(
-            item = item,
+    details?.let { key ->
+        RecordDetailsPage(
             repository = repository,
+            key = key,
             onDismiss = { details = null },
-            onEdit = { details = null; editing = item },
-            onDelete = { details = null; pendingDelete = item },
-        )
-    }
-
-    pendingDelete?.let { item ->
-        ConfirmDialog(
-            title = "حذف سابقه تعمیر", message = "رکورد ${item.date} حذف شود؟", confirmLabel = "حذف", destructive = true,
-            onConfirm = { scope.launch { repository.deleteMaintenance(item.id); toast.show("سابقه تعمیر حذف شد"); pendingDelete = null } },
-            onDismiss = { pendingDelete = null },
+            onEdit = {
+                scope.launch {
+                    val row = repository.maintenanceById(key.id)
+                    if (row == null) toast.show(tr("این رکورد دیگر وجود ندارد", "This record no longer exists"))
+                    else { details = null; editing = row }
+                }
+            },
         )
     }
 
@@ -295,46 +271,6 @@ fun MaintenanceScreen(
                 TextButton(onClick = { editingVehicleKm = false }) { Text("انصراف") }
             },
         )
-    }
-}
-
-@Composable
-private fun MaintenanceRow(item: MaintenanceEntity, onDetails: () -> Unit, onEdit: () -> Unit = {}, onDelete: () -> Unit) {
-    Surface(
-        shape = FieldShape,
-        color = MaterialTheme.colorScheme.surfaceContainerLowest,
-        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-        modifier = Modifier.fillMaxWidth().defaultMinSize(minHeight = AppDimens.rowMinHeight)
-            .clickable(onClick = onDetails).testTag("maintenance-row-${item.id}"),
-    ) {
-        Row(Modifier.padding(horizontal = 12.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-            Icon(
-                if (item.type == MaintenanceType.OIL_CHANGE.wire) Icons.Outlined.OilBarrel else Icons.Outlined.Build,
-                null,
-                tint = MaterialTheme.colorScheme.secondary,
-            )
-            Column(Modifier.weight(1f).padding(horizontal = 12.dp)) {
-                Text(
-                    MaintenanceType.fromWire(item.type).label.let {
-                        if (item.typeText.isNotBlank() && item.type == MaintenanceType.OTHER.wire) item.typeText else it
-                    },
-                    style = MaterialTheme.typography.titleMedium,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                Text(
-                    listOf(item.date, if (item.km > 0) "کیلومتر ${money(item.km)}" else "", item.description)
-                        .filter { it.isNotBlank() }.joinToString(" · "),
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    style = MaterialTheme.typography.bodySmall,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
-            Text(amount(item.cost), color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.titleMedium, maxLines = 1)
-            IconButton(onClick = onEdit) { Icon(Icons.Outlined.Edit, "ویرایش") }
-            IconButton(onClick = onDelete) { Icon(Icons.Outlined.Delete, "حذف", tint = MaterialTheme.colorScheme.error) }
-        }
     }
 }
 

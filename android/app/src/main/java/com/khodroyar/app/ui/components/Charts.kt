@@ -37,6 +37,7 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.customActions
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.font.FontWeight
@@ -84,9 +85,11 @@ fun TrendBarChart(
     points: List<Analytics.TrendPoint>, metric: TrendMetric, modifier: Modifier = Modifier,
     barHeight: Dp = 190.dp, masked: Boolean = false,
     timelineDirection: LayoutDirection = LocalLayoutDirection.current, showPointSelector: Boolean = true,
+    goalValue: Double? = null, goalLabel: String? = null,
 ) = SeriesChart(points.map { it.label }, points.map { it.metricValue(metric) }, modifier, barHeight,
-    MaterialTheme.colorScheme.primary, MaterialTheme.colorScheme.secondary, emptySet(), masked, null,
-    { formatMetric(it, metric) + " " + metric.unit }, bars = true, timelineDirection = timelineDirection, showPointSelector = showPointSelector)
+    MaterialTheme.colorScheme.primary, MaterialTheme.colorScheme.secondary, emptySet(), masked, goalValue,
+    { formatMetric(it, metric) + " " + metric.unit }, bars = true, timelineDirection = timelineDirection, showPointSelector = showPointSelector,
+    seriesLabel = if (goalValue != null) metric.label else null, goalLabel = goalLabel)
 
 /** Smooth segments have horizontal controls inside each interval: they cannot invent peaks/negative dips. */
 @Composable
@@ -96,8 +99,10 @@ fun SmoothLineChart(
     markers: Set<Int> = emptySet(), masked: Boolean = false, goalValue: Double? = null,
     valueText: (Double) -> String = { Analytics.formatNumber(it) },
     timelineDirection: LayoutDirection = LocalLayoutDirection.current, showPointSelector: Boolean = true,
+    axisLabels: List<String>? = null, seriesLabel: String? = null, goalLabel: String? = null,
 ) = SeriesChart(labels, values, modifier, height, lineColor, markerColor, markers, masked, goalValue, valueText,
-    timelineDirection = timelineDirection, showPointSelector = showPointSelector)
+    timelineDirection = timelineDirection, showPointSelector = showPointSelector,
+    axisLabels = axisLabels, seriesLabel = seriesLabel, goalLabel = goalLabel)
 
 @Composable
 private fun SeriesChart(
@@ -105,6 +110,10 @@ private fun SeriesChart(
     lineColor: Color, markerColor: Color, markers: Set<Int>, masked: Boolean, goalValue: Double?,
     valueText: (Double) -> String, bars: Boolean = false,
     timelineDirection: LayoutDirection, showPointSelector: Boolean,
+    /** Short x-axis captions (e.g. month names); [labels] stay the full names shown on selection. */
+    axisLabels: List<String>? = null,
+    seriesLabel: String? = null,
+    goalLabel: String? = null,
 ) {
     if (masked) {
         InsufficientData(tr("نمودار مالی در حالت حریم خصوصی پنهان است", "Financial chart hidden in privacy mode"), modifier)
@@ -140,7 +149,7 @@ private fun SeriesChart(
     val axisGutter = with(LocalDensity.current) { (axisLabels.maxOf { it.size.width }).toDp() + 12.dp }.coerceIn(40.dp, 96.dp)
     val reveal = remember { Animatable(0f) }
     LaunchedEffect(data) { reveal.snapTo(0f); reveal.animateTo(1f, tween(360)) }
-    val visibleLabels = remember(data.size) { ChartGeometry.visibleLabels(data.size) }
+    val xLabels = axisLabels?.takeIf { it.size == data.size } ?: labels
 
     Column(modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         // Reserved space avoids a layout jump when a user changes selection.
@@ -240,16 +249,25 @@ private fun SeriesChart(
                     }
                 }
             }
-            visibleLabels.forEach { i ->
-                val text = measurer.measure(labels.getOrElse(i) { "${i + 1}" }, axisStyle,
+            // Measured, never-overlapping captions; the selected point's caption is always shown.
+            val captions = data.indices.map { i ->
+                measurer.measure(xLabels.getOrElse(i) { "${i + 1}" }, axisStyle,
                     maxLines = 1, overflow = TextOverflow.Ellipsis,
                     constraints = androidx.compose.ui.unit.Constraints(maxWidth = (plotW / 4).toInt().coerceAtLeast(1)))
+            }
+            val fitted = ChartGeometry.fitLabels(data.size, captions.maxOf { it.size.width }.toFloat(),
+                (plotW - 2 * barInset).coerceAtLeast(1f), 6.dp.toPx())
+            fitted.forEach { i ->
+                val text = captions[i]
                 drawText(text, color = if (i == index) lineColor else muted,
                     topLeft = Offset((px(i) - text.size.width / 2).coerceIn(left, (right - text.size.width).coerceAtLeast(left)), bottom + 9.dp.toPx()))
             }
         }
-        if (goalValue != null && goalValue > 0 && goalValue.isFinite()) Text("$goalText · ${valueText(goalValue)}",
-            style = MaterialTheme.typography.labelSmall, color = goalColor)
+        val showGoal = goalValue != null && goalValue > 0 && goalValue.isFinite()
+        if (showGoal || seriesLabel != null) ChartLegend(
+            seriesLabel = seriesLabel, seriesColor = lineColor, bars = bars,
+            goalText = if (showGoal) "${goalLabel ?: goalText} · ${valueText(goalValue!!)}" else null, goalColor = goalColor,
+        )
         if (markers.isNotEmpty()) Text(markerText, style = MaterialTheme.typography.labelSmall, color = markerColor)
         // Home uses touch + previous/next accessibility actions instead of a second row
         // of duplicate labels. Other charts can retain explicit >=48dp point targets.
@@ -279,9 +297,11 @@ fun TrendLineChart(
     points: List<Analytics.TrendPoint>, metric: TrendMetric, modifier: Modifier = Modifier,
     masked: Boolean = false, goalValue: Double? = null, height: Dp = 220.dp,
     timelineDirection: LayoutDirection = LocalLayoutDirection.current, showPointSelector: Boolean = true,
+    goalLabel: String? = null,
 ) = SmoothLineChart(labels = points.map { it.label }, values = points.map { it.metricValue(metric) }, modifier = modifier,
     height = height, masked = masked, goalValue = goalValue, valueText = { formatMetric(it, metric) + " " + metric.unit },
-    timelineDirection = timelineDirection, showPointSelector = showPointSelector)
+    timelineDirection = timelineDirection, showPointSelector = showPointSelector,
+    seriesLabel = if (goalValue != null) metric.label else null, goalLabel = goalLabel)
 
 data class DonutSlice(val id: String, val label: String, val value: Double, val color: Color)
 
@@ -368,3 +388,31 @@ fun InteractiveDonutChart(
 }
 
 private fun percentage(share: Double): String = String.format(Locale.ROOT, "%.1f", share * 100).removeSuffix(".0")
+
+/** Static legend: solid swatch for the series, dashed swatch for a target line. */
+@Composable
+private fun ChartLegend(seriesLabel: String?, seriesColor: Color, bars: Boolean, goalText: String?, goalColor: Color) {
+    Row(Modifier.fillMaxWidth().semantics(mergeDescendants = true) {}, verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+        seriesLabel?.let {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Canvas(Modifier.size(width = 18.dp, height = 10.dp)) {
+                    if (bars) drawRoundRect(seriesColor, size = Size(size.width, size.height), cornerRadius = CornerRadius(3.dp.toPx()))
+                    else drawLine(seriesColor, Offset(0f, size.height / 2), Offset(size.width, size.height / 2), 3.dp.toPx(), StrokeCap.Round)
+                }
+                Spacer(Modifier.width(6.dp))
+                Text(it, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
+            }
+        }
+        goalText?.let {
+            Row(Modifier.weight(1f, fill = false).testTag("chart-goal-legend"), verticalAlignment = Alignment.CenterVertically) {
+                Canvas(Modifier.size(width = 22.dp, height = 10.dp)) {
+                    drawLine(goalColor, Offset(0f, size.height / 2), Offset(size.width, size.height / 2), 1.5.dp.toPx(),
+                        pathEffect = PathEffect.dashPathEffect(floatArrayOf(5.dp.toPx(), 3.dp.toPx())))
+                }
+                Spacer(Modifier.width(6.dp))
+                Text(it, style = MaterialTheme.typography.labelSmall, color = goalColor, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+        }
+    }
+}

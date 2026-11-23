@@ -12,6 +12,10 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -125,49 +129,38 @@ fun CalendarScreen(
         verticalArrangement = Arrangement.spacedBy(AppDimens.sectionSpacing),
     ) {
         /* --------------------------------------------- compact month summary */
+        // 5.9.0: one slim strip. Each metric is an icon + value; the label lives in the
+        // accessibility description so the strip stays a single line on small phones.
         item {
-            SurfaceCard {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(
-                        Icons.Outlined.Insights, null,
-                        tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(18.dp),
-                    )
-                    Spacer(Modifier.width(8.dp))
-                    Text(
-                        "خلاصه کارکرد ${Jalali.monthName(viewMonth)} $viewYear",
-                        Modifier.weight(1f),
-                        style = MaterialTheme.typography.titleMedium,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
-                Spacer(Modifier.height(AppDimens.gutter))
-                Row(
-                    Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(AppDimens.gap),
-                ) {
-                    MetricCard(
-                        "کیلومتر ماه", money(monthKm), Icons.Outlined.Speed,
-                        Modifier.weight(1f), compact = true,
-                    )
-                    MetricCard(
-                        "ساعت ماه", Analytics.formatHours(monthHours), Icons.Outlined.Schedule,
-                        Modifier.weight(1f), compact = true,
-                    )
-                    MetricCard(
-                        "تعداد سرویس", monthServices.size.toString(), Icons.Outlined.Route,
-                        Modifier.weight(1f), compact = true,
-                    )
-                }
-                if (monthIncome > 0) {
-                    Spacer(Modifier.height(AppDimens.gap))
-                    InfoRow(
-                        "درآمد این ماه",
-                        "${amount(monthIncome)} تومان",
-                        emphasis = true,
-                        valueColor = MaterialTheme.colorScheme.primary,
-                    )
+            Surface(
+                shape = FieldShape,
+                color = MaterialTheme.colorScheme.surfaceContainerLow,
+                modifier = Modifier.fillMaxWidth().testTag("calendar-month-summary"),
+            ) {
+                Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            "${Jalali.monthName(viewMonth)} $viewYear",
+                            Modifier.weight(1f),
+                            style = MaterialTheme.typography.labelLarge,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        if (monthIncome > 0) Text(
+                            "${amount(monthIncome)} تومان",
+                            style = MaterialTheme.typography.labelLarge,
+                            color = MaterialTheme.colorScheme.primary,
+                            maxLines = 1,
+                            modifier = Modifier.semantics { contentDescription = "درآمد این ماه: ${amount(monthIncome)} تومان" },
+                        )
+                    }
+                    Spacer(Modifier.height(6.dp))
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        SummaryIconChip(Icons.Outlined.Speed, money(monthKm), "کیلومتر ماه", Modifier.weight(1f), "calendar-km")
+                        SummaryIconChip(Icons.Outlined.Schedule, Analytics.formatHours(monthHours), "ساعت ماه", Modifier.weight(1f), "calendar-hours")
+                        SummaryIconChip(Icons.Outlined.Route, money(monthServices.size), "تعداد سرویس", Modifier.weight(1f), "calendar-count")
+                    }
                 }
             }
         }
@@ -652,6 +645,23 @@ private fun QuickActionButton(
                 textAlign = androidx.compose.ui.text.style.TextAlign.Center,
                 maxLines = 2,
             )
+        }
+    }
+}
+
+/** Icon-only metric chip: compact visually, fully labelled for TalkBack. */
+@Composable
+private fun SummaryIconChip(icon: androidx.compose.ui.graphics.vector.ImageVector, value: String, label: String, modifier: Modifier, tag: String) {
+    Surface(
+        shape = RoundedCornerShape(12.dp),
+        color = MaterialTheme.colorScheme.surfaceContainerLowest,
+        modifier = modifier.heightIn(min = 36.dp).testTag(tag).semantics(mergeDescendants = true) { contentDescription = "$label: $value" },
+    ) {
+        Row(Modifier.padding(horizontal = 8.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.Center) {
+            Icon(icon, null, Modifier.size(16.dp), tint = MaterialTheme.colorScheme.primary)
+            Spacer(Modifier.width(6.dp))
+            Text(value, style = MaterialTheme.typography.labelLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
     }
 }

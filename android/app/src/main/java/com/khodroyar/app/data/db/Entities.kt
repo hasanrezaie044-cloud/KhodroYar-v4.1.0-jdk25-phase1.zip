@@ -182,3 +182,6 @@ data class LoanInstallmentEntity(
     val paidDate: String = "",
     val notes: String = "",
 )
+
+/** One Jalali month ("YYYY/MM") of a history table; liters is 0 for tables without volume. */
+data class MonthAggregate(val month: String, val count: Int, val total: Double, val liters: Double)

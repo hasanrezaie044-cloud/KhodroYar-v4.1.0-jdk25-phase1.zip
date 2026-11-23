@@ -28,13 +28,13 @@ import kotlinx.coroutines.launch
  * duplicate personnel record.
  */
 @Composable
-fun PersonnelDetailScreen(repository: AppRepository, personnelId: String) {
+fun PersonnelDetailScreen(repository: AppRepository, personnelId: String, startEditing: Boolean = false) {
     val scope = rememberCoroutineScope()
     val toast = LocalToast.current
     val people by repository.personnel().collectAsState(initial = emptyList())
     val person = remember(people, personnelId) { people.firstOrNull { it.id == personnelId } }
 
-    var editing by remember { mutableStateOf(false) }
+    var editing by remember(personnelId) { mutableStateOf(startEditing) }
     var name by remember(person?.id) { mutableStateOf(person?.name ?: "") }
     var code by remember(person?.id) { mutableStateOf(person?.personnelCode ?: "") }
     var costCenter by remember(person?.id) { mutableStateOf(person?.costCenter ?: "") }
@@ -58,35 +58,7 @@ fun PersonnelDetailScreen(repository: AppRepository, personnelId: String) {
             .padding(top = AppDimens.gutter, bottom = 32.dp),
         verticalArrangement = Arrangement.spacedBy(AppDimens.sectionSpacing),
     ) {
-        GradientCard(brush = heroBrush()) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Surface(
-                    shape = MaterialTheme.shapes.medium,
-                    color = Color.White.copy(alpha = 0.18f),
-                ) {
-                    Icon(
-                        Icons.Outlined.Badge, null,
-                        tint = Color.White,
-                        modifier = Modifier.padding(12.dp).size(26.dp),
-                    )
-                }
-                Column(Modifier.weight(1f).padding(horizontal = 12.dp)) {
-                    Text(
-                        person.name.ifBlank { "بدون نام" },
-                        color = Color.White,
-                        style = MaterialTheme.typography.titleLarge,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                    Text(
-                        person.personnelCode.ifBlank { "کد پرسنلی ثبت نشده" },
-                        color = Color.White.copy(alpha = 0.82f),
-                        style = MaterialTheme.typography.bodyMedium,
-                        maxLines = 1,
-                    )
-                }
-            }
-        }
+        PersonnelBookletCard(person, Modifier.fillMaxWidth(), onEdit = if (editing) null else ({ editing = true }))
 
         FormSection("اطلاعات ثبت‌شده", Icons.Outlined.ContactPage) {
             InfoRow("نام و نام خانوادگی", person.name.ifBlank { "—" })

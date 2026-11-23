@@ -291,6 +291,7 @@ fun CarManagerRoot(
                             is Overlay.PersonnelDetail -> PersonnelDetailScreen(
                                 repository = repository,
                                 personnelId = target.person.id,
+                                startEditing = target.edit,
                             )
                             is Overlay.Search -> SearchScreen(
                                 repository = repository,
@@ -347,6 +348,7 @@ fun CarManagerRoot(
                                 onOpenReports = { destination = AppDestination.REPORTS; tool = null },
                                 onOpenCalendar = { destination = AppDestination.CALENDAR; tool = null },
                                 onOpenPersonnel = { person -> overlay = Overlay.PersonnelDetail(person) },
+                                onEditPersonnel = { person -> overlay = Overlay.PersonnelDetail(person, edit = true) },
                                 onTogglePrivacy = {
                                     repository.updateSettings { it.copy(privacyMode = !it.privacyMode) }
                                 },
@@ -376,6 +378,7 @@ fun CarManagerRoot(
                                 onOpenReports = { destination = AppDestination.REPORTS },
                                 onOpenCalendar = { destination = AppDestination.CALENDAR },
                                 onOpenPersonnel = { person -> overlay = Overlay.PersonnelDetail(person) },
+                                onEditPersonnel = { person -> overlay = Overlay.PersonnelDetail(person, edit = true) },
                                 onTogglePrivacy = {
                                     repository.updateSettings { it.copy(privacyMode = !it.privacyMode) }
                                 },
@@ -465,7 +468,7 @@ sealed interface Overlay {
         override val title: String get() = "ثبت سرویس $date"
     }
 
-    data class PersonnelDetail(val person: PersonnelEntity) : Overlay {
+    data class PersonnelDetail(val person: PersonnelEntity, val edit: Boolean = false) : Overlay {
         override val title: String get() = "اطلاعات پرسنلی"
     }
 

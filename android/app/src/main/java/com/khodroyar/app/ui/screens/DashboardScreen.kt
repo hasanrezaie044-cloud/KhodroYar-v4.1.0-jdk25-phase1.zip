@@ -19,11 +19,11 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.LayoutDirection
 import com.khodroyar.app.core.analytics.Analytics
 import com.khodroyar.app.core.analytics.DailyTrends
+import com.khodroyar.app.core.analytics.HomeGoalLine
 import com.khodroyar.app.core.finance.MaintenanceType
 import com.khodroyar.app.data.repo.EntryReceipt
 import com.khodroyar.app.core.holidays.IranHolidays
 import com.khodroyar.app.core.jalali.Jalali
-import com.khodroyar.app.core.rates.RatesByYear
 import com.khodroyar.app.data.db.PersonnelEntity
 import com.khodroyar.app.data.db.ServiceTotals
 import com.khodroyar.app.data.prefs.AppSettings
@@ -40,6 +40,7 @@ fun DashboardScreen(
     onOpenReports: () -> Unit,
     onOpenCalendar: () -> Unit,
     onOpenPersonnel: (PersonnelEntity) -> Unit,
+    onEditPersonnel: (PersonnelEntity) -> Unit = onOpenPersonnel,
     onTogglePrivacy: () -> Unit,
     onOpenTraffic: () -> Unit = {},
     onAddService: () -> Unit = {},
@@ -50,36 +51,17 @@ fun DashboardScreen(
     onRecordMaintenance: (MaintenanceType) -> Unit = {},
     onOpenMaintenance: () -> Unit = {},
 ) {
-    var personnelExpanded by remember { mutableStateOf(false) }
     val today = remember { Jalali.todayString() }
     val ymd = remember(today) { Jalali.parse(today) ?: Jalali.today() }
-    val monthPrefix = "${ymd.year}/${ymd.month.toString().padStart(2, '0')}"
     val dailyTrendRows by remember(ymd.year) {
         repository.insights.trendDays(Jalali.format(ymd.year - 3, 1, 1), Jalali.format(ymd.year, 12, Jalali.monthLength(ymd.year, 12)))
     }.collectAsState(initial = emptyList())
-    val monthTotals by repository.serviceTotals(monthPrefix).collectAsState(initial = ServiceTotals())
     val personnel by repository.personnel().collectAsState(initial = emptyList())
-    val maintenanceRevision by remember { repository.maintenanceInputsChanged() }.collectAsState(initial = 0)
-    val ratesByYear by repository.ratesByYear.collectAsState(initial = RatesByYear.empty())
     val todaySummary by remember(today) { repository.serviceTotals(today) }.collectAsState(initial = ServiceTotals())
     val holidayTitle = remember(today) { IranHolidays.titleFor(today) }
 
-    // Maintenance due statuses based on driven km from registered services.
-    val maintenanceStates = produceState<List<Analytics.ServiceDue>>(initialValue = emptyList(), maintenanceRevision, ratesByYear, settings) {
-        val rates = ratesByYear.forYear(ymd.year)
-        val odo = settings.vehicleCurrentKm
-        value = listOf(
-            repository.maintenanceDue("oil-change", "تعویض روغن", rates.oilChangeKmInterval, odo, settings.oilNextKm, settings.oilCurrentKm),
-            repository.maintenanceDue("timing-belt", "تسمه تایم", rates.timingBeltKmInterval, odo, settings.beltNextKm, settings.beltCurrentKm),
-            repository.maintenanceDue("spark-plug", "شمع", rates.sparkPlugKmInterval, odo, settings.sparkNextKm, settings.sparkCurrentKm),
-            repository.maintenanceDue("brake-pad", "لنت ترمز", rates.brakePadKmInterval, odo, settings.brakeNextKm, settings.brakeCurrentKm),
-            repository.maintenanceDue("fuel-filter", "فیلتر بنزین", rates.fuelFilterKmInterval, odo, settings.filterNextKm, settings.filterCurrentKm),
-        )
-    }
-
-    val pace by remember(today) { repository.drivingPace(today) }.collectAsState(initial = null)
+    // 5.9.0: the monthly target is drawn as a dashed line in the trend chart, not a card.
     val goal = settings.monthlyIncomeGoal
-    val goalProgress = if (goal > 0) (monthTotals.totalIncome / goal).coerceIn(0.0, 1.0) else 0.0
 
     Box(Modifier.fillMaxSize()) {
         LazyColumn(
@@ -141,78 +123,15 @@ fun DashboardScreen(
             }
         }
         recentEntry?.let { entry -> item { RecentQuickEntryCard(entry, onEditQuick, onUndoQuick) } }
-        if (goal > 0 && !settings.privacyMode) {
-            item {
-                SurfaceCard {
-                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                        IconBadge(Icons.Outlined.Flag, size = 36.dp)
-                        Column(Modifier.weight(1f).padding(horizontal = 10.dp)) {
-                            Text(tr("هدف این ماه", "This month's goal"), style = MaterialTheme.typography.titleSmall)
-                            Text("${amount(monthTotals.totalIncome)} / ${amount(goal)} تومان", style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2)
-                        }
-                        StatusPill("${money(goalProgress * 100)}٪")
-                    }
-                    Spacer(Modifier.height(12.dp))
-                    LinearProgressIndicator(progress = { goalProgress.toFloat() }, modifier = Modifier.fillMaxWidth().height(6.dp),
-                        trackColor = MaterialTheme.colorScheme.surfaceContainerHigh, strokeCap = androidx.compose.ui.graphics.StrokeCap.Round)
-                }
-            }
-        }
-
         if (!settings.privacyMode) {
             item {
-                TrendSection(dailyRows = dailyTrendRows, today = today, onOpenReports = onOpenReports)
-            }
-        }
-
-        /* -------------------------- collapsible periodic service status */
-        if (maintenanceStates.value.any { it.nextKm > 0 || it.baseCurrentKm > 0 }) {
-            item {
-                val dues = maintenanceStates.value
-                val overdueCount = dues.count { it.isOverdue }
-                val summary = when {
-                    overdueCount > 0 -> "$overdueCount مورد از موعد گذشته"
-                    else -> {
-                        val next = dues.filter { it.remainingKm != null }.minByOrNull { it.remainingKm!! }
-                        if (next != null) "نزدیک‌ترین: ${next.label} · ${money(next.remainingKm ?: 0.0)} کیلومتر"
-                        else ""
-                    }
-                }
-                Collapsible(
-                    title = tr("وضعیت سرویس‌های دوره‌ای", "Periodic service status"),
-                    summary = summary,
-                    initiallyExpanded = overdueCount > 0,
-                ) {
-                    Column(verticalArrangement = Arrangement.spacedBy(AppDimens.tightGap)) {
-                        val types = MaintenanceType.TRACKED
-                        dues.forEachIndexed { index, due ->
-                            val mt = types[index]
-                            val configured = settings.nextKmFor(mt.wire) > 0 || settings.currentKmFor(mt.wire) > 0 || (due.lastKm ?: 0.0) > 0
-                            if (configured) MaintenanceForecastCard(mt, due, pace, today, configured,
-                                onRecord = { onRecordMaintenance(mt) }, onSettings = onOpenMaintenance)
-                        }
-                    }
-                }
+                TrendSection(dailyRows = dailyTrendRows, today = today, onOpenReports = onOpenReports, monthlyGoal = goal)
             }
         }
 
         if (personnel.isNotEmpty()) {
             item {
-                CollapsibleSectionTitle(
-                    "پرسنل", "${personnel.size}", Icons.Outlined.Group,
-                    expanded = personnelExpanded, onToggle = { personnelExpanded = !personnelExpanded }, englishTitle = "Personnel",
-                )
-            }
-            if (personnelExpanded) {
-                items(personnel, key = { "person-${it.id}" }) { person ->
-                    ActionRow(
-                        title = person.name.ifBlank { "پرسنل" },
-                        subtitle = listOf(person.personnelCode, person.costCenter).filter { it.isNotBlank() }.joinToString(" · "),
-                        icon = Icons.Outlined.Badge,
-                        onClick = { onOpenPersonnel(person) },
-                    )
-                }
+                PersonnelBooklets(personnel, onOpen = onOpenPersonnel, onEdit = onEditPersonnel)
             }
         }
         item { Spacer(Modifier.height(1.dp).testTag("dashboard-end")) }
@@ -253,6 +172,7 @@ private fun TrendSection(
     dailyRows: List<com.khodroyar.app.data.db.DailyTotals>,
     today: String,
     onOpenReports: () -> Unit,
+    monthlyGoal: Double = 0.0,
 ) {
     var scale by rememberSaveable { mutableStateOf(Analytics.TrendScale.MONTH) }
     var metric by rememberSaveable { mutableStateOf(TrendMetric.INCOME) }
@@ -283,14 +203,20 @@ private fun TrendSection(
                 }
             }
         }
+        // The monthly income target is only comparable with monthly (and, ×12, yearly) income.
+        val goalLine = HomeGoalLine.of(monthlyGoal, metric == TrendMetric.INCOME, scale)
+        val goalLabel = when (scale) {
+            Analytics.TrendScale.YEAR -> tr("هدف سالانه (۱۲ × ماهانه)", "Yearly target (12 × monthly)")
+            else -> tr("هدف ماهانه", "Monthly target")
+        }
         if (points.count { !it.isEmpty } < 2) {
             InsufficientData(tr("دادهٔ کافی نیست", "Not enough data"))
         } else if (barView) {
             TrendBarChart(points, metric, modifier = Modifier.testTag("home-bar-chart"), barHeight = 180.dp,
-                timelineDirection = LayoutDirection.Ltr, showPointSelector = false)
+                timelineDirection = LayoutDirection.Ltr, showPointSelector = false, goalValue = goalLine, goalLabel = goalLabel)
         } else {
             TrendLineChart(points, metric, modifier = Modifier.testTag("home-line-chart"), height = 180.dp,
-                timelineDirection = LayoutDirection.Ltr, showPointSelector = false)
+                timelineDirection = LayoutDirection.Ltr, showPointSelector = false, goalValue = goalLine, goalLabel = goalLabel)
         }
     }
 }
