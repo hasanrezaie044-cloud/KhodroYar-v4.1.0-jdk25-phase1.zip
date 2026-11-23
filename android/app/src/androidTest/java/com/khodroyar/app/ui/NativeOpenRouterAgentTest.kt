@@ -789,14 +789,25 @@ class NativeOpenRouterAgentTest {
         val conversation = ConversationRepository(context).load().single()
         compose.runOnIdle { vm.newChat() }; compose.waitForIdle(); assertTrue(local.isFile)
         compose.runOnIdle { vm.openConversation(conversation) }; assertEquals(ref, vm.messages.first().image)
-        assertFalse(repo.exportBackupJson().contains(ref.fileName))
+        // 5.9.0: a full backup carries the chat image itself (verified bytes), not a dangling reference.
+        val originalBytes = local.readBytes()
+        val backup = repo.exportBackupJson()
+        val packed = JSONObject(backup).getJSONObject("assistant").getJSONArray("chatImages")
+        assertEquals(1, packed.length()); assertEquals(ref.fileName, packed.getJSONObject(0).getString("fileName"))
+        assertTrue(android.util.Base64.decode(packed.getJSONObject(0).getString("data"), android.util.Base64.NO_WRAP).contentEquals(originalBytes))
+        assertEquals(1, repo.previewBackup(backup).counts.chatImages)
         compose.runOnIdle { vm.deleteConversation(conversation) }
         compose.waitUntil(10000) { !local.exists() }
         assertTrue(File(uri.path!!).isFile) // Never deletes the user's chosen original.
+        // Restore brings the conversation back together with its image file, byte for byte.
+        val restored = repo.restoreBackup(backup).getOrThrow()
+        assertEquals(1, restored.chatImages)
+        assertTrue(local.isFile && local.readBytes().contentEquals(originalBytes))
+        assertTrue(ConversationRepository(context).load().single().messages.any { it.image == ref })
         assertTrue(db.services().allOnce().isEmpty())
         publishSyntheticEvidence(context, "KhodroYar-UI-Smoke", "ai-chat-image.json", "application/json", JSONObject()
             .put("environment", "Synthetic JPEG and HTTP; actual Compose, private files and history; NOT live provider")
-            .put("passed", true).put("image_posts", 1).put("jpeg_decoded", true).put("exif_removed", true).put("history_lifetime_verified", true).toString().toByteArray())
+            .put("passed", true).put("image_posts", 1).put("jpeg_decoded", true).put("exif_removed", true).put("history_lifetime_verified", true).put("backup_restore_image_verified", true).toString().toByteArray())
     }
 
     @Test fun transparentImagesAreFlattenedOnWhiteAndOnlyOwnedCameraStagingFilesAreDiscarded(): Unit = runBlocking {
