@@ -18,7 +18,7 @@ def crop_box(x1, y1, x2, y2):
 
 # Hero crop: actual phone display's upper branding/car scene, excluding bezel
 # and the static mock PIN/fingerprint panel so native Compose controls remain live.
-hero = im.crop(crop_box(0.51, 0.025, 0.975, 0.60))
+hero = im.crop(crop_box(0.51, 0.025, 0.975, 0.55))
 hero.thumbnail((1200, 1500), Image.Resampling.LANCZOS)
 hero.save(RES / "drawable-nodpi/login_background.webp", "WEBP", quality=88, method=6)
 
