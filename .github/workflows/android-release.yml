@@ -180,6 +180,11 @@ jobs:
 
 
 
+      - name: Generate approved login and launcher artwork
+        run: |
+          python3 -m pip install --disable-pip-version-check --quiet 'Pillow==12.0.0'
+          python3 tools/prepare-khodroyar-brand-assets.py
+
       - name: Static checks and unit tests
         working-directory: android
         run: |
