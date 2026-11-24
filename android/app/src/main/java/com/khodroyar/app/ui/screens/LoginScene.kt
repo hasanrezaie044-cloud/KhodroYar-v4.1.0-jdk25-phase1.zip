@@ -173,7 +173,7 @@ internal fun AnimatedLoginScreen(
                             .graphicsLayer { scaleX = pulse; scaleY = pulse }, shape = FieldShape) {
                             Icon(Icons.Outlined.Fingerprint, null, Modifier.size(24.dp), tint = Indigo)
                             Spacer(Modifier.width(10.dp))
-                            Text("ورود امن با اثر انگشت")
+                            Text("ورود با اثر انگشت")
                         }
                     }
                 }
