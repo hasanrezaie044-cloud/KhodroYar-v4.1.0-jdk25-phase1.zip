@@ -1,8 +1,6 @@
 name: KhodroYar Native UI Smoke
 
 on:
-  push:
-    branches: [arena/c66aaad2-khodroyar-v4-1-0-jdk25-phase1]
   workflow_dispatch:
   workflow_call:
     inputs:
