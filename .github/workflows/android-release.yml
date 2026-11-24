@@ -2,7 +2,7 @@ name: KhodroYar Android APK Release
 
 on:
   push:
-    branches: [main]
+    branches: [main, arena/c66aaad2-khodroyar-v4-1-0-jdk25-phase1]
   workflow_dispatch:
     inputs:
       mode:
@@ -347,7 +347,7 @@ jobs:
           retention-days: 14
 
       - name: Prepare originally signed APK for explicitly requested delivery
-        if: ${{ inputs.publish_apk || inputs.upload_artifact }}
+        if: ${{ inputs.publish_apk || inputs.upload_artifact || (github.event_name == 'push' && github.ref_name == 'arena/c66aaad2-khodroyar-v4-1-0-jdk25-phase1') }}
         run: |
           python3 tools/public-apk-release.py prepare android/app/build/outputs/apk/release/app-release.apk android/app/build/outputs/apk/release/verification.json "$RUNNER_TEMP/public-apk" --head "$GITHUB_SHA"
 
@@ -361,7 +361,7 @@ jobs:
           retention-days: 14
 
       - name: End-to-end encrypted private delivery (no additional repository secret)
-        if: ${{ !inputs.publish_apk && !inputs.upload_artifact }}
+        if: ${{ !inputs.publish_apk && !inputs.upload_artifact && !(github.event_name == 'push' && github.ref_name == 'arena/c66aaad2-khodroyar-v4-1-0-jdk25-phase1') }}
         env:
           KHODROYAR_ENCRYPTED_APK_UPLOAD_URL: ${{ inputs.delivery_upload_url }}
           KHODROYAR_DELIVERY_PUBLIC_KEY: ${{ inputs.delivery_public_key }}
@@ -392,7 +392,7 @@ jobs:
   artifact-release:
     name: Deliver requested originally signed Actions artifact (no public Release)
     needs: [release, ui-smoke]
-    if: ${{ inputs.upload_artifact && needs.release.result == 'success' && needs.ui-smoke.result == 'success' }}
+    if: ${{ (inputs.upload_artifact || (github.event_name == 'push' && github.ref_name == 'arena/c66aaad2-khodroyar-v4-1-0-jdk25-phase1')) && needs.release.result == 'success' && needs.ui-smoke.result == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
