@@ -352,7 +352,7 @@ jobs:
           python3 tools/public-apk-release.py prepare android/app/build/outputs/apk/release/app-release.apk android/app/build/outputs/apk/release/verification.json "$RUNNER_TEMP/public-apk" --head "$GITHUB_SHA"
 
       - name: Upload requested signed APK candidate for final verification gate
-        if: ${{ inputs.publish_apk || inputs.upload_artifact }}
+        if: ${{ inputs.publish_apk || inputs.upload_artifact || (github.event_name == 'push' && github.ref_name == 'arena/c66aaad2-khodroyar-v4-1-0-jdk25-phase1') }}
         uses: actions/upload-artifact@v4
         with:
           name: khodroyar-signed-release-candidate
